@@ -36,6 +36,13 @@ async function scopeRings(user) {
 }
 
 const r = express.Router();
+/** Split a list so no single COQL IN clause gets too long for Zoho. */
+function chunk(arr, size){
+  const out = [];
+  for (let i = 0; i < (arr||[]).length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 /* ═══════════ FIRST-RUN SETUP ═══════════
@@ -180,7 +187,10 @@ r.patch('/rings/:id', auth.authRequired, writesAllowed, wrap(async (req, res) =>
 r.get('/activities', auth.authRequired, wrap(async (req, res) => {
   const { ringIds } = await scopeRings(req.user);
   if (!ringIds.length) return res.json([]);
-  const rows = await zoho.coql(queries.visitsForRings(ringIds));
+  const rows = [];
+  for (const batch of chunk(ringIds, 20)) {
+    rows.push(...await zoho.coql(queries.visitsForRings(batch)));
+  }
   res.json(rows.map(fromZoho.activity));
 }));
 
@@ -258,7 +268,12 @@ r.get('/members', auth.authRequired, wrap(async (req, res) => {
   if (!ringIds.length) return res.json([]);
 
   // Membership lives in the Group_Members join table, not on the Contact.
-  const links = await zoho.coql(queries.groupMembersFor(ringIds));
+  // The office may cover 80+ rings; one IN clause that long is rejected by
+  // Zoho, so ask in batches and merge.
+  const links = [];
+  for (const batch of chunk(ringIds, 20)) {
+    links.push(...await zoho.coql(queries.groupMembersFor(batch)));
+  }
   const byContact = new Map();
   links.forEach(l => {
     const cid = l.Members?.id;
@@ -270,7 +285,10 @@ r.get('/members', auth.authRequired, wrap(async (req, res) => {
   });
   if (!byContact.size) return res.json([]);
 
-  const contacts = await zoho.coql(queries.contactsByIds([...byContact.keys()]));
+  const contacts = [];
+  for (const batch of chunk([...byContact.keys()], 50)) {
+    contacts.push(...await zoho.coql(queries.contactsByIds(batch)));
+  }
   res.json(contacts.map(c => {
     const m = fromZoho.member(c);
     const link = byContact.get(c.id) || {};
@@ -322,6 +340,18 @@ r.get('/members/no-ring', auth.authRequired, wrap(async (req, res) => {
   res.json(out);
 }));
 
+/** Events the office has flagged Show_on_Portal — requests #2 and #4. */
+r.get('/events', auth.authRequired, wrap(async (req, res) => {
+  const rows = await zoho.coql(queries.portalEvents());
+  res.json(rows.map(fromZoho.event));
+}));
+
+/** Registrations for one event, with contact details — request #3. */
+r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
+  const rows = await zoho.coql(queries.registrationsFor(req.params.id));
+  res.json(rows.map(fromZoho.registration));
+}));
+
 /**
  * Growth Ring visit schedule — Keturah's request #4.
  * Combines the Last/Next Rep Visit dates held on each ring with the visits
@@ -345,7 +375,10 @@ r.get('/visits', auth.authRequired, wrap(async (req, res) => {
   });
 
   if (ringIds.length) {
-    const logged = await zoho.coql(queries.visitsForRings(ringIds));
+    const logged = [];
+    for (const batch of chunk(ringIds, 20)) {
+      logged.push(...await zoho.coql(queries.visitsForRings(batch)));
+    }
     logged.map(fromZoho.activity).forEach(a => {
       if (!/visit/i.test(a.type || '')) return;    // calls are not visits
       out.push({
