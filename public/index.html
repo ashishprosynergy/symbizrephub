@@ -1434,15 +1434,22 @@ function vAllRings(){
       <span><strong>${bulkPick.size} selected</strong></span>
       <span class="btnrow"><button class="btn sm primary" onclick="openBulkEdit()">Set details</button>
       <button class="btn sm" onclick="bulkClear()">Clear</button></span></div>`:''}
-    ${S.rings.map(r=>{const h=ringHealth(r);return `<div class="row">
-      <div style="display:flex;gap:11px;align-items:flex-start;flex:1;min-width:0">
-        <input type="checkbox" ${bulkPick.has(r.id)?'checked':''} onclick="event.stopPropagation();toggleBulk('${r.id}')"
-               style="margin-top:4px;width:16px;height:16px;accent-color:var(--primary);flex-shrink:0">
-        <span class="clicky" onclick="openRing('${r.id}')" style="display:flex;gap:11px;align-items:flex-start;flex:1;min-width:0">${glyph(r.status)}
-      <div class="row-main"><div class="row-title">${esc(r.name)}</div>
-      <div class="row-sub">${r.facName||(fac(r.facId)?esc(fac(r.facId).name):'—')} · ${r.repName||pname(r.repId)} · ${r.serverMemberCount||ringMembers(r.id).length}${r.capacity?'/'+r.capacity:''}${r.status==='active'&&!r.meetingRhythm?' · no meeting rhythm set':''}</div></div></span>
-      <div style="text-align:right"><div class="status ${r.status}"><span class="dot"></span>${statusText(r.status)}</div>
-      <div class="row-sub" style="margin-top:3px">${h===null?'Not rated yet':h+' · '+healthWord(h)}</div></div></div>`;}).join('')}`;
+    ${S.rings.map(r=>{
+      const h = ringHealth(r);
+      const picked = bulkPick.has(r.id);
+      return `<div class="row">
+        <input type="checkbox" ${picked?'checked':''} onclick="toggleBulk('${r.id}')"
+               style="margin-top:3px;width:16px;height:16px;accent-color:var(--primary);flex-shrink:0">
+        <div class="row-main clicky" onclick="openRing('${r.id}')">
+          <div class="row-title">${esc(r.name)}</div>
+          <div class="row-sub">${esc(r.facName || (fac(r.facId)?fac(r.facId).name:'—'))} · ${esc(r.repName || pname(r.repId))} · ${r.serverMemberCount || ringMembers(r.id).length}${r.capacity?'/'+r.capacity:''}${r.status==='active' && !r.meetingRhythm ? ' · no meeting rhythm set' : ''}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div class="status ${r.status}"><span class="dot"></span>${statusText(r.status)}</div>
+          <div class="row-sub" style="margin-top:3px">${h===null?'Not rated yet':h+' · '+healthWord(h)}</div>
+        </div>
+      </div>`;
+    }).join('')}`;
 }
 
 function vInsights(){
@@ -2604,73 +2611,77 @@ const adapt = {
  * Falls back to whatever is already on the device if the server is unreachable,
  * so a rep mid-visit doesn't lose their screen.
  */
+/**
+ * Load in two passes.
+ *
+ * Rings arrive first and the app renders straight away — signing in and
+ * waiting on nine Zoho queries made it feel broken. Everything else fills
+ * in behind, and each piece is independent so one slow call cannot hold
+ * up the rest.
+ */
 async function loadFromServer(){
   if(!API.live) return;
   loading = true;
-  // When previewing, ask the server for that rep's scope rather than ours.
   const asRep = previewRepId || null;
+
   try{
-    const [rawRings, rawMembers, rawActs, rawFacs, rawEvents,
-           rawVisits, rawNoRing, rawTime, rawExp] = await Promise.all([
-      API.rings(asRep),
-      API.members(asRep),
-      API.activities(asRep),
-      API.facilitators().catch(()=>[]),
-      API.events().catch(()=>[]),
-      API.visits(asRep).catch(()=>[]),
-      API.membersNoRingLive().catch(()=>[]),
-      API.time().catch(()=>[]),
-      API.expenses().catch(()=>[]),
-    ]);
-
+    // Pass one: just the rings. Fast, and it is what every screen keys off.
+    const rawRings = await API.rings(asRep);
     const rings = (rawRings||[]).map(adapt.ring);
-    const ringToRep = {};
-    rings.forEach(r=>{ ringToRep[r.id] = r.repId; });
-
     loadError = null;
     S.rings = rings;
-    S.members = (rawMembers||[]).map(m=>adapt.member(m, ringToRep));
-    S.activities = (rawActs||[]).map(adapt.activity);
-    S.visits = (rawVisits||[]).map(adapt.visit);
-    S.timeEntries = (rawTime||[]).map(adapt.timeEntry);
-    S.expenses = (rawExp||[]).map(adapt.expense);
-
-    // Events the office flagged for the portal.
-    S.events = (rawEvents||[]).map(adapt.event).filter(e=>e.date);
-
-    // Facilitators are Contacts flagged in Zoho, plus anyone named on a ring.
-    S.facilitators = (rawFacs||[]).map(f=>({
-      id:f.id, name:f.name, phone:f.phone||'', email:f.email||'',
-      business:f.business||'—', since:f.joined||'',
-    }));
     rings.forEach(r=>{
       if(r.facId && !S.facilitators.some(f=>f.id===r.facId)){
         S.facilitators.push({id:r.facId, name:r.facName, phone:'', email:'', business:'—', since:''});
       }
-    });
-
-    // Members with no Growth Ring at all are not in any ring, so the
-    // ring-scoped query above cannot find them. Merge them in.
-    const noRing = (rawNoRing||[]).map(m=>adapt.member(m, {}));
-    noRing.forEach(m=>{ if(!S.members.some(x=>x.id===m.id)) S.members.push({...m, repId: ui.me}); });
-
-    // Every rep the data mentions, keyed by their Zoho contact id.
-    rings.forEach(r=>{
       if(r.repId && !PEOPLE.some(p=>p.id===r.repId)){
         PEOPLE.push({ id:r.repId, name:r.repName||'Rep', role:'rep', region:r.regionName||'' });
       }
     });
-
-    save();
-  }catch(e){
-    if(e.message==='SESSION_EXPIRED'){ loading=false; ui.me=null; render(); return; }
-    console.warn('[load]', e.message);
-    loadError = e.message;
-    toast('Could not reach the server — showing what was last loaded');
-  }finally{
     loading = false;
+    save();
+    render();                    // show the app now
+  }catch(e){
+    loading = false;
+    if(e.message==='SESSION_EXPIRED'){ ui.me=null; render(); return; }
+    loadError = e.message;
+    render();
+    return;
   }
+
+  // Pass two: everything else, in the background.
+  loadingDetail = true;
+  render();              // show that more is still coming
+  const ringToRep = {};
+  S.rings.forEach(r=>{ ringToRep[r.id] = r.repId; });
+
+  const settle = (p, apply) => p.then(v=>{ try{ apply(v); }catch(e){} }).catch(()=>{});
+  await Promise.all([
+    settle(API.members(asRep),      v => S.members     = (v||[]).map(m=>adapt.member(m, ringToRep))),
+    settle(API.activities(asRep),   v => S.activities  = (v||[]).map(adapt.activity)),
+    settle(API.visits(asRep),       v => S.visits      = (v||[]).map(adapt.visit)),
+    settle(API.events(),            v => S.events      = (v||[]).map(adapt.event).filter(e=>e.date)),
+    settle(API.time(),              v => S.timeEntries = (v||[]).map(adapt.timeEntry)),
+    settle(API.expenses(),          v => S.expenses    = (v||[]).map(adapt.expense)),
+    settle(API.facilitators(),      v => {
+      (v||[]).forEach(f=>{
+        const at = S.facilitators.findIndex(x=>x.id===f.id);
+        const entry = {id:f.id,name:f.name,phone:f.phone||'',email:f.email||'',business:f.business||'—',since:f.joined||''};
+        at>=0 ? S.facilitators[at] = entry : S.facilitators.push(entry);
+      });
+    }),
+    settle(API.membersNoRingLive(), v => {
+      (v||[]).map(m=>adapt.member(m,{})).forEach(m=>{
+        if(!S.members.some(x=>x.id===m.id)) S.members.push({...m, repId: ui.me});
+      });
+    }),
+  ]);
+
+  loadingDetail = false;
+  save();
+  render();
 }
+let loadingDetail = false;
 let loadError = null;
 
 /**
@@ -2708,7 +2719,7 @@ async function loadSecondary(){
  * normal state, not an error, and the message should say which it is.
  */
 function emptyState(what, hint){
-  if(loading) return `<div class="empty">Loading ${esc(what)}…</div>`;
+  if(loading || loadingDetail) return `<div class="empty">Loading ${esc(what)}…</div>`;
   if(loadError) return `<div class="callout rust"><strong>Could not load ${esc(what)}</strong>
     ${esc(loadError)}
     <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="retryLoad()">Try again</button></div></div>`;
@@ -2796,6 +2807,7 @@ function render(){
       ${previewRepId?`<div class="banner note" style="background:var(--info-soft);color:var(--info);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
         <span>Viewing as <strong>${esc((PEOPLE.find(p=>p.id===previewRepId)||{}).name||'a rep')}</strong> — this is their screen, exactly as they see it.</span>
         <button class="btn sm" onclick="endPreview()">Back to my view</button></div>`:''}
+      ${loadingDetail?`<div class="banner note" style="background:var(--info-soft);color:var(--info)">Loading members and activity…</div>`:''}
       ${loadError?`<div class="banner note" style="background:var(--rust-soft);color:var(--rust)">
         Couldn't reach the server — showing the last data loaded.
         <button class="btn sm" style="margin-left:8px" onclick="retryLoad()">Try again</button></div>`:''}
@@ -3081,7 +3093,7 @@ function vTimesheet() {
   const row = (t, isExp) => `<div class="row">
     <div class="row-main">
       <div class="row-title">${isExp ? money(t.amount) : t.hours + (t.hours === 1 ? ' hour' : ' hours')} — ${esc(t.category)}</div>
-      <div class="row-sub">${fmt(t.date)}${isOffice() ? ' · ' + pname(t.repId) : ''} · ${esc(t.description)}</div>
+      <div class="row-sub">${fmt(t.date)}${isOffice() ? ' · <strong>' + esc(t.repName || pname(t.repId) || 'Unknown') + '</strong>' : ''} · ${esc(t.description)}</div>
     </div>
     <div class="row-actions">
       ${isExp && t.receipt ? `<button class="btn sm" onclick="viewReceipt('${t.id}')">Receipt</button>`
@@ -3219,37 +3231,41 @@ function previewAccounting() {
     <button class="btn primary" onclick="closeModal();sendToAccounting()">Send now</button></div>`);
 }
 
-function sendToAccounting() {
+async function sendToAccounting() {
   const p = accountingPayload();
   if (!p.time.length && !p.exp.length) { toast('Nothing approved to send yet'); return; }
   const to = S.settings.accountingEmail || 'accounting@symbiz.org';
-  const period = MONTHS[parseInt(TODAY_S.slice(5, 7), 10) - 1] + ' ' + TODAY_S.slice(0, 4);
 
-  // Mark everything as sent so it isn't submitted twice
-  S.timeEntries.forEach(t => { if (t.status === 'Approved') t.status = 'Reimbursed'; });
-  S.expenses.forEach(x => { if (x.status === 'Approved') x.status = 'Reimbursed'; });
-  save(); logAudit(`Sent ${p.time.length + p.exp.length} items to accounting`);
+  // Send from the server. Opening the viewer's mail client meant signing into
+  // webmail and attaching the CSV by hand, which nobody would keep doing.
+  if (API.live) {
+    openModal(`<h3>Sending to ${esc(to)}…</h3><p class="lead">One moment.</p>`);
+    try {
+      const out = await API.accountingSend();
+      const [t, x] = await Promise.all([API.time(), API.expenses()]);
+      S.timeEntries = t.map(adapt.timeEntry);
+      S.expenses = x.map(adapt.expense);
+      save();
+      openModal(`<h3>Sent</h3>
+        <p class="lead">${out.time} time entr${out.time === 1 ? 'y' : 'ies'} and ${out.expenses} expense${out.expenses === 1 ? '' : 's'}
+          emailed to ${esc(out.to || to)}, and marked as sent so nothing is claimed twice.</p>
+        <div class="m-actions"><button class="btn primary" onclick="closeModal();render()">Done</button></div>`);
+    } catch (e) {
+      const mailOff = /mail|smtp|not configured/i.test(e.message || '');
+      openModal(`<h3>Couldn't send</h3>
+        <p class="lead">${esc(e.message || 'Unknown error')}</p>
+        ${mailOff ? `<div class="callout">Email isn't switched on for this site yet. Add the SMTP settings,
+          or use Export CSV and send it yourself this once.</div>` : ''}
+        <div class="m-actions">
+          <button class="btn" onclick="closeModal();exportAccounting()">Export CSV instead</button>
+          <button class="btn primary" onclick="closeModal()">Close</button></div>`);
+    }
+    return;
+  }
 
-  // CSV for the records, and an addressed email ready to go
+  // Not connected to a server: fall back to a CSV the office sends themselves.
   exportAccounting();
-  const body = [
-    `Hours and expenses for ${period}`, '',
-    ...Object.keys(p.byRep).map(rid => {
-      const rows = p.byRep[rid];
-      const h = rows.filter(r => r.kind === 'time').reduce((s, r) => s + r.hours, 0);
-      const a = rows.filter(r => r.kind === 'exp').reduce((s, r) => s + r.amount, 0);
-      return `${pname(rid)}: ${h} hours, ${money(a)} expenses`;
-    }),
-    '', `Total: ${p.hours} hours, ${money(p.amount)} expenses`,
-    p.missing ? `Note: ${p.missing} expense(s) without a receipt.` : '',
-    '', 'Full detail is in the attached CSV.'
-  ].filter(Boolean).join('\n');
-
-  try {
-    window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent('Rep hours and expenses — ' + period)}&body=${encodeURIComponent(body)}`;
-  } catch (e) {}
-  toast('Sent to accounting — attach the downloaded CSV');
-  render();
+  toast('Exported — attach it to an email for ' + to);
 }
 
 function exportAccounting() {
