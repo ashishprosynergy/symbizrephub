@@ -47,6 +47,16 @@
   @media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important;}}
   .ring-mark circle{fill:none;stroke:currentColor;}
 
+  /* Netlify's badge sits bottom-right and covers the mobile tab bar. Lift the
+     bar above it, and keep the badge clear of the tabs. */
+  @media (max-width:900px){
+    .tabbar{ padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+    [class*="netlify-badge"], #netlify-badge, a[href*="netlify.com"][target="_blank"]{
+      bottom: 68px !important; opacity:.5; transform:scale(.85); transform-origin:bottom right;
+    }
+  }
+
+
   /* Local mode: switch between people, since there's no sign-in */
   .viewas{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-muted);}
   .viewas span{white-space:nowrap;font-weight:600;letter-spacing:.02em;}
@@ -322,13 +332,13 @@ const API = {
   },
   login(email,password){ return this.call('/auth/login',{method:'POST',body:JSON.stringify({email,password})}); },
   me(){ return this.call('/auth/me'); },
-  rings(){ return this.call('/rings'); },
-  members(){ return this.call('/members'); },
-  activities(q=''){ return this.call('/activities'+q); },
+  rings(as){ return this.call('/rings' + (as ? '?as='+encodeURIComponent(as) : '')); },
+  members(as){ return this.call('/members' + (as ? '?as='+encodeURIComponent(as) : '')); },
+  activities(as){ return this.call('/activities' + (as ? '?as='+encodeURIComponent(as) : '')); },
   facilitators(){ return this.call('/facilitators'); },
   events(){ return this.call('/events'); },
   registrations(eventId){ return this.call('/events/'+eventId+'/registrations'); },
-  visits(){ return this.call('/visits'); },
+  visits(as){ return this.call('/visits' + (as ? '?as='+encodeURIComponent(as) : '')); },
   membersNoRingLive(){ return this.call('/members/no-ring'); },
   time(){ return this.call('/time'); },
   addTime(d){ return this.call('/time',{method:'POST',body:JSON.stringify(d)}); },
@@ -339,6 +349,10 @@ const API = {
   receipt(id){ return this.call('/expenses/'+id+'/receipt'); },
   accountingPending(){ return this.call('/accounting/pending'); },
   accountingSend(){ return this.call('/accounting/send',{method:'POST'}); },
+  cyclePreview(){ return this.call('/cycle/preview'); },
+  cycleStart(perWeek){ return this.call('/cycle/start',{method:'POST',body:JSON.stringify({perWeek})}); },
+  bulkRings(ids,fields){ return this.call('/rings/bulk',{method:'PATCH',body:JSON.stringify({ids,fields})}); },
+  resendLogin(id){ return this.call('/admin/users/'+id+'/resend',{method:'POST'}); },
   membersNoRing(){ return this.call('/members/no-ring'); },
   createRing(d){ return this.call('/rings',{method:'POST',body:JSON.stringify(d)}); },
   updateRing(id,d){ return this.call('/rings/'+id,{method:'PATCH',body:JSON.stringify(d)}); },
@@ -350,7 +364,9 @@ const API = {
   createUser(d){ return this.call('/admin/users',{method:'POST',body:JSON.stringify(d)}); },
   users(){ return this.call('/admin/users'); },
   repsFromZoho(){ return this.call('/admin/reps-from-zoho'); },
-  createUserFromZoho(d){ return this.call('/admin/users/from-zoho',{method:'POST',body:JSON.stringify(d)}); }
+  createUserFromZoho(d){ return this.call('/admin/users/from-zoho',{method:'POST',body:JSON.stringify(d)}); },
+  resetPassword(id){ return this.call('/admin/users/'+id+'/reset-password',{method:'POST'}); },
+  removeUser(id){ return this.call('/admin/users/'+id,{method:'DELETE'}); }
 };
 
 /* Offline write queue — a rep with no signal keeps working. */
@@ -435,7 +451,7 @@ const CALL_PROMPTS = {
  */
 function seed(){
   return {
-    facilitators:[], rings:[], members:[], activities:[], meetings:[],
+    facilitators:[], rings:[], members:[], membersNoRing:[], activities:[], meetings:[],
     events:[], registrations:[], visits:[], timeEntries:[], expenses:[],
     requests:[], announcements:[], audit:[], syncQueue:[],
     settings:{
@@ -451,6 +467,13 @@ function seed(){
 /* ══════════════════ STATE ══════════════════ */
 let S = load();
 let loading = false;
+/**
+ * Lets the office look at the app exactly as one rep sees it — their rings,
+ * their calls, their calendar. Clearly banner-flagged, read-only in spirit,
+ * and nothing like the old demo switcher: it uses the real rep's Zoho contact.
+ */
+/** Office/director previewing one rep's view. Holds their Zoho contact id. */
+let previewRepId = null;
 let ui = {me:null, view:'today', ringId:null, memberId:null, facId:null, eventId:null,
           q:'', filter:'all', offline:false, gq:'', report:'contact-due',
           calFilter:'all', calRep:null, tsRep:null, sheetRep:null};
@@ -466,7 +489,7 @@ function migrateState(st){
   const base = seed();
   if(!st || typeof st !== 'object') return base;
 
-  ['rings','members','facilitators','activities','meetings','requests',
+  ['rings','members','membersNoRing','facilitators','activities','meetings','requests',
    'events','registrations','visits','timeEntries','expenses','announcements',
    'audit','syncQueue'].forEach(k=>{
     if(!Array.isArray(st[k])) st[k] = Array.isArray(base[k]) ? base[k] : [];
@@ -533,7 +556,11 @@ function logAudit(what){
 }
 
 /* ══════════════════ HELPERS ══════════════════ */
-const me = () => PEOPLE.find(p=>p.id===ui.me) || PEOPLE[0];
+const realMe = () => PEOPLE.find(p=>p.id===ui.me) || PEOPLE[0] || {role:'rep',name:'',id:ui.me};
+/** While previewing, the app behaves as that rep so you see exactly what they see. */
+const me = () => previewRepId
+  ? (PEOPLE.find(p=>p.id===previewRepId) || {id:previewRepId, name:'Rep', role:'rep'})
+  : realMe();
 const isRep = () => me().role==='rep';
 const isAdmin = () => me().role==='admin';
 const isOffice = () => me().role==='staff' || me().role==='admin';
@@ -715,6 +742,11 @@ function contactLine(a){
     </div></div>`;
 }
 
+function dismissWelcome(){
+  try{ localStorage.setItem('rephub_welcomed','1'); }catch(e){}
+  render();
+}
+
 function vToday(){
   const items=dueItems(ui.me);
   const overdue=items.filter(a=>days(a.nextDue)<0);
@@ -732,12 +764,26 @@ function vToday(){
     : emptyState('your calls');
   if(later.length) body+=`<h3 class="sub-h" style="color:var(--ink-muted)">Coming up</h3>`+later.slice(0,4).map(contactLine).join('');
 
+  const dueThisWeek = soon.length + overdue.length;
+  let welcomed = true;
+  try{ welcomed = localStorage.getItem('rephub_welcomed') === '1'; }catch(e){}
   return `${announceBanner()}
+    ${welcomed ? '' : `<div class="callout info"><strong>Welcome to Rep Hub</strong>
+      This shows the Growth Rings you look after, who is due a call, and the forms you need.
+      Tap a name to phone them, then log the call so the next one gets scheduled for you.
+      <div class="btnrow" style="margin-top:9px">
+        <button class="btn sm primary" onclick="dismissWelcome()">Got it</button>
+      </div></div>`}
+    <p class="row-sub" style="font-size:15px;color:var(--ink);margin:0 0 14px;line-height:1.5">
+      ${dueThisWeek
+        ? `<strong>${dueThisWeek} ${dueThisWeek===1?'person needs':'people need'} a call</strong>${overdue.length?` — ${overdue.length} already overdue`:''}.`
+        : (S.activities.length ? `Nothing due right now. Your next call is scheduled.` : `Nothing scheduled yet.`)}
+    </p>
     <div class="stats">
       <div class="stat click" onclick="setView('today')"><div class="n" style="color:var(--rust)">${overdue.length}</div><div class="l">Overdue</div></div>
       <div class="stat"><div class="n" style="color:var(--accent)">${soon.length}</div><div class="l">Due soon</div></div>
       <div class="stat click" onclick="setView('requests')"><div class="n">${reqs}</div><div class="l">Open requests</div></div>
-      <div class="stat click" onclick="setView('unaffiliated')"><div class="n">${S.members.filter(m=>m.repId===ui.me&&m.status==='active'&&!m.ringId).length}</div><div class="l">Members with no ring</div></div>
+      <div class="stat click" onclick="setView('unaffiliated')"><div class="n">${(S.membersNoRing||[]).filter(m=>m.status==='active').length}</div><div class="l">Members with no ring<br><span style="font-size:10px;opacity:.7">network-wide</span></div></div>
     </div>
     ${(()=>{ const t=getTimer();
       return t?`<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
@@ -839,7 +885,8 @@ function vRingDetail(){
 
 function vPeople(){
   const q=ui.q.toLowerCase();
-  const mem=S.members.filter(m=>m.repId===ui.me);
+  // Only people in this rep's own rings. Unaffiliated members live elsewhere.
+  const mem=S.members.filter(m=>m.repId===ui.me && m.ringId);
   const facs=S.facilitators.filter(f=>myRings(ui.me).some(r=>r.facId===f.id));
   let list=mem.filter(m=>!q||m.name.toLowerCase().includes(q)||m.business.toLowerCase().includes(q));
   if(ui.filter==='overdue') list=list.filter(m=>{const a=S.activities.find(x=>x.memberId===m.id&&x.nextDue);return a&&days(a.nextDue)<0;});
@@ -1013,7 +1060,7 @@ function vCallSheet(){
       <th>Who</th><th>Type</th><th>Ring</th><th>Phone</th><th>Due</th><th>Last spoke</th><th>Last time they said</th><th style="width:90px">Notes</th></tr></thead>
       <tbody>${rows.length?rows.map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join('')}<td class="writein"></td></tr>`).join('')
         :`<tr><td colspan="8" style="padding:18px;color:var(--ink-muted)">Nothing due in the next 45 days.</td></tr>`}</tbody></table></div>
-    <p class="row-sub" style="margin-top:12px">Phone the office at 800-394-7970 to have calls keyed in, or log them here when you're back.</p>`;
+    <p class="row-sub" style="margin-top:12px">Phone 540-212-9403 to have calls keyed in, or log them here when you're back.</p>`;
 }
 function exportCallSheet(repId){
   const items=dueItems(repId).filter(a=>days(a.nextDue)<=45);
@@ -1098,6 +1145,19 @@ function vOfficeDash(){
           </div></div>`;
       }
       return out;
+    })()}
+
+    ${(() => {
+      const due = dueItems(null).length;
+      const active = S.rings.filter(r=>r.status==='active').length;
+      if(due || !active) return '';
+      return `<div class="callout info"><strong>No calls are scheduled yet</strong>
+        ${active} active ring${active===1?'':'s'} and nothing due, so every rep will sign in to an empty screen.
+        Starting the cycle creates a first facilitator call for each ring, spread over coming weeks
+        so nobody opens the app to twenty calls at once.
+        <div class="btnrow" style="margin-top:9px">
+          <button class="btn sm primary" onclick="openStartCycle()">Start the call cycle</button>
+        </div></div>`;
     })()}
 
     <h3 class="sub-h">Needs your attention</h3>
@@ -1308,13 +1368,79 @@ function vMembersAll(){
       ${m.renews&&days(m.renews)<=90&&days(m.renews)>=0?`<span class="tag soon">renews ${fmtShort(m.renews)}</span>`:''}</div>`;}).join('')||`<div class="empty">Nobody matches.</div>`}`;
 }
 
+let bulkPick = new Set();
+function toggleBulk(id){
+  bulkPick.has(id) ? bulkPick.delete(id) : bulkPick.add(id);
+  renderContent();
+}
+function bulkPickAllMissing(){
+  bulkPick = new Set(S.rings.filter(r=>r.status==='active' && (!r.meetingRhythm || !r.meetingFormat)).map(r=>r.id));
+  renderContent();
+}
+function bulkClear(){ bulkPick = new Set(); renderContent(); }
+
+function openBulkEdit(){
+  if(!bulkPick.size){ toast('Pick some rings first'); return; }
+  openModal(`<h3>Set details on ${bulkPick.size} ring${bulkPick.size===1?'':'s'}</h3>
+    <p class="lead">Only the fields you fill in are changed. Facilitator, rep and status are left alone —
+      those are per-ring decisions.</p>
+    <form onsubmit="submitBulkEdit(event)">
+      <div class="field"><label>How often the group meets</label>
+        <select name="meetingFrequency">
+          <option value="">— leave as is —</option>
+          ${['Weekly','Monthly','Bi Monthly','Quarterly','Yearly','Other'].map(x=>`<option>${x}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>Meeting format</label>
+        <select name="meetingFormat">
+          <option value="">— leave as is —</option>
+          ${['In Person','Virtual','Hybrid'].map(x=>`<option>${x}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>Target group size</label>
+        <input type="number" name="capacity" min="2" max="20" placeholder="Leave blank to keep"></div>
+      <div id="bulkErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+      <button type="submit" class="btn primary">Apply to ${bulkPick.size}</button></div></form>`);
+}
+async function submitBulkEdit(e){
+  e.preventDefault();
+  const f=e.target.elements, err=document.getElementById('bulkErr');
+  const fields={
+    meetingFrequency:f.namedItem('meetingFrequency').value,
+    meetingFormat:f.namedItem('meetingFormat').value,
+    capacity:f.namedItem('capacity').value,
+  };
+  try{
+    const out = await API.bulkRings([...bulkPick], fields);
+    closeModal(); bulkClear();
+    toast(`${out.updated} ring${out.updated===1?'':'s'} updated`);
+    await loadFromServer(); render();
+  }catch(ex){
+    err.style.display='block';
+    err.textContent = ex.message || 'Could not update those rings';
+  }
+}
+
 function vAllRings(){
+  const missing = S.rings.filter(r=>r.status==='active' && (!r.meetingRhythm || !r.meetingFormat)).length;
   return `<div class="section-head"><div><h2>All Growth Rings</h2><div class="sub">Every ring across every rep, with health.</div></div>
     <button class="btn" onclick="ui.report='ring-roster';exportReport()">Export CSV</button></div>
-    ${S.rings.map(r=>{const h=ringHealth(r);return `<div class="row clicky" onclick="openRing('${r.id}')">
-      <div style="display:flex;gap:11px;align-items:flex-start;flex:1;min-width:0">${glyph(r.status)}
+    ${missing?`<div class="callout"><strong>${missing} ring${missing===1?'':'s'} missing meeting details</strong>
+      Setting a rhythm and format is what turns ring health from "not rated" into a real signal.
+      You can do them all at once rather than one at a time in Zoho.
+      <div class="btnrow" style="margin-top:9px">
+        <button class="btn sm primary" onclick="bulkPickAllMissing()">Select all ${missing}</button>
+      </div></div>`:''}
+    ${bulkPick.size?`<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span><strong>${bulkPick.size} selected</strong></span>
+      <span class="btnrow"><button class="btn sm primary" onclick="openBulkEdit()">Set details</button>
+      <button class="btn sm" onclick="bulkClear()">Clear</button></span></div>`:''}
+    ${S.rings.map(r=>{const h=ringHealth(r);return `<div class="row">
+      <div style="display:flex;gap:11px;align-items:flex-start;flex:1;min-width:0">
+        <input type="checkbox" ${bulkPick.has(r.id)?'checked':''} onclick="event.stopPropagation();toggleBulk('${r.id}')"
+               style="margin-top:4px;width:16px;height:16px;accent-color:var(--primary);flex-shrink:0">
+        <span class="clicky" onclick="openRing('${r.id}')" style="display:flex;gap:11px;align-items:flex-start;flex:1;min-width:0">${glyph(r.status)}
       <div class="row-main"><div class="row-title">${esc(r.name)}</div>
-      <div class="row-sub">${fac(r.facId)?esc(fac(r.facId).name):'—'} · ${pname(r.repId)} · ${ringMembers(r.id).length}/${r.capacity}${r.status==='active'&&!launchDone(r)?' · launch unfinished':''}${r.status==='active'&&(!r.meetDay||!r.meetTime)?' · needs meeting details':''}</div></div></div>
+      <div class="row-sub">${r.facName||(fac(r.facId)?esc(fac(r.facId).name):'—')} · ${r.repName||pname(r.repId)} · ${r.serverMemberCount||ringMembers(r.id).length}${r.capacity?'/'+r.capacity:''}${r.status==='active'&&!r.meetingRhythm?' · no meeting rhythm set':''}</div></div></span>
       <div style="text-align:right"><div class="status ${r.status}"><span class="dot"></span>${statusText(r.status)}</div>
       <div class="row-sub" style="margin-top:3px">${h===null?'Not rated yet':h+' · '+healthWord(h)}</div></div></div>`;}).join('')}`;
 }
@@ -1396,7 +1522,9 @@ async function submitInviteRep(e, contactId){
     });
     closeModal();
     openModal(`<h3>Account created</h3>
-      <p class="lead">Give ${esc(f.namedItem('name').value)} this password. It is shown once.</p>
+      <p class="lead">${out.emailed
+        ? `Their login has been emailed to ${esc(f.namedItem('email').value)}. The password is below too, in case they ask.`
+        : `Email isn't switched on, so pass this to ${esc(f.namedItem('name').value)} yourself. It is shown once.`}</p>
       <div class="card flat" style="text-align:center;padding:18px">
         <div style="font-family:ui-monospace,monospace;font-size:21px;font-weight:700;letter-spacing:.06em">${esc(out.tempPassword)}</div>
       </div>
@@ -1405,6 +1533,65 @@ async function submitInviteRep(e, contactId){
   }catch(ex){
     err.style.display='block';
     err.textContent = ex.message || 'Could not create that account';
+  }
+}
+
+/** Issue a new password. The old one cannot be read — it is hashed. */
+async function resetUserPassword(id, name){
+  openModal(`<h3>Reset the password for ${esc(name)}</h3>
+    <p class="lead">Passwords are stored hashed, so nobody — including you — can read the existing one.
+    This issues a new one, shown once.</p>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
+    <button class="btn primary" onclick="doResetPassword('${esc(id)}','${esc(name)}')">Issue a new password</button></div>`);
+}
+async function doResetPassword(id, name){
+  try{
+    const out = await API.resetPassword(id);
+    openModal(`<h3>New password for ${esc(name)}</h3>
+      <p class="lead">Shown once. Give it to them, and have them change it after signing in.</p>
+      <div class="card flat" style="text-align:center;padding:18px">
+        <div style="font-family:ui-monospace,monospace;font-size:21px;font-weight:700;letter-spacing:.06em">${esc(out.tempPassword)}</div>
+      </div>
+      <div class="row-sub" style="margin-top:8px">They sign in with ${esc(out.email)}</div>
+      <div class="m-actions"><button class="btn primary" onclick="closeModal();loadUsers()">Done</button></div>`);
+  }catch(ex){ toast(ex.message || 'Could not reset that password'); }
+}
+
+async function removeUser(id, name){
+  openModal(`<h3>Remove ${esc(name)}?</h3>
+    <p class="lead">They can no longer sign in. Nothing is deleted from Zoho, and anything they logged stays.
+    You can add them again later.</p>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
+    <button class="btn danger" onclick="doRemoveUser('${esc(id)}','${esc(name)}')">Remove access</button></div>`);
+}
+async function doRemoveUser(id, name){
+  try{
+    await API.removeUser(id);
+    closeModal(); toast(`${name} can no longer sign in`);
+    serverUsers = null; zohoReps = null; loadUsers();
+  }catch(ex){ toast(ex.message || 'Could not remove that account'); }
+}
+
+/** Reset someone's password and email them the new one. */
+async function resendLogin(id, name){
+  openModal(`<h3>Send ${esc(name)} a new login?</h3>
+    <p class="lead">Their current password stops working immediately and a new one is emailed to them.</p>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
+    <button class="btn primary" onclick="runResendLogin('${id}','${esc(name)}')">Send it</button></div>`);
+}
+async function runResendLogin(id, name){
+  openModal(`<h3>Sending…</h3>`);
+  try{
+    const out = await API.resendLogin(id);
+    openModal(`<h3>New login sent</h3>
+      <p class="lead">${out.emailed ? `Emailed to ${esc(name)}.` : `Email isn't switched on — pass this on yourself.`}</p>
+      <div class="card flat" style="text-align:center;padding:16px">
+        <div style="font-family:ui-monospace,monospace;font-size:20px;font-weight:700;letter-spacing:.06em">${esc(out.tempPassword)}</div>
+      </div>
+      <div class="m-actions"><button class="btn primary" onclick="closeModal();loadUsers()">Done</button></div>`);
+  }catch(e){
+    openModal(`<h3>Couldn't send</h3><p class="lead">${esc(e.message)}</p>
+      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
   }
 }
 
@@ -1428,11 +1615,12 @@ async function runInviteAll(){
   for(const r of todo){
     try{
       const out = await API.createUserFromZoho({contactId:r.contactId,name:r.name,email:r.email,role:'rep'});
-      done.push({name:r.name,email:r.email,password:out.tempPassword});
+      done.push({name:r.name,email:r.email,password:out.tempPassword,emailed:!!out.emailed});
     }catch(ex){ failed.push({name:r.name,error:ex.message}); }
   }
   openModal(`<h3>${done.length} account${done.length===1?'':'s'} created</h3>
-    <p class="lead">These passwords are shown once. Copy them now.</p>
+    <p class="lead">${done.filter(d=>d.emailed).length} of ${done.length} were emailed their login directly.
+      The passwords are below as well — shown once.</p>
     <div class="tbl-wrap" style="max-height:300px;overflow:auto"><table class="rep">
       <thead><tr><th>Rep</th><th>Email</th><th>Password</th></tr></thead>
       <tbody>${done.map(d=>`<tr><td>${esc(d.name)}</td><td>${esc(d.email)}</td>
@@ -1505,7 +1693,10 @@ function vTeam(){
   const reps=PEOPLE.filter(p=>p.role==='rep');
   const su = serverUsers;
   return `<div class="section-head"><div><h2>Reps</h2><div class="sub">Who covers what, and how to move rings between them.</div></div>
-    ${API.live ? `<button class="btn primary" onclick="openAddUser()">Add someone</button>` : ''}</div>
+    <div class="btnrow">
+      ${PEOPLE.some(p=>p.role==='rep') ? `<button class="btn" onclick="openPreviewPicker()">See a rep's view</button>` : ''}
+      ${API.live ? `<button class="btn primary" onclick="openAddUser()">Add someone</button>` : ''}
+    </div></div>
     ${API.live ? `
       <h3 class="sub-h">Accounts</h3>
       ${su === null ? `<div class="card flat"><div class="row-sub">Loading accounts…</div></div>` : ''}
@@ -1516,8 +1707,11 @@ function vTeam(){
           <div class="row-main"><div class="row-title">${esc(u.name)}</div>
             <div class="row-sub">${esc(u.email)}${u.region?' · '+esc(u.region):''}</div></div></div>
         <div class="row-actions">
+          <button class="btn sm" onclick="resendLogin('${u.id}','${esc(u.name)}')">Resend login</button>
           ${u.role==='rep' && !u.zoho_owner_id ? `<span class="tag overdue">not linked to Zoho</span>` : ''}
           <span class="tag ${u.role==='admin'?'info':u.role==='staff'?'ok':'later'}">${u.role==='rep'?'Rep':u.role==='staff'?'Office':'Director'}</span>
+          ${isAdmin() ? `<button class="btn sm" onclick="resetUserPassword('${esc(u.id)}','${esc(u.name)}')">Reset password</button>
+            ${u.id!==ui.me ? `<button class="btn sm danger" onclick="removeUser('${esc(u.id)}','${esc(u.name)}')">Remove</button>` : ''}` : ''}
         </div>
       </div>`).join('') : ''}
       ${Array.isArray(su) && su.some(u=>u.role==='rep' && !u.zoho_owner_id) ? `<div class="callout rust">
@@ -1542,6 +1736,7 @@ function vTeam(){
               <div class="row-sub">${r.rings} ring${r.rings===1?'':'s'}${r.regions&&r.regions.length?' · '+r.regions.slice(0,3).map(esc).join(', '):''}${r.email?' · '+esc(r.email):' · no email in Zoho'}</div>
             </div></div>
           <div class="row-actions">
+            <button class="btn sm" onclick="previewAsRep('${esc(r.contactId)}','${esc(r.name)}')">See their view</button>
             ${r.hasAccount
               ? `<span class="tag ok">has an account</span>`
               : r.email
@@ -1639,6 +1834,58 @@ function clearAnnounce(){ S.announcements.forEach(a=>a.active=false); save(); to
 function announceBanner(){
   const a=S.announcements.find(x=>x.active);
   return a?`<div class="callout"><strong>From the office</strong>${esc(a.text)}</div>`:'';
+}
+
+/* ══════════════════ STARTING THE CYCLE ══════════════════ */
+async function openStartCycle(){
+  openModal(`<h3>Start the call cycle</h3><p class="lead">Checking what's needed…</p>`);
+  let p;
+  try{ p = await API.cyclePreview(); }
+  catch(e){
+    openModal(`<h3>Couldn't check</h3><p class="lead">${esc(e.message)}</p>
+      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
+    return;
+  }
+  if(!p.willCreate){
+    openModal(`<h3>Nothing to schedule</h3>
+      <p class="lead">Every active ring already has a call booked.</p>
+      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
+    return;
+  }
+  openModal(`<h3>Start the call cycle</h3>
+    <p class="lead">Creates one facilitator call per ring, starting next Monday and spread
+      so each rep gets a manageable week.</p>
+    <div class="card flat">
+      <div class="kv"><span class="k">Rings to schedule</span><span>${p.willCreate}</span></div>
+      ${p.alreadyScheduled?`<div class="kv"><span class="k">Already booked</span><span>${p.alreadyScheduled}</span></div>`:''}
+      <div class="kv"><span class="k">Reps covered</span><span>${p.byRep.length}</span></div>
+    </div>
+    <div class="field"><label>Calls per rep, per week</label>
+      <select name="perWeek" id="cyclePerWeek">
+        ${[1,2,3,4,5].map(n=>`<option value="${n}" ${n===2?'selected':''}>${n} a week</option>`).join('')}
+      </select>
+      <div class="hint">Dale Savage has the most rings, so this decides how long his first round takes.</div></div>
+    <div class="card flat" style="max-height:150px;overflow:auto">
+      ${p.byRep.map(r=>`<div class="kv"><span>${esc(r.rep)}</span><span class="row-sub">${r.rings} ring${r.rings===1?'':'s'}</span></div>`).join('')}
+    </div>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
+    <button class="btn primary" onclick="runStartCycle()">Schedule them</button></div>`);
+}
+async function runStartCycle(){
+  const perWeek = parseInt(document.getElementById('cyclePerWeek').value,10)||2;
+  openModal(`<h3>Scheduling…</h3><p class="lead">Writing to Zoho. This takes a moment.</p>`);
+  try{
+    const out = await API.cycleStart(perWeek);
+    openModal(`<h3>${out.created} call${out.created===1?'':'s'} scheduled</h3>
+      <p class="lead">${out.created ? `Starting ${fmt(out.from)}, ${perWeek} a week per rep. Every rep now has a list when they sign in.` : esc(out.message||'')}</p>
+      ${out.failed?`<div class="callout rust"><strong>${out.failed} could not be created</strong>Check the Zoho fields are in place.</div>`:''}
+      <div class="m-actions"><button class="btn primary" onclick="closeModal();retryLoad()">Done</button></div>`);
+  }catch(e){
+    openModal(`<h3>Couldn't schedule</h3>
+      <p class="lead">${esc(e.message)}</p>
+      ${/read-only/i.test(e.message)?`<div class="callout">Writing is switched off. Set READ_ONLY to false once the Zoho fields are added.</div>`:''}
+      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
+  }
 }
 
 /* ══════════════════ MODALS ══════════════════ */
@@ -1995,7 +2242,42 @@ function openRing(id){ ui.ringId=id; ui.view='ringDetail'; closeSheet(); render(
 function openMember(id){ ui.memberId=id; ui.view='memberDetail'; closeSheet(); render(); }
 function openFac(id){ ui.facId=id; ui.view='facDetail'; closeSheet(); render(); }
 function login(id){ ui.me=id; ui.view=PEOPLE.find(p=>p.id===id).role==='rep'?'today':'dash'; render(); }
-function logout(){ API.setToken(null); ui.me=null; render(); }
+function logout(){ API.setToken(null); ui.me=null; previewRepId=null; render(); }
+
+/**
+ * Office/director only: look at the app exactly as one rep sees it.
+ * Useful before rollout — and the only honest way to check a rep's screen
+ * without logging in as them.
+ */
+async function previewAsRep(id, name){
+  previewRepId = id || null;
+  if(name && !PEOPLE.some(p=>p.id===id)) PEOPLE.push({id, name, role:'rep', region:''});
+  ui.view = 'today'; ui.ringId=null; ui.memberId=null; ui.eventId=null; ui.q='';
+  ui.calRep = null;
+  closeSheet(); closeModal(); render();
+  await loadFromServer();   // ask the server for that rep's scope
+  render();
+}
+async function endPreview(){
+  previewRepId = null;
+  ui.view = 'team';
+  render();
+  await loadFromServer();
+  render();
+}
+function openPreviewPicker(){
+  const reps = PEOPLE.filter(p=>p.role==='rep');
+  if(!reps.length){ toast('No rep accounts yet — create them first'); return; }
+  openModal(`<h3>See the app as a rep</h3>
+    <p class="lead">Shows exactly what they see. Nothing is changed, and you can leave at any time.</p>
+    ${reps.map(p=>`<div class="row clicky" onclick="closeModal();previewAsRep('${esc(p.id)}')">
+      <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
+        <div class="av">${initials(p.name)}</div>
+        <div class="row-main"><div class="row-title">${esc(p.name)}</div>
+        <div class="row-sub">${myRings(p.id).length} ring${myRings(p.id).length===1?'':'s'}</div></div></div>
+      <span class="tag info">view</span></div>`).join('')}
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button></div>`);
+}
 
 /** Local mode only: look at the app as a different person. */
 
@@ -2014,7 +2296,8 @@ function loginScreen(){
       </form>
     </div>
     <div id="setupNote"></div>
-    <p class="tag" style="margin-top:16px;font-size:12.5px">Trouble signing in? Call the office on 800-394-7970.</p>
+    <p class="tag" style="margin-top:16px;font-size:12.5px">Trouble signing in? Call 540-212-9403.</p>
+    <p class="tag" style="margin-top:18px;font-size:11.5px;opacity:.75">Managed by Prosynergy Bookkeeping</p>
   </div></div>`;
 }
 
@@ -2324,15 +2607,17 @@ const adapt = {
 async function loadFromServer(){
   if(!API.live) return;
   loading = true;
+  // When previewing, ask the server for that rep's scope rather than ours.
+  const asRep = previewRepId || null;
   try{
     const [rawRings, rawMembers, rawActs, rawFacs, rawEvents,
            rawVisits, rawNoRing, rawTime, rawExp] = await Promise.all([
-      API.rings(),
-      API.members(),
-      API.activities(),
+      API.rings(asRep),
+      API.members(asRep),
+      API.activities(asRep),
       API.facilitators().catch(()=>[]),
       API.events().catch(()=>[]),
-      API.visits().catch(()=>[]),
+      API.visits(asRep).catch(()=>[]),
       API.membersNoRingLive().catch(()=>[]),
       API.time().catch(()=>[]),
       API.expenses().catch(()=>[]),
@@ -2342,37 +2627,34 @@ async function loadFromServer(){
     const ringToRep = {};
     rings.forEach(r=>{ ringToRep[r.id] = r.repId; });
 
+    loadError = null;
     S.rings = rings;
     S.members = (rawMembers||[]).map(m=>adapt.member(m, ringToRep));
     S.activities = (rawActs||[]).map(adapt.activity);
+    S.visits = (rawVisits||[]).map(adapt.visit);
+    S.timeEntries = (rawTime||[]).map(adapt.timeEntry);
+    S.expenses = (rawExp||[]).map(adapt.expense);
 
-    // Facilitators are Contacts; the app keeps them in their own list
+    // Events the office flagged for the portal.
+    S.events = (rawEvents||[]).map(adapt.event).filter(e=>e.date);
+
+    // Facilitators are Contacts flagged in Zoho, plus anyone named on a ring.
     S.facilitators = (rawFacs||[]).map(f=>({
-      id: f.id, name: f.name, phone: f.phone||'', email: f.email||'',
-      business: f.business||'—', since: f.joined||'',
+      id:f.id, name:f.name, phone:f.phone||'', email:f.email||'',
+      business:f.business||'—', since:f.joined||'',
     }));
-    // plus any facilitator named on a ring but not flagged in Zoho
     rings.forEach(r=>{
       if(r.facId && !S.facilitators.some(f=>f.id===r.facId)){
         S.facilitators.push({id:r.facId, name:r.facName, phone:'', email:'', business:'—', since:''});
       }
     });
 
-    loadError = null;
-    S.visits = (rawVisits||[]).map(adapt.visit);
-    S.timeEntries = (rawTime||[]).map(adapt.timeEntry);
-    S.expenses = (rawExp||[]).map(adapt.expense);
-
-    // Members with no Growth Ring at all — they are not in any ring, so the
-    // ring-scoped member query above cannot find them. Merge them in.
+    // Members with no Growth Ring at all are not in any ring, so the
+    // ring-scoped query above cannot find them. Merge them in.
     const noRing = (rawNoRing||[]).map(m=>adapt.member(m, {}));
     noRing.forEach(m=>{ if(!S.members.some(x=>x.id===m.id)) S.members.push({...m, repId: ui.me}); });
 
-    // Events the office flagged for the portal. Most carry no Regional Rep,
-    // so every rep sees them all — summits and info meetings are network-wide.
-    S.events = (rawEvents||[]).map(adapt.event).filter(e=>e.date);
-
-    // Make every rep visible to the app, keyed by their Contact id
+    // Every rep the data mentions, keyed by their Zoho contact id.
     rings.forEach(r=>{
       if(r.repId && !PEOPLE.some(p=>p.id===r.repId)){
         PEOPLE.push({ id:r.repId, name:r.repName||'Rep', role:'rep', region:r.regionName||'' });
@@ -2390,6 +2672,36 @@ async function loadFromServer(){
   }
 }
 let loadError = null;
+
+/**
+ * Everything the first screen doesn't need. Loaded after the app is already
+ * on screen so a rep isn't staring at a spinner while nine calls complete.
+ */
+async function loadSecondary(){
+  if(!API.live) return;
+  const [facs, events, visits, time, exp, noRing] = await Promise.all([
+    API.facilitators().catch(()=>[]),
+    API.events().catch(()=>[]),
+    API.visits().catch(()=>[]),
+    API.time().catch(()=>[]),
+    API.expenses().catch(()=>[]),
+    isOffice() ? API.membersNoRingLive().catch(()=>[]) : Promise.resolve([]),
+  ]);
+
+  (facs||[]).forEach(f=>{
+    if(!S.facilitators.some(x=>x.id===f.id)){
+      S.facilitators.push({id:f.id,name:f.name,phone:f.phone||'',email:f.email||'',
+        business:f.business||'—',since:f.joined||''});
+    }
+  });
+  S.events = (events||[]).map(adapt.event).filter(e=>e.date);
+  S.visits = (visits||[]).map(adapt.visit);
+  S.timeEntries = (time||[]).map(adapt.timeEntry);
+  S.expenses = (exp||[]).map(adapt.expense);
+  S.membersNoRing = (noRing||[]).map(m=>({...adapt.member(m, {}), repId:null}));
+  save();
+  render();
+}
 
 /**
  * What to show when a screen has nothing in it. Without demo data this is a
@@ -2470,7 +2782,9 @@ function render(){
           return `<button class="rail-link ${ui.view===id?'active':''}" onclick="setView('${id}')"><span>${label}</span>${b?`<span class="pill ${id==='today'||id==='approvals'||id==='dash'?'':'muted'}">${b}</span>`:''}</button>`;
         }).join('')).join('')}</div>
       <div class="rail-foot">
-        <button class="rail-link" onclick="logout()">Sign out</button></div>
+        <button class="rail-link" onclick="logout()">Sign out</button>
+        <div style="font-size:10.5px;color:var(--ink-faint);padding:10px 11px 0;line-height:1.5">
+          Managed by Prosynergy Bookkeeping<br>540-212-9403</div></div>
     </nav>
     <div class="main">
       <div class="topbar">
@@ -2479,6 +2793,9 @@ function render(){
         <div class="top-right">
           <button class="bell" onclick="openNotifs()">🔔${nc?`<span class="pill">${nc}</span>`:''}</button>
         </div></div>
+      ${previewRepId?`<div class="banner note" style="background:var(--info-soft);color:var(--info);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <span>Viewing as <strong>${esc((PEOPLE.find(p=>p.id===previewRepId)||{}).name||'a rep')}</strong> — this is their screen, exactly as they see it.</span>
+        <button class="btn sm" onclick="endPreview()">Back to my view</button></div>`:''}
       ${loadError?`<div class="banner note" style="background:var(--rust-soft);color:var(--rust)">
         Couldn't reach the server — showing the last data loaded.
         <button class="btn sm" style="margin-left:8px" onclick="retryLoad()">Try again</button></div>`:''}
@@ -2507,7 +2824,19 @@ const money = n => '$' + Number(n || 0).toFixed(2);
  * network-wide — so a rep sees all of them. Filtering by rep would leave the
  * calendar empty, which is worse than showing one event too many.
  */
-const myEvents = id => S.events.filter(e => !id || !e.repId || e.repId === id || API.live);
+/**
+ * Events for a rep's calendar.
+ * Most Symbiz events carry no Regional Rep — summits and info meetings are
+ * network-wide and every rep should see them. Those with a rep set are shown
+ * only to that rep, which is what makes filtering by rep meaningful.
+ */
+/**
+ * Events for one rep. Events carrying no Regional Rep are network-wide
+ * (summits, info meetings) and show for everyone; the rest filter properly.
+ * Previously this returned everything whenever the app was live, which made
+ * the rep picker do nothing at all.
+ */
+const myEvents = id => S.events.filter(e => !id || !e.repId || e.repId === id);
 const myVisits = id => S.visits.filter(v => !id || v.repId === id);
 const eventRegs = eid => S.registrations.filter(r => r.eventId === eid);
 const myTime = id => S.timeEntries.filter(t => t.repId === id);
@@ -2539,6 +2868,7 @@ function nextRecurring(meetDay, fromISO) {
 /** One merged stream: local events, scheduled ring visits, and recurring group meetings. */
 function calendarItems(repId) {
   const out = [];
+  const mine = r => !repId || r.repId === repId;
   myEvents(repId).forEach(e => out.push({
     kind: 'event', date: e.date, time: e.time, title: e.title,
     sub: `${e.type} · ${e.location}`, id: e.id, regs: eventRegs(e.id).length
@@ -2547,7 +2877,7 @@ function calendarItems(repId) {
     const g = ring(v.ringId);
     out.push({ kind: 'visit', date: v.date, time: v.time, title: `Visit — ${g ? g.name : ''}`, sub: v.location, id: v.id });
   });
-  S.rings.filter(r => r.status === 'active' && (!repId || r.repId === repId) && r.meetDay).forEach(r => {
+  S.rings.filter(r => r.status === 'active' && mine(r) && r.meetDay).forEach(r => {
     const d = nextRecurring(r.meetDay);
     if (d) out.push({
       kind: 'meeting', date: d, time: r.meetTime,
@@ -2604,6 +2934,9 @@ function vCalendar() {
       ${[['all', 'Everything'], ['event', 'Local events'], ['visit', 'Ring visits'], ['meeting', 'Group meetings']].map(([k, l]) =>
         `<button class="chip ${(ui.calFilter || 'all') === k ? 'on' : ''}" onclick="ui.calFilter='${k}';renderContent()">${l}</button>`).join('')}
     </div>
+    ${isOffice() && ui.calRep ? `<div class="callout info" style="font-size:12.5px">
+      Showing ${esc(pname(ui.calRep) || 'this rep')}'s visits and group meetings. Summits and info meetings
+      have no rep set in Zoho, so they appear for everyone.</div>` : ''}
     <div class="btnrow" style="margin-bottom:14px">
       ${isRep() ? `<button class="btn primary" onclick="openVisit()">Schedule a ring visit</button>` : ''}
       ${isOffice() ? `<button class="btn primary" onclick="openEventForm()">Add an event</button>` : ''}
@@ -2653,8 +2986,9 @@ function vEventDetail() {
 
 /* ══════════════════ MEMBERS NOT IN A GROWTH RING ══════════════════ */
 function vUnaffiliated() {
-  const scope = isRep() ? ui.me : null;
-  const list = S.members.filter(m => m.status === 'active' && !m.ringId && (!scope || m.repId === scope));
+  const list = (S.membersNoRing && S.membersNoRing.length)
+    ? S.membersNoRing.filter(m => m.status === 'active')
+    : S.members.filter(m => m.status === 'active' && !m.ringId);
   const byRegion = {};
   list.forEach(m => {
     const k = m.region || (PEOPLE.find(p => p.id === m.repId) || {}).region || 'Unassigned';
@@ -2770,14 +3104,14 @@ function vTimesheet() {
       <div class="stat"><div class="n" style="color:var(--accent)">${money(pendingExp)}</div><div class="l">Awaiting approval</div></div>
     </div>
     ${(() => { const t = getTimer();
-      return (isRep() && t) ? `<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      return t ? `<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
         <div><strong>Timer running — ${timerLabel(t)}</strong>${esc(t.category)}${t.note ? ' · ' + esc(t.note) : ''}</div>
         <div class="btnrow"><button class="btn sm primary" onclick="stopTimer()">Stop and save</button>
         <button class="btn sm" onclick="cancelTimer()">Discard</button></div></div>` : ''; })()}
     <div class="btnrow" style="margin-bottom:8px">
-      ${isRep() ? `${getTimer() ? '' : `<button class="btn primary" onclick="openTimerStart()">Start timer</button>`}
+      ${getTimer() ? '' : `<button class="btn primary" onclick="openTimerStart()">Start timer</button>`}
       <button class="btn" onclick="openTime()">Log hours</button>
-      <button class="btn primary" onclick="openExpense()">Add an expense</button>` : ''}
+      <button class="btn primary" onclick="openExpense()">Add an expense</button>
       <button class="btn" onclick="timesheetPDF('${isRep() ? '' : ''}' || (isRep()?ui.me:(ui.tsRep||'r1')))">Timesheet PDF</button>
       <button class="btn" onclick="expenseReportPDF(isRep()?ui.me:(ui.tsRep||'r1'))">Expense claim PDF</button>
       <button class="btn" onclick="exportAccounting()">Export CSV</button>
@@ -3632,16 +3966,15 @@ const CHECKS = [
 
   /* ---- the eleven requests from the email ---- */
   { group: 'Requested features', name: '1. Members not in a Growth Ring, by region', run: () => {
-      // Passing does not require anyone to be unaffiliated — if every member has
-      // a ring, that is good news, not a failure. What must hold is that the
-      // screen builds and lists whoever has no ring.
+      // Members with no ring live in the normal member list with ringId unset.
+      // Match on record id, not display name: names carry #, apostrophes and
+      // other characters that change once escaped for HTML.
       const none = S.members.filter(m => m.status === 'active' && !m.ringId);
       const view = vUnaffiliated();
       if (!view || view.length < 100) return false;
-      return none.length === 0
-        ? /Everyone is in a Growth Ring|No ring/i.test(view)
-        : none.every(m => view.includes(m.name)); },
-    why: 'Keturah asked for members with no group. Passes whether or not any currently exist.' },
+      if (!none.length) return /Everyone is in a Growth Ring|nobody|no members/i.test(view);
+      return none.slice(0, 5).every(m => view.includes(m.id)); },
+    why: 'Keturah asked for members with no group. They belong to the network, not to one rep.' },
   { group: 'Requested features', name: '2. Calendar carries local events alongside ring meetings', run: () => {
       // Passing must not depend on a particular event type existing. What has to
       // hold is that events reach the calendar and are distinguishable from
@@ -3891,6 +4224,7 @@ function signInAs(user){
    loadFromServer, refreshMode and signInAs are function declarations and are
    already globals — reassigning them here would make each call recurse. */
 window.adapt=adapt;
+Object.defineProperty(window,'bulkPick',{get:()=>bulkPick,set:v=>{bulkPick=v;}});
 window.refreshMode=refreshMode; window.loadFromServer=loadFromServer;
 window.signInAs=signInAs; window.checkSetup=checkSetup;
 Object.defineProperty(window,'loading',{get:()=>loading});
