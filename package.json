@@ -1,0 +1,29 @@
+{
+  "name": "rephub-netlify",
+  "version": "1.0.0",
+  "description": "Rep Hub — Symbiz Network. Netlify deployment: static front-end + serverless API + scheduled reminders.",
+  "private": true,
+  "scripts": {
+    "build": "echo 'Static site — nothing to compile'",
+    "dev": "netlify dev",
+    "test": "node --test test/*.test.js",
+    "seed": "node scripts/seed-users.js",
+    "setup:zoho": "node scripts/zoho-token.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@netlify/functions": "^2.8.1",
+    "serverless-http": "^3.2.0",
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^6.9.14",
+    "helmet": "^7.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "pg-mem": "^2.8.1"
+  }
+}

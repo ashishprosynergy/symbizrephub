@@ -1,0 +1,46 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+  command = "npm run build"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# The whole API lives behind one function. Netlify routes /api/* to it and
+# Express handles the sub-paths, so adding a route needs no config change.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+# Single-page app: unknown paths serve index.html rather than 404.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["pg"]
+
+# ── Scheduled functions (replace node-cron; Netlify runs these for you) ──
+# Times are UTC. 11:00 UTC = 07:00 America/New_York during EDT.
+[functions."weekly-digest"]
+  schedule = "0 11 * * 1"
+
+[functions."overdue-nudge"]
+  schedule = "0 12 * * 3"
+
+[functions."office-summary"]
+  schedule = "0 11 1 * *"
+
+[functions."sync-flush"]
+  schedule = "*/15 * * * *"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
