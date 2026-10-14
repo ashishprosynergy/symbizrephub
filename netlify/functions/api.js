@@ -43,6 +43,22 @@ app.use(async (req, res, next) => {
   next();
 });
 
+/**
+ * Netlify does not always rewrite the path before the function sees it: the
+ * event can arrive as "/api/setup/status" OR "/.netlify/functions/api/setup/status"
+ * depending on how the redirect is applied. Stripping a single fixed prefix is
+ * therefore unreliable — normalise here instead, so every route matches
+ * whichever form turns up.
+ */
+app.use((req, res, next) => {
+  const strip = ['/.netlify/functions/api', '/api'];
+  for (const prefix of strip) {
+    if (req.url === prefix) { req.url = '/'; break; }
+    if (req.url.startsWith(prefix + '/')) { req.url = req.url.slice(prefix.length); break; }
+  }
+  next();
+});
+
 app.get('/healthz', async (req, res) => {
   const out = { ok: true, time: new Date().toISOString() };
   try { out.zoho = await zoho.ping(); }
@@ -64,8 +80,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-module.exports.handler = serverless(app, {
-  // Netlify mounts the function at /.netlify/functions/api — strip it so
-  // Express sees the path the client actually asked for.
-  basePath: '/.netlify/functions/api',
-});
+// No basePath here: the middleware above normalises the path instead, which
+// works whichever form Netlify delivers.
+module.exports.handler = serverless(app);
