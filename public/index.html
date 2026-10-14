@@ -576,23 +576,54 @@ function lastFacContact(facId){
 function launchDone(r){ return r.launchSteps.length===LAUNCH_STEPS.length; }
 
 /* Ring health: attendance + contact recency + capacity fill */
+/**
+ * Ring health, or null when there is nothing to judge it on.
+ *
+ * Symbiz's rings mostly have no meeting rhythm, visit dates or attendance
+ * recorded yet. Scoring those as "at risk" would flag all 81 and tell the
+ * office nothing. A ring with no data is UNRATED, which is a different
+ * problem — one of data entry, surfaced separately.
+ */
 function ringHealth(r){
-  if(r.status!=='active') return null;
-  const mem=ringMembers(r.id); let score=0;
-  const mt=S.meetings.filter(m=>m.ringId===r.id).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,3);
-  if(mt.length){
-    const rate=mt.reduce((s,m)=>s+(m.attended.length/Math.max(1,m.attended.length+m.absent.length)),0)/mt.length;
-    score += rate*45;
-  } else score += 12;
-  const fc=lastFacContact(r.facId);
-  const gap=fc?Math.abs(days(fc.date)):999;
-  score += gap<=freqDays(r.facFreq)?30 : gap<=freqDays(r.facFreq)*1.5?18:5;
-  score += Math.min(25,(mem.length/Math.max(1,r.capacity))*25);
-  if(!launchDone(r)) score -= 12;
-  return Math.max(0,Math.min(100,Math.round(score)));
+  if(r.status !== 'active') return null;
+  const mts = S.meetings.filter(m => m.ringId === r.id);
+  const members = ringMembers(r.id).length || r.serverMemberCount || 0;
+  // Member count alone says how big a group is, not whether it is working.
+  // Health needs evidence of activity: meetings held, a rep visit, or at
+  // least an agreed meeting rhythm.
+  const hasSignal = mts.length || r.lastRepVisit || r.meetingRhythm;
+  if(!hasSignal) return null;              // nothing recorded — unrated
+
+  let score = 0, weight = 0;
+
+  if(mts.length){
+    const recent = mts.slice(0,3);
+    const rate = recent.reduce((a,m)=>{
+      const total = (m.attended||[]).length + (m.absent||[]).length;
+      return a + (total ? (m.attended||[]).length/total : 0);
+    },0)/recent.length;
+    score += rate*40; weight += 40;
+  }
+
+  if(r.lastRepVisit){
+    const gap = Math.abs(days(r.lastRepVisit));
+    score += gap<=180 ? 30 : gap<=365 ? 18 : 5;
+    weight += 30;
+  }
+
+  if(r.capacity){
+    score += Math.min(20, (members/Math.max(1,r.capacity))*20);
+    weight += 20;
+  }
+
+  if(r.meetingRhythm){ score += 10; weight += 10; }
+
+  if(!weight) return null;
+  return Math.max(0, Math.min(100, Math.round((score/weight)*100)));
 }
-function healthWord(h){ return h>=75?'Healthy':h>=50?'Needs attention':'At risk'; }
-function healthCls(h){ return h>=75?'':h>=50?'warn':'bad'; }
+
+function healthWord(h){ return h===null?'Not rated yet':h>=75?'Healthy':h>=50?'Needs attention':'At risk'; }
+function healthCls(h){ return h===null?'':h>=75?'':h>=50?'warn':'bad'; }
 
 function toast(msg){
   const w=document.getElementById('toasts');
@@ -608,8 +639,14 @@ function notifications(){
       out.push({t:`${r.name} is waiting on approval`, s:`Submitted by ${pname(r.repId)}`, go:()=>setView('approvals')}));
     const od=dueItems(null).filter(a=>days(a.nextDue)<-30);
     if(od.length) out.push({t:`${od.length} contact${od.length===1?' is':'s are'} more than a month overdue`, s:'Across the network', go:()=>setView('coverage')});
-    S.rings.filter(r=>r.status==='active'&&ringHealth(r)<50).forEach(r=>
-      out.push({t:`${r.name} is at risk`, s:`Health ${ringHealth(r)} · ${pname(r.repId)}`, go:()=>setView('allrings')}));
+    // Only genuinely rated, genuinely struggling rings. An alert that fires
+    // on everything is noise, and gets ignored.
+    const risky = S.rings.filter(r=>r.status==='active')
+      .map(r=>({r,h:ringHealth(r)}))
+      .filter(x=>x.h!==null && x.h<50);
+    risky.slice(0,5).forEach(x=>
+      out.push({t:`${x.r.name} is at risk`, s:`Health ${x.h} · ${x.r.repName||pname(x.r.repId)}`, go:()=>setView('allrings')}));
+    if(risky.length>5) out.push({t:`${risky.length-5} more rings at risk`, s:'See the Rings screen', go:()=>setView('allrings')});
     return out;
   }
   dueItems(ui.me).forEach(a=>{
@@ -737,7 +774,7 @@ function vMyRings(){
       </div>
       <div style="text-align:right">
         <div class="status ${r.status}"><span class="dot"></span>${statusText(r.status)}</div>
-        ${h!==null?`<div class="row-sub" style="margin-top:3px">Health ${h}</div>`:''}
+        <div class="row-sub" style="margin-top:3px">${h===null?'Not rated yet':'Health '+h}</div>
       </div></div>`;
   }).join('')||emptyState('your Growth Rings', "You have no Growth Rings yet. The office assigns them in Zoho.");
   return `<div class="section-head"><div><h2>My Growth Rings</h2><div class="sub">Groups you organize and support.</div></div>
@@ -776,7 +813,7 @@ function vRingDetail(){
     <div class="section-head">
       <div><h2>${esc(r.name)}</h2><div class="sub">${f?esc(f.name):'no facilitator'} · ${r.facFreq.toLowerCase()} facilitator calls · ${r.memFreq.toLowerCase()} member calls · meets ${r.meetingRhythm.toLowerCase()}</div></div>
       <div style="text-align:right"><div class="status ${r.status}"><span class="dot"></span>${statusText(r.status)}</div>
-      ${h!==null?`<div class="row-sub" style="margin-top:4px">Health ${h} · ${healthWord(h)}</div>`:''}</div>
+      <div class="row-sub" style="margin-top:4px">${h===null?'Not rated yet — no meeting or visit detail in Zoho':'Health '+h+' · '+healthWord(h)}</div></div>
     </div>
     ${alert}
     ${h!==null?`<div class="bar ${healthCls(h)}" style="margin-bottom:16px"><span style="width:${h}%"></span></div>`:''}
@@ -1037,7 +1074,32 @@ function vOfficeDash(){
       <div class="stat"><div class="n" style="color:var(--primary)">+${newM}</div><div class="l">Joined in 2026</div></div>
       <div class="stat click" onclick="setView('insights')"><div class="n" style="color:var(--rust)">−${exits}</div><div class="l">Left in 2026</div></div>
     </div>
-    ${atRisk.length?`<div class="callout rust"><strong>${atRisk.length} ring${atRisk.length===1?'':'s'} at risk</strong>${atRisk.map(r=>esc(r.name)+' ('+pname(r.repId)+')').join(', ')}</div>`:`<div class="callout ok"><strong>No rings at risk</strong>Every active group is scoring above 50.</div>`}
+    ${(() => {
+      const rated = rings.map(r=>({r, h:ringHealth(r)})).filter(x=>x.h!==null);
+      const risky = rated.filter(x=>x.h<50);
+      const unrated = rings.length - rated.length;
+
+      let out = '';
+      if(risky.length){
+        const show = risky.slice(0,6).map(x=>esc(x.r.name)).join(', ');
+        out += `<div class="callout rust"><strong>${risky.length} ring${risky.length===1?'':'s'} at risk</strong>
+          ${show}${risky.length>6?` and ${risky.length-6} more`:''}
+          <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="setView('allrings')">See them</button></div></div>`;
+      } else if(rated.length){
+        out += `<div class="callout ok"><strong>No rings at risk</strong>Every rated group is scoring above 50.</div>`;
+      }
+
+      if(unrated){
+        out += `<div class="callout"><strong>${unrated} ring${unrated===1?'':'s'} cannot be rated yet</strong>
+          They have no meeting rhythm, visit dates or attendance recorded in Zoho, so there is nothing to score.
+          Filling those in is what turns this into a useful signal.
+          <div class="btnrow" style="margin-top:9px">
+            <button class="btn sm" onclick="ui.report='missing-detail';setView('reports')">See what's missing</button>
+          </div></div>`;
+      }
+      return out;
+    })()}
+
     <h3 class="sub-h">Needs your attention</h3>
     ${S.rings.filter(r=>r.status==='pending').map(r=>`<div class="row clicky" onclick="setView('approvals')">
       <div class="row-main"><div class="row-title">${esc(r.name)}</div><div class="row-sub">${pname(r.repId)} · submitted ${fmt(r.createdAt)}</div></div>
@@ -1254,7 +1316,7 @@ function vAllRings(){
       <div class="row-main"><div class="row-title">${esc(r.name)}</div>
       <div class="row-sub">${fac(r.facId)?esc(fac(r.facId).name):'—'} · ${pname(r.repId)} · ${ringMembers(r.id).length}/${r.capacity}${r.status==='active'&&!launchDone(r)?' · launch unfinished':''}${r.status==='active'&&(!r.meetDay||!r.meetTime)?' · needs meeting details':''}</div></div></div>
       <div style="text-align:right"><div class="status ${r.status}"><span class="dot"></span>${statusText(r.status)}</div>
-      ${h!==null?`<div class="row-sub" style="margin-top:3px">${h} · ${healthWord(h)}</div>`:''}</div></div>`;}).join('')}`;
+      <div class="row-sub" style="margin-top:3px">${h===null?'Not rated yet':h+' · '+healthWord(h)}</div></div></div>`;}).join('')}`;
 }
 
 function vInsights(){
