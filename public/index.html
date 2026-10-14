@@ -348,7 +348,9 @@ const API = {
   setupStatus(){ return this.call('/setup/status'); },
   setup(d){ return this.call('/setup',{method:'POST',body:JSON.stringify(d)}); },
   createUser(d){ return this.call('/admin/users',{method:'POST',body:JSON.stringify(d)}); },
-  users(){ return this.call('/admin/users'); }
+  users(){ return this.call('/admin/users'); },
+  repsFromZoho(){ return this.call('/admin/reps-from-zoho'); },
+  createUserFromZoho(d){ return this.call('/admin/users/from-zoho',{method:'POST',body:JSON.stringify(d)}); }
 };
 
 /* Offline write queue — a rep with no signal keeps working. */
@@ -384,13 +386,8 @@ const TODAY = new Date('2026-09-18T09:00:00');
 const TODAY_S = '2026-09-18';
 const KEY = 'rephub_v3_symbiz';
 
-const PEOPLE = [
-  {id:'r1', name:'Aaron Yoder', role:'rep', email:'aaron@symbiz.org', region:'Lancaster PA'},
-  {id:'r2', name:'Miriam Hershberger', role:'rep', email:'miriam@symbiz.org', region:'Holmes County OH'},
-  {id:'r3', name:'Titus Weaver', role:'rep', email:'titus@symbiz.org', region:'Shenandoah VA'},
-  {id:'s1', name:'Keturah Leid', role:'staff', email:'keturah@symbiz.org', title:'Member Services Assistant'},
-  {id:'s2', name:'Jeremy Sensenig', role:'admin', email:'jeremy@symbiz.org', title:'Executive Director'}
-];
+/** Filled from the server at sign-in. Never hardcoded. */
+const PEOPLE = [];
 const OUTCOMES = ['Connected','No answer','Left voicemail','Rescheduled'];
 const EXIT_REASONS = ['Cost of membership','Time commitment','Business closed or sold','Moved away','Group not a fit','Relational conflict','Other'];
 const LAUNCH_STEPS = ['Facilitator briefed on format','Meeting date and place set','All members invited','Covenant and expectations reviewed','First meeting held','Next meeting scheduled'];
@@ -425,102 +422,29 @@ const CALL_PROMPTS = {
 };
 
 /* ══════════════════ SEED ══════════════════ */
+/**
+ * An empty store. All real data comes from the server; nothing is invented
+ * here. Screens are written to read correctly when these are empty, which is
+ * what a new deployment looks like before Zoho is connected.
+ */
 function seed(){
   return {
-    facilitators:[
-      {id:'f1',name:'David Zook',phone:'717-555-0142',email:'dzook@example.org',business:'Zook Woodworking',since:'2023-06-01'},
-      {id:'f2',name:'Naomi King',phone:'717-555-0188',email:'nking@example.org',business:'King Family Farms',since:'2026-09-01'},
-      {id:'f3',name:'Levi Esh',phone:'330-555-0119',email:'lesh@example.org',business:'Esh Welding',since:'2026-09-01'},
-      {id:'f4',name:'Ruth Beiler',phone:'330-555-0167',email:'rbeiler@example.org',business:'Beiler Quilts',since:'2022-11-01'},
-      {id:'f5',name:'Mark Weaver',phone:'540-555-0133',email:'mweaver@example.org',business:'Weaver Orchards',since:'2026-08-01'}
-    ],
-    rings:[
-      {id:'g1',name:'Lancaster Founders Circle',facId:'f1',facFreq:'Quarterly',memFreq:'Annual',status:'active',repId:'r1',createdAt:'2026-01-10',capacity:8,launchSteps:[0,1,2,3,4,5],meetingRhythm:'Monthly',meetDay:'2nd Tuesday',meetTime:'7:00 PM',meetPlace:'Zook Woodworking shop, Gap PA'},
-      {id:'g2',name:'Harvest Table Group',facId:'f2',facFreq:'Semi-Annual',memFreq:'Annual',status:'pending',repId:'r1',createdAt:'2026-09-10',capacity:8,launchSteps:[],meetingRhythm:'Monthly',meetDay:'1st Thursday',meetTime:'7:00 PM',meetPlace:'To be set'},
-      {id:'g3',name:'Cornerstone Builders',facId:'f3',facFreq:'Quarterly',memFreq:'Semi-Annual',status:'rejected',repId:'r2',createdAt:'2026-09-05',capacity:8,launchSteps:[],meetingRhythm:'Monthly',meetDay:'3rd Monday',meetTime:'6:30 PM',meetPlace:'To be set',rejectionReason:"Levi hasn't confirmed he's willing to facilitate. Please reconfirm before resubmitting."},
-      {id:'g4',name:'Maple Ridge Fellowship',facId:'f4',facFreq:'Quarterly',memFreq:'Annual',status:'active',repId:'r2',createdAt:'2025-11-02',capacity:6,launchSteps:[0,1,2,3,4,5],meetingRhythm:'Monthly',meetDay:'2nd Thursday',meetTime:'6:30 PM',meetPlace:'Beiler home, Mt Hope OH'},
-      {id:'g5',name:'Shenandoah Stewards',facId:'f5',facFreq:'Semi-Annual',memFreq:'Annual',status:'active',repId:'r3',createdAt:'2026-08-20',capacity:8,launchSteps:[0,1],meetingRhythm:'Every 6 weeks',meetDay:'1st Wednesday',meetTime:'7:00 PM',meetPlace:'Weaver Orchards office, VA'}
-    ],
-    members:[
-      {id:'m1',name:'John Stoltzfus',ringId:'g1',repId:'r1',phone:'717-555-0201',email:'jstoltzfus@example.org',business:'Stoltzfus Cabinetry',joined:'2024-03-12',renews:'2027-03-12',status:'active'},
-      {id:'m2',name:'Elam Fisher',ringId:'g1',repId:'r1',phone:'717-555-0212',email:'efisher@example.org',business:'Fisher Logistics',joined:'2024-06-01',renews:'2026-10-01',status:'active'},
-      {id:'m3',name:'Sadie Blank',ringId:'g1',repId:'r1',phone:'717-555-0224',email:'sblank@example.org',business:'Blank & Co Bookkeeping',joined:'2025-02-18',renews:'2027-02-18',status:'active'},
-      {id:'m4',name:'Amos Glick',ringId:'g4',repId:'r2',phone:'330-555-0231',email:'aglick@example.org',business:'Glick Construction',joined:'2023-09-05',renews:'2026-09-30',status:'active'},
-      {id:'m5',name:'Verna Lapp',ringId:'g4',repId:'r2',phone:'330-555-0248',email:'vlapp@example.org',business:'Lapp Greenhouses',joined:'2024-11-20',renews:'2026-11-20',status:'active'},
-      {id:'m6',name:'Daniel Hoover',ringId:'g5',repId:'r3',phone:'540-555-0255',email:'dhoover@example.org',business:'Hoover Metalworks',joined:'2026-08-25',renews:'2027-08-25',status:'active'},
-      {id:'m7',name:'Owen Martin',ringId:'g4',repId:'r2',phone:'330-555-0266',email:'omartin@example.org',business:'Martin Feed Supply',joined:'2023-04-14',renews:'2026-04-14',status:'discontinued'},
-      {id:'m8',name:'Ivan Petersheim',ringId:'g5',repId:'r3',phone:'540-555-0271',email:'ipetersheim@example.org',business:'Petersheim Dairy',joined:'2026-09-01',renews:'2027-09-01',status:'active'},
-      {id:'m9',name:'Harvey Kauffman',ringId:null,repId:'r1',region:'Lancaster PA',phone:'717-555-0281',email:'hkauffman@example.org',business:'Kauffman Sawmill',joined:'2025-05-14',renews:'2027-05-14',status:'active'},
-      {id:'m10',name:'Lydia Burkholder',ringId:null,repId:'r1',region:'Lancaster PA',phone:'717-555-0292',email:'lburkholder@example.org',business:'Burkholder Soap Co',joined:'2026-02-03',renews:'2027-02-03',status:'active'},
-      {id:'m11',name:'Melvin Troyer',ringId:null,repId:'r2',region:'Holmes County OH',phone:'330-555-0303',email:'mtroyer@example.org',business:'Troyer Pallets',joined:'2024-08-19',renews:'2026-10-19',status:'active'},
-      {id:'m12',name:'Anna Mast',ringId:null,repId:'r3',region:'Shenandoah VA',phone:'540-555-0314',email:'amast@example.org',business:'Mast Bakery',joined:'2026-07-01',renews:'2027-07-01',status:'active'}
-    ],
-    activities:[
-      {id:'a1',ringId:'g1',repId:'r1',facId:'f1',type:'Facilitator Call',who:'David Zook',date:'2026-06-22',nextDue:'2026-09-20',outcome:'Connected',notes:'Group is healthy; two members want deeper accountability.'},
-      {id:'a2',ringId:'g1',repId:'r1',memberId:'m1',type:'Member Call',who:'John Stoltzfus',date:'2025-10-01',nextDue:'2026-09-14',outcome:'Connected',notes:'Expanding the shop, hiring two.'},
-      {id:'a3',ringId:'g4',repId:'r2',facId:'f4',type:'Facilitator Call',who:'Ruth Beiler',date:'2026-06-15',nextDue:'2026-09-15',outcome:'Connected',notes:''},
-      {id:'a4',ringId:'g4',repId:'r2',memberId:'m4',type:'Member Call',who:'Amos Glick',date:'2025-09-28',nextDue:'2026-09-28',outcome:'Connected',notes:''},
-      {id:'a5',ringId:'g1',repId:'r1',type:'Launch Meeting',who:'Lancaster Founders Circle',date:'2026-01-18',nextDue:null,outcome:'Connected',notes:'Good first meeting, six attended.'},
-      {id:'a6',ringId:'g1',repId:'r1',memberId:'m2',type:'Member Call',who:'Elam Fisher',date:'2025-09-20',nextDue:'2026-09-20',outcome:'Connected',notes:''},
-      {id:'a7',ringId:'g4',repId:'r2',memberId:'m5',type:'Member Call',who:'Verna Lapp',date:'2025-11-30',nextDue:'2026-11-30',outcome:'Connected',notes:''},
-      {id:'a8',ringId:'g4',repId:'r2',memberId:'m7',type:'Exit Interview',who:'Owen Martin',date:'2026-07-02',nextDue:null,outcome:'Connected',notes:'Sold the business, retiring.',exitReason:'Business closed or sold',wouldReturn:'Maybe'},
-      {id:'a9',ringId:'g5',repId:'r3',facId:'f5',type:'Facilitator Call',who:'Mark Weaver',date:'2026-08-22',nextDue:'2027-02-22',outcome:'Connected',notes:'Still gathering members before launch.'},
-      {id:'a10',ringId:'g5',repId:'r3',memberId:'m6',type:'Member Call',who:'Daniel Hoover',date:'2026-08-28',nextDue:'2027-08-28',outcome:'Connected',notes:'New member, eager.'},
-      {id:'a11',ringId:'g1',repId:'r1',memberId:'m3',type:'Member Call',who:'Sadie Blank',date:'2025-08-15',nextDue:'2026-08-15',outcome:'Connected',notes:''}
-    ],
-    meetings:[
-      {id:'t1',ringId:'g1',date:'2026-08-14',attended:['m1','m2','m3'],absent:[],notes:'Strong discussion on hiring practices.'},
-      {id:'t2',ringId:'g1',date:'2026-07-10',attended:['m1','m2'],absent:['m3'],notes:''},
-      {id:'t3',ringId:'g4',date:'2026-08-20',attended:['m4'],absent:['m5'],notes:'Thin attendance; Verna traveling.'}
-    ],
-    events:[
-      {id:'e1',title:'Lancaster Info Meeting',type:'Info Meeting',date:'2026-09-24',time:'7:00 PM',location:'Shady Maple Banquet, East Earl PA',region:'Lancaster PA',repId:'r1',capacity:40,notes:'Bring the display banner.'},
-      {id:'e2',title:'Anabaptist Business Expo',type:'Expo',date:'2026-10-15',time:'9:00 AM',location:'Farm & Home Center, Lancaster PA',region:'Lancaster PA',repId:'r1',capacity:200,notes:'Symbiz booth 14. From the Symbiz calendar, not CRM.'},
-      {id:'e3',title:'Ohio Regional Summit',type:'Summit',date:'2026-11-06',time:'8:30 AM',location:'Carlisle Inn, Walnut Creek OH',region:'Holmes County OH',repId:'r2',capacity:120,notes:''},
-      {id:'e4',title:'Shenandoah Info Meeting',type:'Info Meeting',date:'2026-10-02',time:'6:30 PM',location:'Dayton Community Center, VA',region:'Shenandoah VA',repId:'r3',capacity:35,notes:''}
-    ],
-    registrations:[
-      {id:'rg1',eventId:'e1',name:'Marlin Esh',business:'Esh Custom Cabinets',phone:'717-555-0310',email:'marlin@example.org',registered:'2026-09-08',attending:'Yes',guests:1},
-      {id:'rg2',eventId:'e1',name:'Rhoda Stoltzfus',business:'Stoltzfus Quilt Shop',phone:'717-555-0322',email:'rhoda@example.org',registered:'2026-09-10',attending:'Yes',guests:0},
-      {id:'rg3',eventId:'e1',name:'Chester Lapp',business:'Lapp Excavating',phone:'717-555-0333',email:'chester@example.org',registered:'2026-09-14',attending:'Maybe',guests:2},
-      {id:'rg4',eventId:'e3',name:'Vernon Yoder',business:'Yoder Harness',phone:'330-555-0344',email:'vernon@example.org',registered:'2026-09-02',attending:'Yes',guests:1},
-      {id:'rg5',eventId:'e4',name:'Nelson Heatwole',business:'Heatwole Produce',phone:'540-555-0355',email:'nelson@example.org',registered:'2026-09-16',attending:'Yes',guests:0}
-    ],
-    visits:[
-      {id:'v1',ringId:'g1',repId:'r1',date:'2026-09-25',time:'7:00 PM',location:'Zook Woodworking shop, Gap PA',status:'Scheduled',notes:''},
-      {id:'v2',ringId:'g4',repId:'r2',date:'2026-10-08',time:'6:30 PM',location:'Beiler home, Mt Hope OH',status:'Scheduled',notes:''},
-      {id:'v3',ringId:'g1',repId:'r1',date:'2026-06-12',time:'7:00 PM',location:'Zook Woodworking shop, Gap PA',status:'Completed',notes:'Good visit, group is solid.'},
-      {id:'v4',ringId:'g5',repId:'r3',date:'2026-10-20',time:'7:00 PM',location:'Weaver Orchards office, VA',status:'Scheduled',notes:'First visit since launch began.'}
-    ],
-    timeEntries:[
-      {id:'t_1',repId:'r1',date:'2026-09-15',hours:2.5,category:'Growth Ring visit',description:'Lancaster Founders Circle visit and travel',status:'Submitted'},
-      {id:'t_2',repId:'r1',date:'2026-09-16',hours:1,category:'Facilitator call',description:'Quarterly call with David Zook',status:'Submitted'},
-      {id:'t_3',repId:'r2',date:'2026-09-12',hours:3,category:'Local event',description:'Info meeting setup and hosting',status:'Approved'}
-    ],
-    expenses:[
-      {id:'x_1',repId:'r1',date:'2026-09-15',amount:48.60,category:'Mileage',description:'108 miles round trip to Gap PA',status:'Submitted',hasReceipt:false},
-      {id:'x_2',repId:'r1',date:'2026-09-15',amount:22.40,category:'Meals',description:'Supper with facilitator',status:'Submitted',hasReceipt:true},
-      {id:'x_3',repId:'r2',date:'2026-09-12',amount:85.00,category:'Event supplies',description:'Printing and refreshments for info meeting',status:'Approved',hasReceipt:true}
-    ],
-    requests:[
-      {id:'j1',name:'Sam Troyer',note:'Referred by Elam Fisher',phone:'717-555-0277',email:'stroyer@example.org',business:'Troyer Roofing',repId:'r1',stage:'New',created:'2026-09-12'},
-      {id:'j2',name:'Katie Yoder',note:'Met at the annual gathering',phone:'330-555-0288',email:'kyoder@example.org',business:'Yoder Bakery',repId:'r2',stage:'Contacted',created:'2026-09-02'},
-      {id:'j3',name:'Leon Zimmerman',note:'Filled out the website form',phone:'540-555-0299',email:'lzimmerman@example.org',business:'Zimmerman Hardware',repId:'r3',stage:'New',created:'2026-09-15'}
-    ],
-    announcements:[
-      {id:'n1',text:'Annual gathering registration closes October 3. Please remind your members.',by:'s2',date:'2026-09-15',active:true}
-    ],
-    audit:[],
-    settings:{defaultFacFreq:'Quarterly',defaultMemFreq:'Annual',defaultCapacity:8,retryDays:4,rescheduleDays:7,dueWindow:21,
-      accountingEmail:'accounting@symbiz.org',accountingDay:'1',
-      links:{f_exit:'',f_visit:'',f_conv:'',f_reimb:'',d_rep:'',d_summit:'',doc_job:'',doc_manual:''}},
-    syncQueue:[],
-    ids:{ring:6,mem:13,act:12,req:4,fac:6,meet:4,note:2,ev:5,reg:6,vis:5,time:4,exp:4}
+    facilitators:[], rings:[], members:[], activities:[], meetings:[],
+    events:[], registrations:[], visits:[], timeEntries:[], expenses:[],
+    requests:[], announcements:[], audit:[], syncQueue:[],
+    settings:{
+      defaultFacFreq:'Quarterly', defaultMemFreq:'Annual', defaultCapacity:8,
+      retryDays:4, rescheduleDays:7, dueWindow:21,
+      accountingEmail:'accounting@symbiz.org', accountingDay:'1',
+      links:{f_exit:'',f_visit:'',f_conv:'',f_reimb:'',d_rep:'',d_summit:'',doc_job:'',doc_manual:''}
+    },
+    ids:{ring:1,mem:1,act:1,req:1,fac:1,meet:1,note:1,ev:1,reg:1,vis:1,time:1,exp:1}
   };
 }
 
 /* ══════════════════ STATE ══════════════════ */
 let S = load();
+let loading = false;
 let ui = {me:null, view:'today', ringId:null, memberId:null, facId:null, eventId:null,
           q:'', filter:'all', offline:false, gq:'', report:'contact-due',
           calFilter:'all', calRep:null, tsRep:null, sheetRep:null};
@@ -743,7 +667,9 @@ function vToday(){
   let body='';
   if(overdue.length) body+=`<h3 class="sub-h" style="color:var(--rust)">Overdue · ${overdue.length}</h3>`+overdue.map(contactLine).join('');
   if(soon.length) body+=`<h3 class="sub-h">Due in the next ${S.settings.dueWindow} days · ${soon.length}</h3>`+soon.map(contactLine).join('');
-  if(!overdue.length&&!soon.length) body+=`<div class="empty">You're all caught up. Nothing is due in the next ${S.settings.dueWindow} days.</div>`;
+  if(!overdue.length&&!soon.length) body += (S.activities.length || !loading)
+    ? `<div class="empty">You're all caught up. Nothing is due in the next ${S.settings.dueWindow} days.</div>`
+    : emptyState('your calls');
   if(later.length) body+=`<h3 class="sub-h" style="color:var(--ink-muted)">Coming up</h3>`+later.slice(0,4).map(contactLine).join('');
 
   return `${announceBanner()}
@@ -790,7 +716,7 @@ function vMyRings(){
         <div class="status ${r.status}"><span class="dot"></span>${statusText(r.status)}</div>
         ${h!==null?`<div class="row-sub" style="margin-top:3px">Health ${h}</div>`:''}
       </div></div>`;
-  }).join('')||`<div class="empty">You haven't started a Growth Ring yet. Once you do, it'll show here while it waits for approval.</div>`;
+  }).join('')||emptyState('your Growth Rings', "You have no Growth Rings yet. The office assigns them in Zoho.");
   return `<div class="section-head"><div><h2>My Growth Rings</h2><div class="sub">Groups you organize and support.</div></div>
       <button class="btn primary" onclick="openNewRing()">Start a ring</button></div>
     ${rows}`;
@@ -996,9 +922,16 @@ function vMyProgress(){
 }
 
 function vCallSheet(){
-  const repId = isRep()? ui.me : (ui.sheetRep||'r1');
+  const reps = PEOPLE.filter(x=>x.role==='rep');
+  // The office may open this before any rep accounts exist. Don't assume one.
+  const repId = isRep() ? ui.me : (ui.sheetRep || (reps[0] && reps[0].id) || null);
+  if(!repId){
+    return `<div class="section-head"><div><h2>Call sheet</h2>
+      <div class="sub">A printable list of who is due, for a rep to carry.</div></div></div>
+      ${emptyState('reps', 'No rep accounts yet. Add them under Reps, then a call sheet can be printed for each one.')}`;
+  }
   const items=dueItems(repId).filter(a=>days(a.nextDue)<=45);
-  const p=PEOPLE.find(x=>x.id===repId);
+  const p=PEOPLE.find(x=>x.id===repId) || {name:'Rep'};
   const rows=items.map(a=>{
     const m=a.memberId?member(a.memberId):null, f=a.facId?fac(a.facId):null;
     const phone=m?m.phone:f?f.phone:'—';
@@ -1008,8 +941,8 @@ function vCallSheet(){
   });
   return `<div class="section-head"><div><h2>Call sheet</h2>
       <div class="sub">One page you can print and carry. Everything due in the next 45 days, with room to write.</div></div>
-    ${isOffice()?`<select class="sel" onchange="ui.sheetRep=this.value;renderContent()">
-      ${PEOPLE.filter(x=>x.role==='rep').map(x=>`<option value="${x.id}" ${x.id===repId?'selected':''}>${esc(x.name)}</option>`).join('')}</select>`:''}
+    ${isOffice()&&reps.length>1?`<select class="sel" onchange="ui.sheetRep=this.value;renderContent()">
+      ${reps.map(x=>`<option value="${x.id}" ${x.id===repId?'selected':''}>${esc(x.name)}</option>`).join('')}</select>`:''}
     </div>
     <div class="btnrow" style="margin-bottom:14px">
       <button class="btn primary" onclick="window.print()">Print this sheet</button>
@@ -1328,10 +1261,111 @@ function vInsights(){
 }
 
 let serverUsers = null;
+let zohoReps = null;
 async function loadUsers(){
   try{ serverUsers = await API.users(); }
   catch(e){ serverUsers = { error: e.message }; }
+  try{ zohoReps = await API.repsFromZoho(); }
+  catch(e){ zohoReps = { error: e.message }; }
   renderContent();
+}
+
+/** Create an account straight from a rep found in Zoho. */
+async function inviteRep(contactId){
+  const rep = Array.isArray(zohoReps) ? zohoReps.find(r=>r.contactId===contactId) : null;
+  if(!rep) return;
+  if(!rep.email){
+    openModal(`<h3>${esc(rep.name)} has no email in Zoho</h3>
+      <p class="lead">An account needs an email to sign in with. Add one to their contact record in Zoho,
+      then refresh this page — or create the account by hand with Add someone.</p>
+      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
+    return;
+  }
+  openModal(`<h3>Create an account for ${esc(rep.name)}</h3>
+    <p class="lead">Taken from Zoho, so they are linked to their ${rep.rings} ring${rep.rings===1?'':'s'} automatically.</p>
+    <form onsubmit="submitInviteRep(event,'${esc(contactId)}')">
+      <div class="field"><label>Name</label><input name="name" value="${esc(rep.name)}" required></div>
+      <div class="field"><label>Email</label><input name="email" type="email" value="${esc(rep.email)}" required>
+        <div class="hint">From their Zoho contact record. Change it if they use a different address.</div></div>
+      <div class="field"><label>Role</label><select name="role">
+        <option value="rep">Rep — sees only their own rings</option>
+        <option value="staff">Office — sees everyone</option>
+      </select></div>
+      <div class="card flat" style="font-size:12.5px">
+        <div class="kv"><span class="k">Zoho contact</span><span>${esc(contactId)}</span></div>
+        <div class="kv"><span class="k">Rings</span><span>${rep.rings}</span></div>
+        ${rep.regions && rep.regions.length?`<div class="kv"><span class="k">Regions</span><span>${rep.regions.map(esc).join(', ')}</span></div>`:''}
+      </div>
+      <div id="inviteErr" style="display:none;color:var(--rust);font-size:13px;margin:8px 0"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+      <button type="submit" class="btn primary">Create account</button></div></form>`);
+}
+
+async function submitInviteRep(e, contactId){
+  e.preventDefault();
+  const f=e.target.elements, err=document.getElementById('inviteErr');
+  try{
+    const out = await API.createUserFromZoho({
+      contactId, name:f.namedItem('name').value,
+      email:f.namedItem('email').value, role:f.namedItem('role').value,
+    });
+    closeModal();
+    openModal(`<h3>Account created</h3>
+      <p class="lead">Give ${esc(f.namedItem('name').value)} this password. It is shown once.</p>
+      <div class="card flat" style="text-align:center;padding:18px">
+        <div style="font-family:ui-monospace,monospace;font-size:21px;font-weight:700;letter-spacing:.06em">${esc(out.tempPassword)}</div>
+      </div>
+      <div class="row-sub" style="margin-top:8px">They sign in at this address with ${esc(f.namedItem('email').value)} and change it afterwards.</div>
+      <div class="m-actions"><button class="btn primary" onclick="closeModal();loadUsers()">Done</button></div>`);
+  }catch(ex){
+    err.style.display='block';
+    err.textContent = ex.message || 'Could not create that account';
+  }
+}
+
+async function inviteAllReps(){
+  if(!Array.isArray(zohoReps)) return;
+  const todo = zohoReps.filter(r=>!r.hasAccount && r.email);
+  if(!todo.length){ toast('Every rep with an email already has an account'); return; }
+  openModal(`<h3>Create ${todo.length} accounts</h3>
+    <p class="lead">One for each rep found in Zoho who doesn't have one yet. Passwords are shown together at the end — copy them before closing.</p>
+    <div class="card flat" style="max-height:200px;overflow:auto">
+      ${todo.map(r=>`<div class="kv"><span>${esc(r.name)}</span><span class="row-sub">${esc(r.email)}</span></div>`).join('')}
+    </div>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
+    <button class="btn primary" onclick="runInviteAll()">Create them all</button></div>`);
+}
+
+async function runInviteAll(){
+  const todo = zohoReps.filter(r=>!r.hasAccount && r.email);
+  openModal(`<h3>Creating accounts…</h3><p class="lead">Please wait.</p>`);
+  const done=[], failed=[];
+  for(const r of todo){
+    try{
+      const out = await API.createUserFromZoho({contactId:r.contactId,name:r.name,email:r.email,role:'rep'});
+      done.push({name:r.name,email:r.email,password:out.tempPassword});
+    }catch(ex){ failed.push({name:r.name,error:ex.message}); }
+  }
+  openModal(`<h3>${done.length} account${done.length===1?'':'s'} created</h3>
+    <p class="lead">These passwords are shown once. Copy them now.</p>
+    <div class="tbl-wrap" style="max-height:300px;overflow:auto"><table class="rep">
+      <thead><tr><th>Rep</th><th>Email</th><th>Password</th></tr></thead>
+      <tbody>${done.map(d=>`<tr><td>${esc(d.name)}</td><td>${esc(d.email)}</td>
+        <td style="font-family:ui-monospace,monospace;font-weight:700">${esc(d.password)}</td></tr>`).join('')}</tbody>
+    </table></div>
+    ${failed.length?`<div class="callout rust" style="margin-top:10px"><strong>${failed.length} could not be created</strong>
+      ${failed.map(f=>esc(f.name)+': '+esc(f.error)).join('<br>')}</div>`:''}
+    <div class="m-actions">
+      <button class="btn" onclick="copyPasswords()">Copy all</button>
+      <button class="btn primary" onclick="closeModal();loadUsers()">Done</button></div>`);
+  window.__lastPasswords = done;
+}
+
+function copyPasswords(){
+  const rows = window.__lastPasswords || [];
+  const text = rows.map(d=>`${d.name}\t${d.email}\t${d.password}`).join('\n');
+  try{ navigator.clipboard.writeText(text); toast('Copied'); }
+  catch(e){ toast('Select the table and copy manually'); }
 }
 function openAddUser(){
   openModal(`<h3>Add someone</h3>
@@ -1403,7 +1437,33 @@ function vTeam(){
       </div>`).join('') : ''}
       ${Array.isArray(su) && su.some(u=>u.role==='rep' && !u.zoho_owner_id) ? `<div class="callout rust">
         <strong>Some reps are not linked to a Zoho contact</strong>
-        They will sign in and see nothing. Edit them in Zoho to find the Contact ID, then re-add them here.</div>` : ''}
+        They will sign in and see nothing. Create them from the Zoho list below instead.</div>` : ''}
+
+      <h3 class="sub-h">Reps in Zoho${Array.isArray(zohoReps)?` · ${zohoReps.length}`:''}</h3>
+      ${zohoReps === null ? `<div class="card flat"><div class="row-sub">Looking them up in Zoho…</div></div>` : ''}
+      ${zohoReps && zohoReps.error ? `<div class="callout info"><strong>Could not read reps from Zoho</strong>
+        ${esc(zohoReps.error)}<br>Connect Zoho first, or add people with "Add someone".</div>` : ''}
+      ${Array.isArray(zohoReps) && zohoReps.length ? `
+        <div class="row-sub" style="margin-bottom:10px">Everyone named as Regional Rep on an active Growth Ring.
+          Creating an account from here links them to their rings automatically — no ids to copy.</div>
+        ${zohoReps.filter(r=>!r.hasAccount && r.email).length > 1 ? `<div class="btnrow" style="margin-bottom:10px">
+          <button class="btn primary" onclick="inviteAllReps()">Create accounts for all
+            ${zohoReps.filter(r=>!r.hasAccount && r.email).length} remaining</button></div>` : ''}
+        ${zohoReps.map(r=>`<div class="row">
+          <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
+            <div class="av">${initials(r.name)}</div>
+            <div class="row-main">
+              <div class="row-title">${esc(r.name)}</div>
+              <div class="row-sub">${r.rings} ring${r.rings===1?'':'s'}${r.regions&&r.regions.length?' · '+r.regions.slice(0,3).map(esc).join(', '):''}${r.email?' · '+esc(r.email):' · no email in Zoho'}</div>
+            </div></div>
+          <div class="row-actions">
+            ${r.hasAccount
+              ? `<span class="tag ok">has an account</span>`
+              : r.email
+                ? `<button class="btn sm primary" onclick="inviteRep('${esc(r.contactId)}')">Create account</button>`
+                : `<span class="tag overdue">no email</span>`}
+          </div></div>`).join('')}
+      ` : ''}
     ` : `<div class="callout info"><strong>Accounts need the server</strong>
         This copy is running on your device only, so there are no logins to manage. Connect a database to switch sign-in on.</div>`}
     ${reps.map(p=>`<div class="card">
@@ -1799,27 +1859,45 @@ function closeSearch(){ const b=document.getElementById('gres'); if(b){b.classLi
 
 /* ══════════════════ NAV + RENDER ══════════════════ */
 function navItems(){
+  // Kept deliberately short. A rep has four places to go, not eleven.
   if(isRep()) return [
-    ['today','Today','◉'],['calendar','Calendar','▦'],['rings','Rings','◎'],['people','People','☰'],
-    ['unaffiliated','No ring yet','⊘'],['visits','Visits','◉'],['requests','Requests','⊕'],
-    ['timesheet','Hours & expenses','$'],['resources','Forms','⎘'],['callsheet','Call sheet','▤'],['progress','Progress','◔']];
-  const base=[['dash','Overview','◉'],['approvals','Approvals','⬡'],['calendar','Calendar','▦'],
-              ['coverage','Coverage','◫'],['reports','Reports','▤'],['timesheet','Hours & expenses','$'],
-              ['callsheet','Call sheets','⎙'],['members','Members','☰'],['unaffiliated','No ring yet','⊘'],
-              ['allrings','Rings','◎'],['visits','Visits','◉'],['insights','Retention','◒'],['resources','Forms','⎘']];
-  if(isAdmin()) base.push(['team','Reps','⚇'],['reminders','Reminders','✉'],['checks','System check','✓'],['import','Import data','⬆'],['settings','Settings','⚙']);
-  else base.push(['reminders','Reminders','✉'],['checks','System check','✓'],['import','Import data','⬆'],['settings','Settings','⚙']);
+    ['today','Today','◉'],
+    ['rings','My Rings','◎'],
+    ['people','People','☰'],
+    ['calendar','Calendar','▦'],
+    ['timesheet','Hours','$'],
+    ['resources','Forms','⎘'],
+  ];
+  const base = [
+    ['dash','Overview','◉'],
+    ['approvals','Approvals','⬡'],
+    ['members','Members','☰'],
+    ['allrings','Rings','◎'],
+    ['calendar','Calendar','▦'],
+    ['reports','Reports','▤'],
+    ['timesheet','Hours','$'],
+  ];
+  if(isAdmin()) base.push(['team','Reps','⚇'],['settings','Settings','⚙'],['checks','System check','✓']);
+  else base.push(['team','Reps','⚇'],['settings','Settings','⚙']);
   return base;
 }
+
 function navGroups(){
   if(isRep()) return [
-    ['Daily',[['today','Today'],['calendar','Calendar'],['rings','Rings'],['people','People']]],
-    ['My work',[['unaffiliated','No ring yet'],['visits','Visits'],['requests','Requests'],['timesheet','Hours & expenses']]],
-    ['Tools',[['resources','Forms'],['callsheet','Call sheet'],['progress','Progress']]]
+    ['', [['today','Today'],['rings','My Rings'],['people','People'],['calendar','Calendar']]],
+    ['Admin', [['timesheet','Hours & expenses'],['resources','Forms'],['callsheet','Call sheet']]],
   ];
-  const n=navItems();
-  return [['Daily',n.slice(0,3)],['Reporting',n.slice(3,7)],['Records',n.slice(7,13)],['Admin',n.slice(13)]];
+  const office = [
+    ['', [['dash','Overview'],['approvals','Approvals'],['calendar','Calendar']]],
+    ['Records', [['members','Members'],['allrings','Rings'],['visits','Visits'],['unaffiliated','No ring yet']]],
+    ['Reporting', [['reports','Reports'],['coverage','Coverage'],['insights','Retention'],['timesheet','Hours & expenses']]],
+  ];
+  const admin = [['team','Reps'],['reminders','Reminders'],['settings','Settings']];
+  if(isAdmin()) admin.push(['checks','System check']);
+  office.push(['Setup', admin]);
+  return office;
 }
+
 function badgeFor(id){
   if(id==='approvals') return S.rings.filter(r=>r.status==='pending').length;
   if(id==='today') return dueItems(ui.me).filter(a=>days(a.nextDue)<=S.settings.dueWindow).length;
@@ -1835,15 +1913,6 @@ function login(id){ ui.me=id; ui.view=PEOPLE.find(p=>p.id===id).role==='rep'?'to
 function logout(){ API.setToken(null); ui.me=null; render(); }
 
 /** Local mode only: look at the app as a different person. */
-function switchPerson(id){
-  const p = PEOPLE.find(x=>x.id===id); if(!p) return;
-  ui.me = id;
-  ui.view = p.role==='rep' ? 'today' : 'dash';
-  ui.ringId=null; ui.memberId=null; ui.facId=null; ui.eventId=null; ui.q='';
-  closeSheet();
-  toast(`Now viewing as ${p.name}`);
-  render();
-}
 
 function loginScreen(){
   return `<div class="login"><div class="login-box">
@@ -1860,22 +1929,25 @@ function loginScreen(){
       </form>
     </div>
     <div id="setupNote"></div>
-    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
-      <p class="tag" style="font-size:12.5px;margin-bottom:9px">Not connected to Zoho yet? Use it on this device with your own exported data.</p>
-      <div class="btnrow">
-        <button class="btn" onclick="startLocal()" style="flex:1;justify-content:center">Work on this device</button>
-        <button class="btn" onclick="startTour()" style="flex:1;justify-content:center">Walkthrough</button>
-      </div>
-    </div>
-    <p class="tag" style="margin-top:14px;font-size:12px">Trouble signing in? Call the office on 800-394-7970.</p>
+    <p class="tag" style="margin-top:16px;font-size:12.5px">Trouble signing in? Call the office on 800-394-7970.</p>
   </div></div>`;
 }
 
-/** On the login screen, say plainly what is and isn't configured yet. */
+
+/** Read the server's state: is the database up, is Zoho connected, are writes on. */
 async function refreshMode(){
-  try{ const st = await API.setupStatus(); API.readOnly = !!st.readOnly; }catch(e){}
+  try{
+    const st = await API.setupStatus();
+    API.readOnly = !!st.readOnly;
+    zohoConnected = !!st.zohoReady;
+    return st;
+  }catch(e){ return null; }
 }
 
+/**
+ * On the login screen, say plainly what is and isn't configured yet, and
+ * offer to create the first account when the database is ready but empty.
+ */
 async function checkSetup(){
   const slot = document.getElementById('setupNote');
   if(!slot) return;
@@ -1883,41 +1955,44 @@ async function checkSetup(){
   try{ st = await API.setupStatus(); }
   catch(e){
     slot.innerHTML = `<div class="callout info" style="margin:14px 0 0;font-size:12.5px">
-      <strong>Sign-in isn't switched on yet</strong>
-      This copy is running without a server, so there are no accounts. Use
-      <a href="#" onclick="startLocal();return false;" style="color:var(--primary);font-weight:600">Work on this device</a> for now.</div>`;
+      <strong>The server isn't responding</strong>
+      Sign-in needs the API. If this is a new deployment, check the environment variables.</div>`;
     return;
   }
+  API.readOnly = !!st.readOnly;
+  zohoConnected = !!st.zohoReady;
+
   if(!st.dbReady){
     slot.innerHTML = `<div class="callout info" style="margin:14px 0 0;font-size:12.5px">
       <strong>No database connected yet</strong>
-      ${esc(st.dbError || 'Set DATABASE_URL in Netlify to switch sign-in on.')}</div>`;
+      ${esc(st.dbError || 'Set DATABASE_URL to switch sign-in on.')}</div>`;
     return;
   }
   if(st.needsSetup){
     slot.innerHTML = `<div class="callout ok" style="margin:14px 0 0;font-size:12.5px">
       <strong>Nobody has an account yet</strong>
-      The database is connected. Create the first account to get started.
+      Create the first one to get started. It becomes the director account.
       <div class="btnrow" style="margin-top:9px">
         <button class="btn sm primary" onclick="openFirstAdmin()">Create the first account</button>
       </div></div>`;
     return;
   }
   slot.innerHTML = `<div class="row-sub" style="margin-top:12px;text-align:center">
-    ${st.userCount} account${st.userCount===1?'':'s'} · Zoho ${st.zohoReady ? 'connected' : 'not connected yet'}</div>`;
+    Zoho ${st.zohoReady ? 'connected' : 'not connected yet'}</div>`;
 }
 
 function openFirstAdmin(){
   openModal(`<h3>Create the first account</h3>
     <p class="lead">This becomes the director account, with permission to add everyone else. It can only be done once.</p>
     <form onsubmit="submitFirstAdmin(event)">
-      <div class="field"><label>Full name</label><input name="name" required placeholder="Jeremy Sensenig"></div>
-      <div class="field"><label>Email</label><input name="email" type="email" required placeholder="jeremy@symbiz.org"></div>
+      <div class="field"><label>Full name</label><input name="name" required></div>
+      <div class="field"><label>Email</label><input name="email" type="email" required></div>
       <div class="field"><label>Password</label><input name="password" type="password" required minlength="8" placeholder="At least 8 characters"></div>
       <div id="setupErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
       <button type="submit" class="btn primary">Create account</button></div></form>`);
 }
+
 async function submitFirstAdmin(e){
   e.preventDefault();
   const f=e.target.elements, err=document.getElementById('setupErr');
@@ -1928,10 +2003,10 @@ async function submitFirstAdmin(e){
       password: f.namedItem('password').value
     });
     API.setToken(out.token);
-    if(!PEOPLE.some(p=>p.id===out.user.id)) PEOPLE.push(out.user);
-    ui.me = out.user.id; ui.view = 'dash';
+    signInAs(out.user);
     closeModal();
-    toast('Account created — you are signed in');
+    toast('Account created');
+    await refreshMode();
     await loadFromServer();
     render();
   }catch(ex){
@@ -1944,11 +2019,9 @@ async function doLogin(e){
   e.preventDefault();
   const f=e.target.elements, btn=document.getElementById('loginBtn'), err=document.getElementById('loginErr');
   btn.disabled=true; btn.textContent='Signing in…';
-  const show = (msg, offerLocal) => {
+  const show = (msg) => {
     err.style.display='block';
-    err.innerHTML = esc(msg) + (offerLocal
-      ? ' <a href="#" onclick="startLocal();return false;" style="color:var(--primary);font-weight:600">Work on this device instead</a>'
-      : '');
+    err.textContent = msg;
     btn.disabled=false; btn.textContent='Sign in';
   };
   try{
@@ -1979,13 +2052,6 @@ async function doLogin(e){
 }
 
 /** Local mode: no server. Import a CSV and the app runs on this device alone. */
-function startLocal(){
-  API.setToken(null);
-  ui.me = 's2';            // start on the director so Import data is reachable
-  ui.view = 'import';
-  toast('Use "Viewing as" at the top to switch between reps and the office');
-  render();
-}
 
 /* ══════════════════ SERVER → APP ADAPTER ══════════════════
  * Symbiz's Zoho schema and this app's internal shape are not the same, and
@@ -2172,6 +2238,7 @@ const adapt = {
  */
 async function loadFromServer(){
   if(!API.live) return;
+  loading = true;
   try{
     const [rawRings, rawMembers, rawActs, rawFacs, rawEvents,
            rawVisits, rawNoRing, rawTime, rawExp] = await Promise.all([
@@ -2206,6 +2273,7 @@ async function loadFromServer(){
       }
     });
 
+    loadError = null;
     S.visits = (rawVisits||[]).map(adapt.visit);
     S.timeEntries = (rawTime||[]).map(adapt.timeEntry);
     S.expenses = (rawExp||[]).map(adapt.expense);
@@ -2228,10 +2296,36 @@ async function loadFromServer(){
 
     save();
   }catch(e){
-    if(e.message==='SESSION_EXPIRED'){ ui.me=null; render(); return; }
-    console.warn('[load] falling back to data on this device:', e.message);
-    toast('Showing the last data saved here — reconnecting…');
+    if(e.message==='SESSION_EXPIRED'){ loading=false; ui.me=null; render(); return; }
+    console.warn('[load]', e.message);
+    loadError = e.message;
+    toast('Could not reach the server — showing what was last loaded');
+  }finally{
+    loading = false;
   }
+}
+let loadError = null;
+
+/**
+ * What to show when a screen has nothing in it. Without demo data this is a
+ * normal state, not an error, and the message should say which it is.
+ */
+function emptyState(what, hint){
+  if(loading) return `<div class="empty">Loading ${esc(what)}…</div>`;
+  if(loadError) return `<div class="callout rust"><strong>Could not load ${esc(what)}</strong>
+    ${esc(loadError)}
+    <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="retryLoad()">Try again</button></div></div>`;
+  if(API.live && !zohoConnected) return `<div class="callout info"><strong>Zoho isn't connected yet</strong>
+    Once the connection is made, ${esc(what)} appear here automatically. Nothing else to do.</div>`;
+  return `<div class="empty">${esc(hint || ('No ' + what + ' yet.'))}</div>`;
+}
+let zohoConnected = false;
+
+async function retryLoad(){
+  loadError = null;
+  render();
+  await loadFromServer();
+  render();
 }
 
 function renderContent(){
@@ -2258,7 +2352,6 @@ function renderContentInner(el){
   if(v==='callsheet'){ el.innerHTML=vCallSheet(); return; }
   if(v==='calendar'){ el.innerHTML=vCalendar(); return; }
   if(v==='checks'){ el.innerHTML=vChecks(); return; }
-  if(v==='import'){ el.innerHTML=vImport(); return; }
   if(v==='eventDetail'){ el.innerHTML=vEventDetail(); return; }
   if(v==='unaffiliated'){ el.innerHTML=vUnaffiliated(); return; }
   if(v==='resources'){ el.innerHTML=vResources(); return; }
@@ -2270,7 +2363,7 @@ function renderContentInner(el){
   }
   el.innerHTML=v==='approvals'?vApprovals():v==='coverage'?vCoverage():v==='reports'?vReports()
     :v==='members'?vMembersAll():v==='allrings'?vAllRings():v==='insights'?vInsights()
-    :v==='team'?(API.live && serverUsers===null ? (setTimeout(loadUsers,0), vTeam()) : vTeam()):v==='reminders'?vReminders():v==='settings'?vSettings():vOfficeDash();
+    :v==='team'?(API.live && (serverUsers===null||zohoReps===null) ? (setTimeout(loadUsers,0), vTeam()) : vTeam()):v==='reminders'?vReminders():v==='settings'?vSettings():vOfficeDash();
 }
 
 function render(){
@@ -2292,26 +2385,23 @@ function render(){
           return `<button class="rail-link ${ui.view===id?'active':''}" onclick="setView('${id}')"><span>${label}</span>${b?`<span class="pill ${id==='today'||id==='approvals'||id==='dash'?'':'muted'}">${b}</span>`:''}</button>`;
         }).join('')).join('')}</div>
       <div class="rail-foot">
-        <button class="rail-link" onclick="toggleOffline()">${ui.offline?'◑ Go back online':'◐ Simulate offline'}</button>
-        <button class="rail-link" onclick="resetDemo()">↺ Reset demo data</button>
-        <button class="rail-link" onclick="logout()">→ Sign out</button></div>
+        <button class="rail-link" onclick="logout()">Sign out</button></div>
     </nav>
     <div class="main">
       <div class="topbar">
         <div class="gsearch"><input id="gsi" placeholder="Search members, facilitators, rings" oninput="globalSearch(this.value)">
           <div class="gres" id="gres"></div></div>
         <div class="top-right">
-          ${!API.live ? `<label class="viewas"><span>Viewing as</span>
-            <select class="sel" onchange="switchPerson(this.value)">
-              ${PEOPLE.map(p=>`<option value="${p.id}" ${p.id===ui.me?'selected':''}>${esc(p.name)} — ${p.role==='rep'?'Rep':p.role==='staff'?'Office':'Director'}</option>`).join('')}
-            </select></label>` : ''}
           <button class="bell" onclick="openNotifs()">🔔${nc?`<span class="pill">${nc}</span>`:''}</button>
         </div></div>
+      ${loadError?`<div class="banner note" style="background:var(--rust-soft);color:var(--rust)">
+        Couldn't reach the server — showing the last data loaded.
+        <button class="btn sm" style="margin-left:8px" onclick="retryLoad()">Try again</button></div>`:''}
       ${(API.live && API.readOnly)?`<div class="banner note">Connected to Zoho in read-only mode — you can see everything, but logging is switched off until setup finishes.</div>`:''}
       ${(ui.offline||(API.live===false&&!navigator.onLine))?`<div class="banner sync">Working offline — ${(OutBox.count()||S.syncQueue.length)} change${(OutBox.count()||S.syncQueue.length)===1?'':'s'} waiting to sync.</div>`:''}
       <div class="content" id="content"></div>
     </div></div>
-    ${tourBar()}
+
     <div class="tabbar">${(isRep()
       ? [['today','Today','◉'],['calendar','Calendar','▦'],['rings','Rings','◎'],['timesheet','Hours','$'],['resources','Forms','⎘']]
       : navItems().slice(0,5)).map(([id,label,ic])=>{
@@ -2416,7 +2506,7 @@ function vCalendar() {
           ${i.regs ? `<div class="row-sub" style="margin-top:3px">${i.regs} registered</div>` : ''}
         </div>
       </div>`).join('');
-  }).join('') || `<div class="empty">Nothing scheduled ahead.</div>`;
+  }).join('') || emptyState('events and meetings', 'Nothing scheduled ahead.');
 
   return `<div class="section-head">
       <div><h2>Calendar</h2><div class="sub">Local events, ring visits, and when each of your groups meets.</div></div>
@@ -2620,9 +2710,9 @@ function vTimesheet() {
           <button class="btn sm" onclick="previewAccounting()">Preview what goes</button>
         </div></div>`; })() : ''}
     <h3 class="sub-h">Hours</h3>
-    ${time.map(t => row(t, false)).join('') || `<div class="empty">No hours logged yet.</div>`}
+    ${time.map(t => row(t, false)).join('') || emptyState('hours', 'No hours logged yet. Use Log hours or start a timer.')}
     <h3 class="sub-h">Expenses</h3>
-    ${exp.map(x => row(x, true)).join('') || `<div class="empty">No expenses logged yet.</div>`}`;
+    ${exp.map(x => row(x, true)).join('') || emptyState('expenses', 'No expenses logged yet.')}`;
 }
 
 /* ══════════════════ VISIT SCHEDULE ══════════════════ */
@@ -2648,7 +2738,7 @@ function vVisits() {
       <div class="sub">When you're next sitting in with each group.</div></div>
       ${isRep() ? `<button class="btn primary" onclick="openVisit()">Schedule a visit</button>` : ''}</div>
     <h3 class="sub-h">Coming up · ${upcoming.length}</h3>
-    ${upcoming.map(row).join('') || `<div class="empty">No visits scheduled. Each active ring should see you at least once or twice a year.</div>`}
+    ${upcoming.map(row).join('') || emptyState('visits', 'No visits booked. Each active ring should see you once or twice a year.')}
     <h3 class="sub-h">Rings with no visit booked</h3>
     ${S.rings.filter(r => r.status === 'active' && (!repId || r.repId === repId) && !upcoming.some(v => v.ringId === r.id))
       .map(r => `<div class="row"><div class="row-main"><div class="row-title">${esc(r.name)}</div>
@@ -3577,18 +3667,26 @@ const CHECKS = [
       addDays('2026-12-28', 7) === '2027-01-04' && addDays('2026-02-27', 2) === '2026-03-01' },
 
   /* ---- every screen renders ---- */
-  { group: 'Screens', name: 'All eleven rep screens render', run: () => {
-      const saved = ui.me; ui.me = 'r1';
-      const ok = ['vToday', 'vCalendar', 'vMyRings', 'vPeople', 'vUnaffiliated', 'vVisits',
-                  'vRequests', 'vTimesheet', 'vResources', 'vCallSheet', 'vMyProgress']
-        .every(fn => { try { return window[fn]().length > 100; } catch (e) { return false; } });
-      ui.me = saved; return ok; } },
-  { group: 'Screens', name: 'All office screens render', run: () => {
-      const saved = ui.me; ui.me = 's1';
-      const ok = ['vOfficeDash', 'vApprovals', 'vCoverage', 'vReports', 'vMembersAll',
-                  'vAllRings', 'vInsights', 'vReminders', 'vSettings', 'vTimesheet', 'vCalendar']
-        .every(fn => { try { return window[fn]().length > 100; } catch (e) { return false; } });
-      ui.me = saved; return ok; } },
+  { group: 'Screens', name: 'Every rep screen renders', run: () => {
+      // Rendered as whoever is signed in. Screens must work with no data at
+      // all, which is what a fresh deployment looks like.
+      const failed = ['vToday','vCalendar','vMyRings','vPeople','vUnaffiliated','vVisits',
+                      'vRequests','vTimesheet','vResources','vCallSheet','vMyProgress']
+        .filter(fn => {
+          try { return typeof window[fn] !== 'function' || window[fn]().length < 100; }
+          catch (e) { return true; }
+        });
+      if (failed.length) checkDetail = failed.join(', ');
+      return failed.length === 0; } },
+  { group: 'Screens', name: 'Every office screen renders', run: () => {
+      const failed = ['vOfficeDash','vApprovals','vCoverage','vReports','vMembersAll',
+                      'vAllRings','vInsights','vReminders','vSettings','vTimesheet','vCalendar']
+        .filter(fn => {
+          try { return typeof window[fn] !== 'function' || window[fn]().length < 100; }
+          catch (e) { return true; }
+        });
+      if (failed.length) checkDetail = failed.join(', ');
+      return failed.length === 0; } },
 ];
 
 /** Helper: run the real cadence function and report the gap in days. */
@@ -3607,11 +3705,13 @@ function nextDueCheck(type, outcome, facFreq, memFreq) {
 }
 
 let checkResults = null;
+let checkDetail = '';
 function runChecks() {
   const started = performance.now();
   checkResults = CHECKS.map(c => {
     let pass = false, err = null;
-    try { pass = !!c.run(); }
+    checkDetail = '';
+    try { pass = !!c.run(); if (!pass && checkDetail) err = checkDetail; }
     catch (e) { pass = false; err = e.message; }
     return { ...c, pass, err };
   });
@@ -3667,411 +3767,7 @@ function vChecks() {
 }
 
 /* ══════════════════ GUIDED WALKTHROUGH ══════════════════ */
-const TOUR = [
-  { view: 'today', role: 'r1', title: 'A rep opens the app',
-    body: 'Everything due is on one screen, soonest first. Overdue in red. Tap a name to call, then log it. This is where a rep lives.' },
-  { view: 'calendar', role: 'r1', title: 'Request 2, 4 and 10 — the calendar',
-    body: 'Local events, info meetings, expos and summits, plus every ring visit and when each group meets. "2nd Tuesday" is worked out into a real date.' },
-  { view: 'unaffiliated', role: 'r1', title: 'Request 1 — members with no ring',
-    body: 'Paying members with no group, grouped by region. These are the people to place first, and they were invisible before.' },
-  { view: 'visits', role: 'r1', title: 'Request 4 — visit schedule',
-    body: 'What is booked, what has happened, and which rings have no visit booked at all.' },
-  { view: 'timesheet', role: 'r1', title: 'Request 9 — hours and expenses',
-    body: 'Start a timer when leaving for a visit, stop it on return. Expenses take a photo of the receipt. Both go to the office, then to accounting.' },
-  { view: 'resources', role: 'r1', title: 'Requests 5, 6, 7 and 8 — forms and documents',
-    body: 'All four forms print as PDFs today. Drive folders, the job description and the manual sit alongside, and the office sets those links without a developer.' },
-  { view: 'callsheet', role: 'r1', title: 'For reps without internet',
-    body: 'One page to print and carry, with a column to write in. Phone the office and they key it in under the rep\'s name.' },
-  { view: 'dash', role: 's1', title: 'What the office sees',
-    body: 'Every rep and ring at a glance, what needs approving, and which groups are at risk before anyone notices.' },
-  { view: 'approvals', role: 's1', title: 'Approving a new ring',
-    body: 'Approve, edit then approve, or send it back with a reason the rep can act on. A rep can never make a ring live themselves.' },
-  { view: 'reports', role: 's1', title: 'The reports Jeremy asked for',
-    body: 'Thirteen reports, each exporting to CSV for Excel or Zoho. Contacts due, retention, hours, registrations, members without a ring.' },
-  { view: 'checks', role: 's2', title: 'And it checks itself',
-    body: 'Run the checks and watch them execute. Rules, permissions, screens and reports, verified in front of you.' },
-];
 
-let tourStep = -1;
-function startTour() { tourStep = 0; applyTour(); }
-function nextTour() { tourStep++; tourStep >= TOUR.length ? endTour() : applyTour(); }
-function prevTour() { if (tourStep > 0) { tourStep--; applyTour(); } }
-function endTour() { tourStep = -1; render(); toast('Walkthrough finished'); }
-function applyTour() {
-  const t = TOUR[tourStep];
-  if (!t) return endTour();
-  ui.me = t.role;
-  ui.view = t.view;
-  render();
-}
-function tourBar() {
-  if (tourStep < 0) return '';
-  const t = TOUR[tourStep];
-  return `<div class="tourbar">
-    <div class="tour-inner">
-      <div class="tour-step">${tourStep + 1} of ${TOUR.length}</div>
-      <div class="tour-text"><strong>${esc(t.title)}</strong><span>${esc(t.body)}</span></div>
-      <div class="tour-btns">
-        ${tourStep > 0 ? `<button class="btn sm" onclick="prevTour()">Back</button>` : ''}
-        <button class="btn sm primary" onclick="nextTour()">${tourStep === TOUR.length - 1 ? 'Finish' : 'Next'}</button>
-        <button class="btn sm ghost" onclick="endTour()">Exit</button>
-      </div>
-    </div></div>`;
-}
-
-/* ══════════════════ IMPORT REAL DATA ══════════════════
- * Load a CSV exported from Zoho CRM straight into this browser.
- *
- * Nothing is uploaded anywhere. The file is read by the browser, parsed in
- * memory and kept in local storage on this device only. That matters: it
- * means Symbiz can see the app running on their own members without any
- * connection being built first, and without member data leaving the laptop.
- */
-
-/** Proper CSV parser — handles quoted fields, embedded commas, newlines, "" escapes. */
-function parseCSV(text) {
-  const rows = [];
-  let row = [], field = '', inQuotes = false;
-  text = String(text).replace(/^\uFEFF/, '');          // strip BOM Excel adds
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i], next = text[i + 1];
-    if (inQuotes) {
-      if (c === '"' && next === '"') { field += '"'; i++; }
-      else if (c === '"') inQuotes = false;
-      else field += c;
-    } else {
-      if (c === '"') inQuotes = true;
-      else if (c === ',') { row.push(field); field = ''; }
-      else if (c === '\r') { /* ignore */ }
-      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
-      else field += c;
-    }
-  }
-  if (field.length || row.length) { row.push(field); rows.push(row); }
-  return rows.filter(r => r.some(c => String(c).trim() !== ''));
-}
-
-/* What we need, and the Zoho column names we'll guess from. */
-const IMPORT_KINDS = {
-  members: {
-    label: 'Members (Zoho Contacts)',
-    hint: 'In Zoho: Contacts module → ... → Export. Include name, phone, email, company and any membership fields.',
-    fields: {
-      name:     { label: 'Name',            required: true,  guess: ['full name', 'contact name', 'last name', 'name'] },
-      business: { label: 'Business',        required: false, guess: ['account name', 'company', 'business', 'organisation', 'organization'] },
-      phone:    { label: 'Phone',           required: false, guess: ['phone', 'mobile', 'telephone', 'contact number'] },
-      email:    { label: 'Email',           required: false, guess: ['email', 'e-mail'] },
-      region:   { label: 'Region',          required: false, guess: ['region', 'state', 'mailing state', 'territory', 'area'] },
-      ringName: { label: 'Growth Ring',     required: false, guess: ['growth ring', 'ring', 'group'] },
-      repName:  { label: 'Rep',             required: false, guess: ['rep', 'assigned rep', 'owner', 'contact owner', 'record owner'] },
-      joined:   { label: 'Member since',    required: false, guess: ['member since', 'joined', 'created time', 'start date'] },
-      renews:   { label: 'Renewal date',    required: false, guess: ['renewal', 'renews', 'expiry', 'expiration'] },
-      status:   { label: 'Status',          required: false, guess: ['member status', 'status', 'active'] },
-    }
-  },
-  rings: {
-    label: 'Growth Rings',
-    hint: 'If Growth Rings live in their own Zoho module, export it. Otherwise skip — rings are created from member data.',
-    fields: {
-      name:        { label: 'Ring name',    required: true,  guess: ['name', 'growth ring', 'ring name', 'group name'] },
-      facName:     { label: 'Facilitator',  required: false, guess: ['facilitator', 'leader', 'host'] },
-      repName:     { label: 'Rep',          required: false, guess: ['rep', 'assigned rep', 'owner'] },
-      facFreq:     { label: 'Facilitator call frequency', required: false, guess: ['facilitator call', 'facilitator frequency'] },
-      memFreq:     { label: 'Member call frequency',      required: false, guess: ['member call', 'member frequency'] },
-      capacity:    { label: 'Size limit',   required: false, guess: ['capacity', 'size limit', 'max'] },
-      meetDay:     { label: 'Meeting day',  required: false, guess: ['meeting day', 'meets', 'meeting date'] },
-      meetTime:    { label: 'Meeting time', required: false, guess: ['meeting time', 'time'] },
-      meetPlace:   { label: 'Meeting place',required: false, guess: ['meeting place', 'location', 'venue', 'where'] },
-      status:      { label: 'Status',       required: false, guess: ['status'] },
-    }
-  },
-  events: {
-    label: 'Events (Zoho Events module)',
-    hint: 'Keturah mentioned most events live in the CRM events module. Export it here; expos from the Symbiz calendar can be added by hand.',
-    fields: {
-      title:    { label: 'Title',    required: true,  guess: ['event title', 'subject', 'title', 'name'] },
-      type:     { label: 'Type',     required: false, guess: ['event type', 'type', 'category'] },
-      date:     { label: 'Date',     required: true,  guess: ['start datetime', 'date', 'start date', 'event date'] },
-      time:     { label: 'Time',     required: false, guess: ['time', 'start time'] },
-      location: { label: 'Location', required: false, guess: ['venue', 'location', 'where', 'address'] },
-      region:   { label: 'Region',   required: false, guess: ['region', 'state', 'area'] },
-      repName:  { label: 'Rep',      required: false, guess: ['owner', 'rep', 'host'] },
-    }
-  }
-};
-
-let importState = { kind: 'members', rows: null, headers: [], map: {}, fileName: '' };
-
-function guessColumn(headers, guesses) {
-  const lower = headers.map(h => String(h).toLowerCase().trim());
-  for (const g of guesses) {
-    const exact = lower.indexOf(g);
-    if (exact >= 0) return exact;
-  }
-  for (const g of guesses) {
-    const partial = lower.findIndex(h => h.includes(g));
-    if (partial >= 0) return partial;
-  }
-  return -1;
-}
-
-async function handleImportFile(input) {
-  const file = input.files && input.files[0];
-  if (!file) return;
-  if (file.size > 8_000_000) { toast('That file is very large — try exporting fewer columns'); return; }
-
-  const text = await file.text();
-  const rows = parseCSV(text);
-  if (rows.length < 2) { toast('That file has no rows under the header'); return; }
-
-  const headers = rows[0].map(h => String(h).trim());
-  const spec = IMPORT_KINDS[importState.kind].fields;
-  const map = {};
-  Object.keys(spec).forEach(k => { map[k] = guessColumn(headers, spec[k].guess); });
-
-  importState = { ...importState, rows: rows.slice(1), headers, map, fileName: file.name };
-  renderContent();
-  toast(`Read ${rows.length - 1} rows from ${file.name}`);
-}
-
-function setImportMap(field, idx) {
-  importState.map[field] = parseInt(idx, 10);
-  renderContent();
-}
-function setImportKind(kind) {
-  importState = { kind, rows: null, headers: [], map: {}, fileName: '' };
-  renderContent();
-}
-function cancelImport() {
-  importState = { kind: importState.kind, rows: null, headers: [], map: {}, fileName: '' };
-  renderContent();
-}
-
-function importPreviewRows(limit) {
-  const spec = IMPORT_KINDS[importState.kind].fields;
-  const keys = Object.keys(spec);
-  return (importState.rows || []).slice(0, limit || 5).map(r =>
-    keys.map(k => importState.map[k] >= 0 ? (r[importState.map[k]] || '').trim() : ''));
-}
-
-function normDate(v) {
-  if (!v) return '';
-  const s = String(v).trim();
-  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);           if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);          // US mm/dd/yyyy, Zoho's usual export
-  if (m) return `${m[3]}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
-  const d = new Date(s);
-  return isNaN(d) ? '' : d.toISOString().slice(0, 10);
-}
-
-function runImport(replace) {
-  const kind = importState.kind;
-  const spec = IMPORT_KINDS[kind].fields;
-  const missing = Object.keys(spec).filter(k => spec[k].required && importState.map[k] < 0);
-  if (missing.length) { toast(`Pick a column for ${missing.map(k => spec[k].label).join(' and ')}`); return; }
-
-  const val = (r, k) => importState.map[k] >= 0 ? String(r[importState.map[k]] || '').trim() : '';
-  const repByName = n => {
-    const t = String(n || '').toLowerCase().trim();
-    const p = PEOPLE.find(x => x.role === 'rep' && (x.name.toLowerCase() === t || x.name.toLowerCase().split(' ')[0] === t.split(' ')[0]));
-    return p ? p.id : (PEOPLE.find(x => x.role === 'rep') || {}).id;
-  };
-
-  let added = 0, skipped = 0;
-
-  if (kind === 'members') {
-    if (replace) { S.members = []; }
-    importState.rows.forEach(r => {
-      const name = val(r, 'name');
-      if (!name) { skipped++; return; }
-      if (!replace && S.members.some(m => m.name.toLowerCase() === name.toLowerCase())) { skipped++; return; }
-      const ringName = val(r, 'ringName');
-      let ringId = null;
-      if (ringName) {
-        let g = S.rings.find(x => x.name.toLowerCase() === ringName.toLowerCase());
-        if (!g) {                                  // create the ring the member refers to
-          g = { id: 'g' + (S.ids.ring++), name: ringName, facId: null, facFreq: S.settings.defaultFacFreq,
-                memFreq: S.settings.defaultMemFreq, meetingRhythm: 'Monthly', capacity: S.settings.defaultCapacity,
-                status: 'active', repId: repByName(val(r, 'repName')), createdAt: TODAY_S, launchSteps: [] };
-          S.rings.push(g);
-        }
-        ringId = g.id;
-      }
-      const st = val(r, 'status').toLowerCase();
-      S.members.push({
-        id: 'm' + (S.ids.mem++), name, business: val(r, 'business') || '—',
-        phone: val(r, 'phone'), email: val(r, 'email'), region: val(r, 'region'),
-        ringId, repId: repByName(val(r, 'repName')),
-        joined: normDate(val(r, 'joined')) || TODAY_S,
-        renews: normDate(val(r, 'renews')) || '',
-        status: /discont|inactive|cancel|lapsed|former/.test(st) ? 'discontinued' : 'active'
-      });
-      added++;
-    });
-  }
-
-  if (kind === 'rings') {
-    if (replace) { S.rings = []; }
-    importState.rows.forEach(r => {
-      const name = val(r, 'name');
-      if (!name) { skipped++; return; }
-      if (!replace && S.rings.some(g => g.name.toLowerCase() === name.toLowerCase())) { skipped++; return; }
-      const facName = val(r, 'facName');
-      let facId = null;
-      if (facName) {
-        let f = S.facilitators.find(x => x.name.toLowerCase() === facName.toLowerCase());
-        if (!f) { f = { id: 'f' + (S.ids.fac++), name: facName, phone: '', email: '', business: '—', since: TODAY_S }; S.facilitators.push(f); }
-        facId = f.id;
-      }
-      const ff = val(r, 'facFreq'), mf = val(r, 'memFreq'), st = val(r, 'status').toLowerCase();
-      S.rings.push({
-        id: 'g' + (S.ids.ring++), name, facId,
-        facFreq: /semi/i.test(ff) ? 'Semi-Annual' : 'Quarterly',
-        memFreq: /semi/i.test(mf) ? 'Semi-Annual' : 'Annual',
-        meetingRhythm: 'Monthly', capacity: parseInt(val(r, 'capacity')) || S.settings.defaultCapacity,
-        meetDay: val(r, 'meetDay'), meetTime: val(r, 'meetTime'), meetPlace: val(r, 'meetPlace'),
-        status: /pend/.test(st) ? 'pending' : /inactive|closed/.test(st) ? 'paused' : 'active',
-        repId: repByName(val(r, 'repName')), createdAt: TODAY_S, launchSteps: []
-      });
-      added++;
-    });
-  }
-
-  if (kind === 'events') {
-    if (replace) { S.events = []; S.registrations = []; }
-    importState.rows.forEach(r => {
-      const title = val(r, 'title'), date = normDate(val(r, 'date'));
-      if (!title || !date) { skipped++; return; }
-      const t = val(r, 'type').toLowerCase();
-      S.events.push({
-        id: 'e' + (S.ids.ev++), title, date, time: val(r, 'time'),
-        type: /expo/.test(t) ? 'Expo' : /summit/.test(t) ? 'Summit' : /info/.test(t) ? 'Info Meeting' : 'Local Event',
-        location: val(r, 'location'), region: val(r, 'region'),
-        repId: repByName(val(r, 'repName')), capacity: 0, notes: ''
-      });
-      added++;
-    });
-  }
-
-  // A ring created from a spreadsheet must not be given a capacity its own
-  // membership already exceeds — real groups are sometimes larger than the default.
-  S.rings.forEach(r => {
-    const actual = ringMembers(r.id).length;
-    if (actual > (r.capacity || 0)) r.capacity = actual;
-  });
-
-  try { save(); }
-  catch (e) {
-    toast('Too much data for browser storage — import a smaller export');
-    return;
-  }
-  logAudit(`Imported ${added} ${kind} from ${importState.fileName}`);
-  cancelImport();
-  toast(`${added} imported${skipped ? `, ${skipped} skipped` : ''}`);
-  render();
-}
-
-function clearAllData() {
-  openModal(`<h3>Start again with sample data</h3>
-    <p class="lead">This wipes everything in this browser, including anything imported, and puts the demo sample back.</p>
-    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
-    <button class="btn danger" onclick="closeModal();resetDemo()">Wipe and reset</button></div>`);
-}
-
-function vImport() {
-  const kinds = Object.keys(IMPORT_KINDS);
-  const spec = IMPORT_KINDS[importState.kind];
-  const keys = Object.keys(spec.fields);
-  const loaded = !!importState.rows;
-
-  const counts = `${S.members.length} members · ${S.rings.length} rings · ${S.events.length} events · ${S.facilitators.length} facilitators`;
-
-  return `<div class="section-head"><div><h2>Import your own data</h2>
-    <div class="sub">Load a CSV exported from Zoho and see the app running on real members.</div></div></div>
-
-    <div class="callout info"><strong>Nothing leaves this device</strong>
-      The file is read by your browser and kept in this browser's storage only. It isn't uploaded,
-      and no connection to Zoho is needed. Close the tab and it stays on this computer.</div>
-
-    <div class="card flat"><div class="row-title">Currently loaded</div>
-      <div class="row-sub">${counts}</div></div>
-    ${(() => {
-      const active = S.members.filter(m=>m.status==='active');
-      if(active.length < 20) return '';
-      const byRep = {};
-      active.forEach(m=>{ byRep[m.repId]=(byRep[m.repId]||0)+1; });
-      const top = Object.entries(byRep).sort((a,b)=>b[1]-a[1])[0];
-      if(!top || top[1] < active.length*0.9) return '';
-      const states = [...new Set(active.map(m=>(m.region||'').trim()).filter(Boolean))];
-      return `<div class="callout rust"><strong>All ${active.length} members are assigned to one rep</strong>
-        The export had no rep against each member, so everyone landed on ${esc(pname(top[0]))}.
-        Switch to another rep and you'll see an empty app — correct, but not useful for a demonstration.
-        ${states.length>1 ? `Their records do carry a region, so they can be split that way instead.
-        <div class="btnrow" style="margin-top:9px">
-          <button class="btn sm primary" onclick="openAssignByRegion()">Split members by region</button>
-        </div>` : ''}
-        <div class="row-sub" style="margin-top:8px">For the real system, Symbiz needs a rep recorded against each member in Zoho.</div>
-      </div>`;
-    })()}
-    ${!API.live ? `<div class="callout ok"><strong>Seeing it as a rep</strong>
-      Use <em>Viewing as</em> at the top of the screen to switch between each rep, the office and the director.
-      Every person sees a different app — a rep sees only their own members and calls.
-      <div class="btnrow" style="margin-top:9px">
-        ${PEOPLE.filter(p=>p.role==='rep').map(p=>`<button class="btn sm" onclick="switchPerson('${p.id}')">View as ${esc(p.name.split(' ')[0])}</button>`).join('')}
-      </div></div>` : ''}
-
-    <h3 class="sub-h">1. What are you importing?</h3>
-    <div class="chips">${kinds.map(k =>
-      `<button class="chip ${importState.kind === k ? 'on' : ''}" onclick="setImportKind('${k}')">${IMPORT_KINDS[k].label}</button>`).join('')}</div>
-    <div class="row-sub" style="margin-bottom:14px">${esc(spec.hint)}</div>
-
-    <h3 class="sub-h">2. Choose the file</h3>
-    <div class="card">
-      <input type="file" accept=".csv,text/csv" onchange="handleImportFile(this)">
-      ${loaded ? `<div class="row-sub" style="margin-top:8px">${esc(importState.fileName)} · ${importState.rows.length} rows · ${importState.headers.length} columns</div>` : ''}
-    </div>
-
-    ${loaded ? `
-      <h3 class="sub-h">3. Check the columns matched</h3>
-      <div class="row-sub" style="margin-bottom:10px">We guessed from the headings. Correct anything that's wrong — set it to "not in this file" to skip it.</div>
-      <div class="card">
-        ${keys.map(k => `<div class="field" style="margin-bottom:10px">
-          <label>${esc(spec.fields[k].label)}${spec.fields[k].required ? ' <span style="color:var(--rust)">· required</span>' : ''}</label>
-          <select onchange="setImportMap('${k}', this.value)">
-            <option value="-1" ${importState.map[k] < 0 ? 'selected' : ''}>— not in this file —</option>
-            ${importState.headers.map((h, i) => `<option value="${i}" ${importState.map[k] === i ? 'selected' : ''}>${esc(h)}</option>`).join('')}
-          </select>
-        </div>`).join('')}
-      </div>
-
-      <h3 class="sub-h">4. Preview the first few rows</h3>
-      <div class="tbl-wrap"><table class="rep"><thead><tr>${keys.map(k => `<th>${esc(spec.fields[k].label)}</th>`).join('')}</tr></thead>
-        <tbody>${importPreviewRows(5).map(r => `<tr>${r.map(c => `<td>${esc(c) || '<span style="color:var(--ink-faint)">—</span>'}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-
-      <h3 class="sub-h">5. Import</h3>
-      <div class="btnrow">
-        <button class="btn primary" onclick="runImport(false)">Add to what's here</button>
-        <button class="btn danger" onclick="runImport(true)">Replace all ${esc(spec.label.split(' ')[0].toLowerCase())}</button>
-        <button class="btn" onclick="cancelImport()">Cancel</button>
-      </div>
-      <div class="row-sub" style="margin-top:8px">"Add" skips anyone already here by name. "Replace" clears the existing set first.</div>
-    ` : ''}
-
-    <h3 class="sub-h">Starting over</h3>
-    <div class="card">
-      <div class="row"><div class="row-main"><div class="row-title">Back to sample data</div>
-        <div class="row-sub">Wipes anything imported in this browser</div></div>
-        <button class="btn sm danger" onclick="clearAllData()">Reset</button></div>
-    </div>
-
-    <h3 class="sub-h">How to export from Zoho</h3>
-    <div class="card">
-      <div class="kv"><span class="k">1</span><span>Open the module in Zoho CRM (Contacts, or your Growth Rings module)</span></div>
-      <div class="kv"><span class="k">2</span><span>Click the three dots at the top right, then Export</span></div>
-      <div class="kv"><span class="k">3</span><span>Choose CSV and the fields you want</span></div>
-      <div class="kv"><span class="k">4</span><span>Load the downloaded file above</span></div>
-    </div>`;
-}
 
 /**
  * Put the signed-in person into the app.
@@ -4110,15 +3806,16 @@ function signInAs(user){
    loadFromServer, refreshMode and signInAs are function declarations and are
    already globals — reassigning them here would make each call recurse. */
 window.adapt=adapt;
+window.refreshMode=refreshMode; window.loadFromServer=loadFromServer;
+window.signInAs=signInAs; window.checkSetup=checkSetup;
+Object.defineProperty(window,'loading',{get:()=>loading});
+Object.defineProperty(window,'loadError',{get:()=>loadError,set:v=>{loadError=v;}});
 ['vToday','vCalendar','vMyRings','vPeople','vUnaffiliated','vVisits','vRequests','vTimesheet',
  'vResources','vCallSheet','vMyProgress','vOfficeDash','vApprovals','vCoverage','vReports',
  'vMembersAll','vAllRings','vInsights','vReminders','vSettings','vEventDetail']
  .forEach(n=>{ try{ window[n]=eval(n); }catch(e){} });
 window.REPORTS=REPORTS; window.RESOURCES=RESOURCES; window.KEY=KEY;
-window.CHECKS=CHECKS; window.TOUR=TOUR; window.parseCSV=parseCSV; window.normDate=normDate;
-Object.defineProperty(window,'importState',{get:()=>importState,set:v=>{importState=v;}});
-Object.defineProperty(window,'checkResults',{get:()=>checkResults});
-Object.defineProperty(window,'tourStep',{get:()=>tourStep,set:v=>{tourStep=v;}});
+window.CHECKS=CHECKS; Object.defineProperty(window,'checkResults',{get:()=>checkResults});
 window.__app = {get S(){return S;}, get ui(){return ui;}, get pendingReceipt(){return pendingReceipt;}, set pendingReceipt(v){pendingReceipt=v;}, REPORTS, ringHealth, toCSV, ring, member, fac, navItems, dueItems};
 
 </script>
