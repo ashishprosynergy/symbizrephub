@@ -385,6 +385,12 @@ window.API=API; window.OutBox=OutBox;
 const TODAY = new Date('2026-09-18T09:00:00');
 const TODAY_S = '2026-09-18';
 const KEY = 'rephub_v3_symbiz';
+/**
+ * Bumped whenever the shape or origin of stored data changes. Anything saved
+ * under an older version is discarded rather than merged — this is what stops
+ * demo records from an earlier build lingering in someone's browser.
+ */
+const STORE_VERSION = 'prod-1';
 
 /** Filled from the server at sign-in. Never hardcoded. */
 const PEOPLE = [];
@@ -492,10 +498,27 @@ function migrateState(st){
 
 function load(){
   try{
-    const r=localStorage.getItem(KEY);
+    const stored = localStorage.getItem(KEY + '_version');
+    if(stored !== STORE_VERSION){
+      // Data from an older build, including the demo records. Clear it.
+      try{
+        localStorage.removeItem(KEY);
+        localStorage.removeItem('rephub_outbox');
+        localStorage.setItem(KEY + '_version', STORE_VERSION);
+      }catch(e){}
+      const fresh = seed();
+      try{ localStorage.setItem(KEY, JSON.stringify(fresh)); }catch(e){}
+      return fresh;
+    }
+    const r = localStorage.getItem(KEY);
     if(r) return migrateState(JSON.parse(r));
   }catch(e){ console.warn('Saved data could not be read, starting fresh:', e.message); }
-  const s=seed(); try{localStorage.setItem(KEY,JSON.stringify(s));}catch(e){} return s;
+  const s = seed();
+  try{
+    localStorage.setItem(KEY, JSON.stringify(s));
+    localStorage.setItem(KEY + '_version', STORE_VERSION);
+  }catch(e){}
+  return s;
 }
 function save(){ try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){} }
 function resetDemo(){
