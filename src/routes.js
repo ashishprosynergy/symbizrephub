@@ -682,6 +682,81 @@ r.get('/reports/:key', auth.authRequired, auth.requireOffice, wrap(async (req, r
 }));
 
 /* ═══════════ ADMIN ═══════════ */
+/**
+ * Reps discovered in Zoho — every Regional Rep on an active ring, with their
+ * ring count, regions, and whether an account already exists here.
+ *
+ * This is how accounts get created: pulled from the CRM rather than typed,
+ * so a rep added in Zoho simply appears here ready to invite.
+ */
+r.get('/admin/reps-from-zoho', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  const rings = (await zoho.coql(queries.repsOnRings())).map(fromZoho.ring);
+
+  const byRep = new Map();
+  rings.forEach(ring => {
+    if (!ring.repZohoId) return;
+    if (!byRep.has(ring.repZohoId)) {
+      byRep.set(ring.repZohoId, {
+        contactId: ring.repZohoId, name: ring.repName || 'Unnamed rep',
+        rings: 0, ringNames: [], regions: new Set(),
+      });
+    }
+    const e = byRep.get(ring.repZohoId);
+    e.rings++;
+    if (e.ringNames.length < 6) e.ringNames.push(ring.name);
+    if (ring.regionName) e.regions.add(ring.regionName);
+  });
+
+  // Fill in contact details (email, phone) for the reps we found
+  const ids = [...byRep.keys()];
+  if (ids.length) {
+    const contacts = await zoho.coql(queries.contactsByIds(ids)).catch(() => []);
+    contacts.map(fromZoho.member).forEach(c => {
+      const e = byRep.get(c.id);
+      if (e) { e.email = c.email || ''; e.phone = c.phone || ''; e.business = c.business || ''; }
+    });
+  }
+
+  const existing = await q.allUsers();
+  const linked = new Set(existing.map(u => u.zoho_owner_id).filter(Boolean));
+
+  const out = [...byRep.values()]
+    .map(e => ({
+      ...e,
+      regions: [...e.regions],
+      hasAccount: linked.has(e.contactId),
+      account: existing.find(u => u.zoho_owner_id === e.contactId) || null,
+    }))
+    .sort((a, b) => b.rings - a.rings);
+
+  res.json(out);
+}));
+
+/** Create an account straight from a Zoho rep, no typing of ids. */
+r.post('/admin/users/from-zoho', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+  const { contactId, name, email, role } = req.body || {};
+  if (!contactId || !name) return res.status(400).json({ error: 'A Zoho contact and name are required' });
+  if (!email) return res.status(400).json({ error: 'That rep has no email in Zoho — add one there, or create the account manually' });
+
+  const existing = await q.allUsers();
+  if (existing.some(u => u.zoho_owner_id === contactId)) {
+    return res.status(409).json({ error: 'That rep already has an account' });
+  }
+  if (existing.some(u => String(u.email).toLowerCase() === String(email).toLowerCase())) {
+    return res.status(409).json({ error: 'That email is already in use' });
+  }
+
+  const id = 'u_' + Date.now().toString(36);
+  const temp = Math.random().toString(36).slice(2, 10);
+  await q.insertUser({
+    id, email: String(email).trim(), name: String(name).trim(), phone: null,
+    role: role === 'staff' || role === 'admin' ? role : 'rep', region: null,
+    password_hash: auth.hash(temp), zoho_owner_id: String(contactId).trim(),
+  });
+  await audit(req.user.id, 'user.createdFromZoho', { id, contactId, email }, req.ip);
+  res.status(201).json({ id, tempPassword: temp });
+}));
+
 r.get('/admin/users', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
   res.json(await q.allUsers());
 }));
