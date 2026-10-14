@@ -361,6 +361,15 @@ const queries = {
             Address_1_City, Address_1_State_Province
      from ${M.REGISTRATION} where Event = '${esc(eventId)}' limit 200`,
 
+  /**
+   * Every Regional Rep named on an active ring, so accounts can be created
+   * from Zoho rather than typed by hand. Reps are Contacts, so the lookup
+   * returns id and name directly on the ring.
+   */
+  repsOnRings: () =>
+    `select id, Name, Regional_Rep, Region_Lookup from ${M.RING}
+     where Active = true limit 200`,
+
   /** One contact by id — used to resolve a signed-in rep. */
   contactById: id =>
     `select ${MEMBER_FIELDS} from ${M.CONTACT} where id = '${esc(id)}' limit 1`,
