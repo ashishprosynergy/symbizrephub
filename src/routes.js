@@ -254,11 +254,10 @@ r.patch('/rings/:id', auth.authRequired, writesAllowed, wrap(async (req, res) =>
 r.get('/activities', auth.authRequired, wrap(async (req, res) => {
   const { ringIds } = await scopeRings(req.user, req.query.as);
   if (!ringIds.length) return res.json([]);
-  const rows = [];
-  for (const batch of chunk(ringIds, 20)) {
-    rows.push(...await zoho.coql(queries.visitsForRings(batch)));
-  }
-  res.json(rows.map(fromZoho.activity));
+  const batches = await Promise.all(
+    chunk(ringIds, 20).map(batch => zoho.coql(queries.visitsForRings(batch)).catch(() => []))
+  );
+  res.json(batches.flat().map(fromZoho.activity));
 }));
 
 /**
@@ -337,10 +336,12 @@ r.get('/members', auth.authRequired, wrap(async (req, res) => {
   // Membership lives in the Group_Members join table, not on the Contact.
   // The office may cover 80+ rings; one IN clause that long is rejected by
   // Zoho, so ask in batches and merge.
-  const links = [];
-  for (const batch of chunk(ringIds, 20)) {
-    links.push(...await zoho.coql(queries.groupMembersFor(batch)));
-  }
+  // Run the batches together rather than one after another. With 80+ rings
+  // the sequential version took long enough that sign-in felt broken.
+  const linkBatches = await Promise.all(
+    chunk(ringIds, 20).map(batch => zoho.coql(queries.groupMembersFor(batch)).catch(() => []))
+  );
+  const links = linkBatches.flat();
   const byContact = new Map();
   links.forEach(l => {
     const cid = l.Members?.id;
@@ -352,10 +353,10 @@ r.get('/members', auth.authRequired, wrap(async (req, res) => {
   });
   if (!byContact.size) return res.json([]);
 
-  const contacts = [];
-  for (const batch of chunk([...byContact.keys()], 50)) {
-    contacts.push(...await zoho.coql(queries.contactsByIds(batch)));
-  }
+  const contactBatches = await Promise.all(
+    chunk([...byContact.keys()], 50).map(batch => zoho.coql(queries.contactsByIds(batch)).catch(() => []))
+  );
+  const contacts = contactBatches.flat();
   res.json(contacts.map(c => {
     const m = fromZoho.member(c);
     const link = byContact.get(c.id) || {};
@@ -369,12 +370,15 @@ r.get('/members', auth.authRequired, wrap(async (req, res) => {
  * Contacts cannot be filtered on the group lookup.
  */
 r.get('/members/no-ring', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  // Page the join table and the member list in parallel — these are the two
+  // slowest calls in the app and they do not depend on each other.
+  const offsets = [0, 200, 400, 600, 800, 1000];
+  const [linkPages, memberPages] = await Promise.all([
+    Promise.all(offsets.map(o => zoho.coql(queries.allGroupMembers(o)).catch(() => []))),
+    Promise.all(offsets.map(o => zoho.coql(queries.allActiveMembers(o)).catch(() => []))),
+  ]);
   const inAGroup = new Set();
-  for (let offset = 0; offset < 2000; offset += 200) {
-    const batch = await zoho.coql(queries.allGroupMembers(offset));
-    batch.forEach(l => { if (l.Members?.id) inAGroup.add(l.Members.id); });
-    if (batch.length < 200) break;
-  }
+  linkPages.flat().forEach(l => { if (l.Members?.id) inAGroup.add(l.Members.id); });
 
   // A rep should see the unaffiliated members in THEIR patch, not the whole
   // network. Their patch is the set of states their own rings cover.
@@ -395,15 +399,12 @@ r.get('/members/no-ring', auth.authRequired, auth.requireOffice, wrap(async (req
   }
 
   const out = [];
-  for (let offset = 0; offset < 2000; offset += 200) {
-    const batch = await zoho.coql(queries.allActiveMembers(offset));
-    batch.forEach(c => {
-      if (inAGroup.has(c.id)) return;
-      if (repStates && repStates.memberStates.size && !repStates.memberStates.has(c.Mailing_State)) return;
-      out.push(fromZoho.member(c));
-    });
-    if (batch.length < 200) break;
-  }
+  memberPages.flat().forEach(c => {
+    if (inAGroup.has(c.id)) return;
+    if (repStates && repStates.memberStates.size && !repStates.memberStates.has(c.Mailing_State)) return;
+    if (out.some(m => m.id === c.id)) return;
+    out.push(fromZoho.member(c));
+  });
   res.json(out);
 }));
 
@@ -442,10 +443,10 @@ r.get('/visits', auth.authRequired, wrap(async (req, res) => {
   });
 
   if (ringIds.length) {
-    const logged = [];
-    for (const batch of chunk(ringIds, 20)) {
-      logged.push(...await zoho.coql(queries.visitsForRings(batch)));
-    }
+    const loggedBatches = await Promise.all(
+      chunk(ringIds, 20).map(batch => zoho.coql(queries.visitsForRings(batch)).catch(() => []))
+    );
+    const logged = loggedBatches.flat();
     logged.map(fromZoho.activity).forEach(a => {
       if (!/visit/i.test(a.type || '')) return;    // calls are not visits
       out.push({
@@ -660,6 +661,12 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
   if (!t.length && !e.length) return res.status(400).json({ error: 'Nothing approved to send' });
 
   const to = await setting('accountingEmail', 'accounting@symbiz.org');
+  if (!cfg.mail.enabled || !cfg.mail.host) {
+    return res.status(503).json({
+      error: 'Email is not configured for this site, so nothing was sent. Nothing has been marked as claimed.',
+      fix: 'Set MAIL_ENABLED, SMTP_HOST, SMTP_USER and SMTP_PASS, then try again.',
+    });
+  }
   const rows = [['Type', 'Rep', 'Date', 'Category', 'Hours', 'Amount', 'Description', 'Receipt']];
   t.forEach(x => rows.push(['Hours', x.rep_name, x.entry_date, x.category, x.hours, '', x.description, '']));
   e.forEach(x => rows.push(['Expense', x.rep_name, x.entry_date, x.category, '', x.amount, x.description,
@@ -669,11 +676,17 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
     return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
   }).join(',')).join('\n');
 
-  await reminders.sendEmail(to, `Rep hours and expenses — ${today()}`,
+  const sent = await reminders.sendEmail(to, `Rep hours and expenses — ${today()}`,
     `<p>${t.length} time entries and ${e.length} expenses approved for payment.</p>
      <p>Total: ${t.reduce((s, x) => s + Number(x.hours), 0)} hours, $${e.reduce((s, x) => s + Number(x.amount), 0).toFixed(2)}</p>
      <pre style="font:12px/1.5 monospace;background:#f5f5f0;padding:10px;border-radius:6px">${csv}</pre>`,
     { userId: req.user.id, kind: 'accounting' });
+
+  if (sent && sent.ok === false) {
+    // Marking them claimed when the email failed would silently lose a month
+    // of expenses — leave them approved so the office can retry.
+    return res.status(502).json({ error: `The email could not be sent: ${sent.error}. Nothing was marked as claimed.` });
+  }
 
   await q.markTimeSent();
   await q.markExpensesSent();
@@ -949,7 +962,7 @@ r.post('/admin/users/from-zoho', auth.authRequired, auth.requireAdmin, wrap(asyn
   if (req.body?.sendEmail !== false) {
     const r = await reminders.sendEmail(email, 'Your Symbiz Rep Hub login',
       welcomeEmail({ name, email, password: temp }), { userId: id, kind: 'welcome' });
-    emailed = !!(r && (r.ok || r.skipped === undefined));
+    emailed = !!(r && r.ok === true);
   }
   res.status(201).json({ id, tempPassword: temp, emailed });
 }));
