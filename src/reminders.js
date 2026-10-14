@@ -120,9 +120,10 @@ function esc(s) {
 async function sendEmail(to, subject, html, { userId, kind } = {}) {
   const t = mailer();
   if (!t) {
+    // Be explicit: a caller that marks work as "sent" must know it wasn't.
     console.log(`[mail:disabled] would send "${subject}" to ${to}`);
     await q.logSend(userId || null, kind || 'email', 'email', subject, true, 'mail disabled');
-    return { skipped: true };
+    return { skipped: true, ok: false, error: 'Email is not configured on this site' };
   }
   try {
     await t.sendMail({ from: cfg.mail.from, to, subject, html });
