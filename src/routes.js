@@ -26,9 +26,13 @@ function writesAllowed(req, res, next) {
  * A rep IS a Contact; Growth_Ring_Groups.Regional_Rep points at it. Members
  * have no rep field, so a rep's members are the members of their rings.
  */
-async function scopeRings(user) {
+async function scopeRings(user, asContactId) {
+  // The office can ask to see one rep's scope with ?as=<contact id>. A rep
+  // can never do this — their own contact is always used.
   const isRep = user.role === 'rep';
-  const repContactId = isRep ? (user.zoho_owner_id || null) : null;
+  const repContactId = isRep
+    ? (user.zoho_owner_id || null)
+    : (asContactId ? String(asContactId).replace(/'/g, '') : null);
   if (isRep && !repContactId) return { rings: [], ringIds: [], repContactId: null };
   const rows = await zoho.coql(queries.ringsForRep(repContactId));
   const rings = rows.map(fromZoho.ring);
@@ -89,6 +93,35 @@ r.post('/setup', wrap(async (req, res) => {
   res.status(201).json({ token: auth.issue(user), user: auth.publicUser(user) });
 }));
 
+/** The email a new rep receives with their sign-in details. */
+function welcomeEmail({ name, email, password }) {
+  const url = cfg.appUrl;
+  return `<!doctype html><html><body style="margin:0;background:#F2F5EC;font-family:-apple-system,Segoe UI,Arial,sans-serif;">
+  <div style="max-width:520px;margin:0 auto;padding:24px 18px;">
+    <h1 style="font-size:19px;color:#1E2A20;margin:0 0 6px;">Your Rep Hub login</h1>
+    <p style="color:#5A6455;font-size:14px;line-height:1.6;margin:0 0 18px;">
+      ${esc(name.split(' ')[0])}, the Symbiz rep portal is ready for you. It shows the
+      Growth Rings you look after, who is due a call, and the forms you need.
+    </p>
+    <table style="width:100%;background:#fff;border-radius:8px;border-collapse:collapse;">
+      <tr><td style="padding:11px 14px;color:#5A6455;font-size:13px;border-bottom:1px solid #E9ECDF;">Sign in at</td>
+          <td style="padding:11px 14px;border-bottom:1px solid #E9ECDF;"><a href="${url}" style="color:#2E5132;font-weight:600;">${esc(url)}</a></td></tr>
+      <tr><td style="padding:11px 14px;color:#5A6455;font-size:13px;border-bottom:1px solid #E9ECDF;">Email</td>
+          <td style="padding:11px 14px;border-bottom:1px solid #E9ECDF;font-size:14px;">${esc(email)}</td></tr>
+      <tr><td style="padding:11px 14px;color:#5A6455;font-size:13px;">Password</td>
+          <td style="padding:11px 14px;font-family:ui-monospace,monospace;font-size:16px;font-weight:700;">${esc(password)}</td></tr>
+    </table>
+    <p style="color:#5A6455;font-size:13px;line-height:1.6;margin:16px 0 0;">
+      Please change that password after you sign in. It works on a phone or tablet as well as a computer.
+    </p>
+    <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network · 800-394-7970</p>
+  </div></body></html>`;
+}
+function esc(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+/** Resend a login to someone who lost theirs. */
+function makePassword(){ return Math.random().toString(36).slice(2,10); }
+
 /* ═══════════ AUTH ═══════════ */
 r.post('/auth/login', wrap(async (req, res) => {
   const { email, password } = req.body || {};
@@ -114,7 +147,7 @@ r.post('/auth/password', auth.authRequired, wrap(async (req, res) => {
 
 /* ═══════════ RINGS ═══════════ */
 r.get('/rings', auth.authRequired, wrap(async (req, res) => {
-  const { rings } = await scopeRings(req.user);
+  const { rings } = await scopeRings(req.user, req.query.as);
   res.json(rings.map(r => ({
     ...r,
     health: ringHealth({
@@ -148,6 +181,40 @@ r.post('/rings', auth.authRequired, writesAllowed, wrap(async (req, res) => {
        <p><a href="${cfg.appUrl}/approvals">Review it</a></p>`, { userId: u.id, kind: 'approval' });
   }
   res.status(201).json({ id, status: 'pending' });
+}));
+
+/**
+ * Set meeting details on many rings at once.
+ *
+ * All 81 rings have no meeting rhythm, format or target size. Editing them
+ * one at a time in Zoho is an afternoon's work; this is the same job in a
+ * single screen, and it is what makes ring health mean anything.
+ */
+r.patch('/rings/bulk', auth.authRequired, auth.requireOffice, writesAllowed, wrap(async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const fields = req.body?.fields || {};
+  if (!ids.length) return res.status(400).json({ error: 'Pick at least one ring' });
+  if (ids.length > 200) return res.status(413).json({ error: 'Too many rings in one go' });
+
+  // Only these may be set in bulk. Never the rep, facilitator or status —
+  // those are per-ring decisions and too easy to wreck en masse.
+  const allowed = ['meetingFrequency', 'meetingFormat', 'capacity', 'meetingRhythm'];
+  const patch = {};
+  allowed.forEach(k => { if (fields[k] !== undefined && fields[k] !== '') patch[k] = fields[k]; });
+  if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to change' });
+
+  const records = ids.map(id => {
+    const z = { id };
+    if (patch.meetingFrequency) z.Meeting_Frequency = patch.meetingFrequency;
+    if (patch.meetingFormat) z.Meeting_Format = patch.meetingFormat;
+    if (patch.capacity) z.Target_Group_Size = parseInt(patch.capacity, 10) || undefined;
+    return z;
+  });
+
+  const out = await zoho.updateRecords(M.RING, records);
+  const ok = out.filter(o => o.code === 'SUCCESS' || o.status === 'success').length;
+  await audit(req.user.id, 'rings.bulkUpdated', { count: ok, fields: Object.keys(patch) }, req.ip);
+  res.json({ updated: ok, failed: records.length - ok });
 }));
 
 r.patch('/rings/:id', auth.authRequired, writesAllowed, wrap(async (req, res) => {
@@ -185,7 +252,7 @@ r.patch('/rings/:id', auth.authRequired, writesAllowed, wrap(async (req, res) =>
 
 /* ═══════════ ACTIVITIES ═══════════ */
 r.get('/activities', auth.authRequired, wrap(async (req, res) => {
-  const { ringIds } = await scopeRings(req.user);
+  const { ringIds } = await scopeRings(req.user, req.query.as);
   if (!ringIds.length) return res.json([]);
   const rows = [];
   for (const batch of chunk(ringIds, 20)) {
@@ -264,7 +331,7 @@ r.post('/activities', auth.authRequired, writesAllowed, wrap(async (req, res) =>
 
 /* ═══════════ MEMBERS ═══════════ */
 r.get('/members', auth.authRequired, wrap(async (req, res) => {
-  const { ringIds } = await scopeRings(req.user);
+  const { ringIds } = await scopeRings(req.user, req.query.as);
   if (!ringIds.length) return res.json([]);
 
   // Membership lives in the Group_Members join table, not on the Contact.
@@ -301,7 +368,7 @@ r.get('/members', auth.authRequired, wrap(async (req, res) => {
  * Worked out by diffing active members against the join table, because
  * Contacts cannot be filtered on the group lookup.
  */
-r.get('/members/no-ring', auth.authRequired, wrap(async (req, res) => {
+r.get('/members/no-ring', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
   const inAGroup = new Set();
   for (let offset = 0; offset < 2000; offset += 200) {
     const batch = await zoho.coql(queries.allGroupMembers(offset));
@@ -313,7 +380,7 @@ r.get('/members/no-ring', auth.authRequired, wrap(async (req, res) => {
   // network. Their patch is the set of states their own rings cover.
   let repStates = null;
   if (req.user.role === 'rep') {
-    const { rings } = await scopeRings(req.user);
+    const { rings } = await scopeRings(req.user, req.query.as);
     const regionNames = new Set(rings.map(r => r.regionName).filter(Boolean));
     const memberStates = new Set();
     if (rings.length) {
@@ -358,7 +425,7 @@ r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
  * already logged in Rep_Visit_Trackings.
  */
 r.get('/visits', auth.authRequired, wrap(async (req, res) => {
-  const { rings, ringIds } = await scopeRings(req.user);
+  const { rings, ringIds } = await scopeRings(req.user, req.query.as);
   const out = [];
 
   rings.forEach(r => {
@@ -420,6 +487,95 @@ r.post('/members', auth.authRequired, writesAllowed, wrap(async (req, res) => {
   })]);
   await audit(req.user.id, 'member.created', { name: b.name }, req.ip);
   res.status(201).json({ id: out[0]?.details?.id });
+}));
+
+/* ═══════════ STARTING THE CALL CYCLE ═══════════
+ * Their CRM has no call history, so without this every rep signs in to an
+ * empty Today screen and never comes back. This creates the first round of
+ * due dates — staggered, so nobody gets twenty calls on one Monday.
+ */
+
+/** What starting the cycle would create, without creating it. */
+r.get('/cycle/preview', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  const rings = (await zoho.coql(queries.ringsForRep(null))).map(fromZoho.ring);
+  const existing = await zoho.coql(
+    `select id, Growth_Ring_Group, Visit_Type from ${M.ACTIVITY} where Visit_Date is not null limit 200`
+  ).catch(() => []);
+  const alreadyScheduled = new Set(
+    existing.map(e => e.Growth_Ring_Group?.id).filter(Boolean)
+  );
+
+  const byRep = {};
+  rings.forEach(r => {
+    if (!r.repZohoId) return;
+    const k = r.repName || r.repZohoId;
+    byRep[k] = byRep[k] || { rep: k, rings: 0, alreadyHas: 0 };
+    byRep[k].rings++;
+    if (alreadyScheduled.has(r.id)) byRep[k].alreadyHas++;
+  });
+
+  const toCreate = rings.filter(r => r.repZohoId && !alreadyScheduled.has(r.id));
+  res.json({
+    totalRings: rings.length,
+    willCreate: toCreate.length,
+    alreadyScheduled: alreadyScheduled.size,
+    byRep: Object.values(byRep).sort((a, b) => b.rings - a.rings),
+    spreadWeeks: Math.max(1, Math.ceil(toCreate.length / Math.max(1, Object.keys(byRep).length) / 2)),
+  });
+}));
+
+/**
+ * Create the first facilitator call for every active ring.
+ *
+ * Staggering matters: a rep with 22 rings should not open the app to 22 calls
+ * all due today. Each rep's rings are spread two per week from next Monday.
+ */
+r.post('/cycle/start', auth.authRequired, auth.requireOffice, writesAllowed, wrap(async (req, res) => {
+  const perWeek = Math.min(10, Math.max(1, parseInt(req.body?.perWeek, 10) || 2));
+  const rings = (await zoho.coql(queries.ringsForRep(null))).map(fromZoho.ring);
+
+  const existing = await zoho.coql(
+    `select id, Growth_Ring_Group from ${M.ACTIVITY} where Next_Due_Date is not null limit 200`
+  ).catch(() => []);
+  const already = new Set(existing.map(e => e.Growth_Ring_Group?.id).filter(Boolean));
+
+  // Group by rep so each rep's own list is spread, not the global list
+  const byRep = {};
+  rings.forEach(r => {
+    if (!r.repZohoId || already.has(r.id)) return;
+    (byRep[r.repZohoId] = byRep[r.repZohoId] || []).push(r);
+  });
+
+  // Start next Monday — a call "due today" on the day you first sign in
+  // feels like a backlog rather than a plan.
+  const start = new Date();
+  start.setDate(start.getDate() + ((8 - start.getDay()) % 7 || 7));
+  const startIso = start.toISOString().slice(0, 10);
+
+  const records = [];
+  Object.entries(byRep).forEach(([repId, list]) => {
+    list.forEach((ring, i) => {
+      const week = Math.floor(i / perWeek);
+      records.push(toZoho.activity({
+        ringId: ring.id,
+        repZohoId: repId,
+        type: 'Facilitator Call',
+        date: startIso,
+        nextDue: addDays(startIso, week * 7),
+        outcome: undefined,
+        notes: 'First call of the cycle, scheduled when the portal went live.',
+      }));
+    });
+  });
+
+  if (!records.length) {
+    return res.json({ created: 0, message: 'Every ring already has a call scheduled.' });
+  }
+
+  const out = await zoho.insertRecords(M.ACTIVITY, records);
+  const created = out.filter(o => o.code === 'SUCCESS' || o.status === 'success').length;
+  await audit(req.user.id, 'cycle.started', { created, perWeek }, req.ip);
+  res.json({ created, failed: records.length - created, from: startIso, perWeek });
 }));
 
 /* ═══════════ HOURS AND EXPENSES ═══════════
@@ -787,7 +943,15 @@ r.post('/admin/users/from-zoho', auth.authRequired, auth.requireAdmin, wrap(asyn
     password_hash: auth.hash(temp), zoho_owner_id: String(contactId).trim(),
   });
   await audit(req.user.id, 'user.createdFromZoho', { id, contactId, email }, req.ip);
-  res.status(201).json({ id, tempPassword: temp });
+
+  // Send them their login rather than making the office copy it into an email
+  let emailed = false;
+  if (req.body?.sendEmail !== false) {
+    const r = await reminders.sendEmail(email, 'Your Symbiz Rep Hub login',
+      welcomeEmail({ name, email, password: temp }), { userId: id, kind: 'welcome' });
+    emailed = !!(r && (r.ok || r.skipped === undefined));
+  }
+  res.status(201).json({ id, tempPassword: temp, emailed });
 }));
 
 r.get('/admin/users', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
@@ -819,6 +983,33 @@ r.post('/admin/users', auth.authRequired, auth.requireAdmin, wrap(async (req, re
       ? 'This rep has no Zoho Contact ID, so they will see no rings. Add it before they sign in.'
       : undefined,
   });
+}));
+
+/**
+ * Reset someone's password. Passwords are hashed and cannot be read back —
+ * not by us, not by the office — so the only way to help someone locked out
+ * is to issue a new one.
+ */
+r.post('/admin/users/:id/reset-password', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+  const user = await q.userById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'No such account' });
+  const temp = Math.random().toString(36).slice(2, 10);
+  await q.setPassword(auth.hash(temp), user.id);
+  await audit(req.user.id, 'user.passwordReset', { id: user.id, email: user.email }, req.ip);
+  res.json({ tempPassword: temp, email: user.email, name: user.name });
+}));
+
+/** Reset someone's password and email them the new one. */
+r.post('/admin/users/:id/resend', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  const users = await q.allUsers();
+  const u = users.find(x => x.id === req.params.id);
+  if (!u) return res.status(404).json({ error: 'No such account' });
+  const temp = makePassword();
+  await q.setPassword(auth.hash(temp), u.id);
+  const r2 = await reminders.sendEmail(u.email, 'Your Symbiz Rep Hub login',
+    welcomeEmail({ name: u.name, email: u.email, password: temp }), { userId: u.id, kind: 'welcome' });
+  await audit(req.user.id, 'user.passwordReset', { id: u.id }, req.ip);
+  res.json({ tempPassword: temp, emailed: !!(r2 && r2.ok) });
 }));
 
 r.delete('/admin/users/:id', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
