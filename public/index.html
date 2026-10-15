@@ -2890,7 +2890,8 @@ async function openMailCheck(){
       <div class="kv"><span class="k">Username</span><span>${esc(st.user||'not set')}</span></div>
       <div class="kv"><span class="k">Password</span><span>${st.passSet?`set (${st.passLength} characters)`:'<strong style="color:var(--rust)">not set</strong>'}</span></div>
       <div class="kv"><span class="k">Sends from</span><span>${esc(st.from||'')}</span></div>
-      <div class="kv"><span class="k">Site address</span><span>${esc(st.appUrl||'')}</span></div>
+      <div class="kv"><span class="k">Sign-in links point to</span><span>${esc(st.linkBase||st.appUrl||'')}</span></div>
+      ${st.linkBaseFromRequest?`<div class="kv"><span class="k"></span><span class="row-sub">Worked out from this site's address. Set APP_URL in Netlify to pin it.</span></div>`:''}
     </div>
     ${st.problems && st.problems.length ? `<div class="callout rust" style="margin-top:10px">
       <strong>${st.problems.length} thing${st.problems.length===1?'':'s'} to fix</strong>
