@@ -127,6 +127,8 @@
 .mgr-l{font-size:11px;color:var(--ink-muted);margin-top:3px;letter-spacing:.01em}
 
 .segs{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
+.otp{font-family:ui-monospace,Menlo,monospace;font-size:26px;letter-spacing:.3em;
+  text-align:center;font-weight:700}
 .seg{display:flex;align-items:baseline;gap:6px;border:1px solid var(--line);background:var(--card);
   border-radius:999px;padding:7px 14px;cursor:pointer;font:inherit;transition:all .12s}
 .seg:hover{border-color:var(--ink-muted)}
@@ -269,6 +271,8 @@
 .mgr-l{font-size:11px;color:var(--ink-muted);margin-top:3px;letter-spacing:.01em}
 
 .segs{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
+.otp{font-family:ui-monospace,Menlo,monospace;font-size:26px;letter-spacing:.3em;
+  text-align:center;font-weight:700}
 .seg{display:flex;align-items:baseline;gap:6px;border:1px solid var(--line);background:var(--card);
   border-radius:999px;padding:7px 14px;cursor:pointer;font:inherit;transition:all .12s}
 .seg:hover{border-color:var(--ink-muted)}
@@ -584,6 +588,8 @@
 .mgr-l{font-size:11px;color:var(--ink-muted);margin-top:3px;letter-spacing:.01em}
 
 .segs{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
+.otp{font-family:ui-monospace,Menlo,monospace;font-size:26px;letter-spacing:.3em;
+  text-align:center;font-weight:700}
 .seg{display:flex;align-items:baseline;gap:6px;border:1px solid var(--line);background:var(--card);
   border-radius:999px;padding:7px 14px;cursor:pointer;font:inherit;transition:all .12s}
 .seg:hover{border-color:var(--ink-muted)}
@@ -688,7 +694,11 @@ const API = {
       ...(opts.headers || {}) } });
     // A 401 on the login route means bad credentials; anywhere else it means
     // the session has lapsed. Treating them the same shows the wrong message.
-    if(res.status === 401 && !path.startsWith('/auth/login')){
+    // A 401 on any /auth route is a real answer — wrong password, dead link,
+    // bad code — and the message matters. Only elsewhere does it mean the
+    // session lapsed. Treating them alike hid every sign-in error behind
+    // "SESSION_EXPIRED".
+    if(res.status === 401 && !path.startsWith('/auth/')){
       this.setToken(null); throw new Error('SESSION_EXPIRED');
     }
     if(!res.ok){ const b = await res.json().catch(()=>({})); throw new Error(b.error || ('Request failed: '+res.status)); }
@@ -698,6 +708,7 @@ const API = {
   requestLink(email){ return this.call('/auth/request-link',{method:'POST',body:JSON.stringify({email})}); },
   verifyLink(token){ return this.call('/auth/verify-link',{method:'POST',body:JSON.stringify({token})}); },
   forgot(email){ return this.call('/auth/forgot',{method:'POST',body:JSON.stringify({email})}); },
+  verifyCode(email,code){ return this.call('/auth/verify-code',{method:'POST',body:JSON.stringify({email,code})}); },
   checkSetup(token){ return this.call('/auth/check-setup',{method:'POST',body:JSON.stringify({token})}); },
   setPassword(token,password){ return this.call('/auth/set-password',{method:'POST',body:JSON.stringify({token,password})}); },
   me(){ return this.call('/auth/me'); },
@@ -3797,6 +3808,25 @@ function loginScreen(){
   const sentTo = ui.linkSentTo;
   const mode = ui.authMode || 'signin';   // signin | setup | forgot
 
+  if(ui.codeFor){
+    return shell(`<div class="card">
+      <h3 style="margin:0 0 4px">Enter your code</h3>
+      <p class="lead" style="margin:0 0 14px">We've emailed a six-digit code to <strong>${esc(ui.codeFor)}</strong>.</p>
+      <form onsubmit="doVerifyCode(event)">
+        <div class="field"><label>Code</label>
+          <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required
+                 placeholder="000000" class="otp" oninput="this.value=this.value.replace(/\\D/g,'')"></div>
+        <div id="loginErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
+        <button class="btn primary" type="submit" id="loginBtn" style="width:100%;justify-content:center">Continue</button>
+      </form>
+      <div style="text-align:center;margin-top:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+        <button class="btn sm" onclick="resendCode()">Send another</button>
+        <button class="btn sm" onclick="ui.codeFor=null;ui.authMode='signin';render()">Back</button>
+      </div>
+      <p class="row-sub" style="margin-top:10px;text-align:center">It expires in 15 minutes. Check spam if it hasn't arrived.</p>
+    </div>`);
+  }
+
   if(sentTo){
     const what = ui.resetSent ? 'a link to choose your password' : 'a sign-in link';
     const howLong = ui.resetSent ? '2 hours' : '20 minutes';
@@ -3815,15 +3845,15 @@ function loginScreen(){
     return shell(`<div class="card">
       <h3 style="margin:0 0 4px">${setup ? 'Set up your account' : 'Forgotten your password'}</h3>
       <p class="lead" style="margin:0 0 14px">${setup
-        ? 'Enter the email address the office holds for you and we will send a link to choose a password.'
-        : 'Enter your email address and we will send you a link to set a new password.'}</p>
+        ? 'Enter the email address the office holds for you and we will send a six-digit code.'
+        : 'Enter your email address and we will send you a six-digit code to reset it.'}</p>
       <form onsubmit="doForgotForm(event)">
         <div class="field"><label>Email</label>
           <input name="email" type="email" required autocomplete="username"
                  placeholder="you@yourbusiness.com" value="${esc(ui.loginEmail||'')}"></div>
         <div id="loginErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
         <button class="btn primary" type="submit" id="loginBtn" style="width:100%;justify-content:center">
-          Send me the link</button>
+          Send me a code</button>
       </form>
       ${setup?`<p class="row-sub" style="margin-top:12px">
         Not got an account? The office creates them — ask Keturah or Mel to add you.</p>`:''}
@@ -3876,13 +3906,38 @@ async function doForgotForm(e){
   btn.disabled = true; btn.textContent = 'Sending…';
   try{
     await API.forgot(email);
-    ui.linkSentTo = email; ui.resetSent = true; ui.authMode = 'signin';
+    ui.codeFor = email; ui.authMode = 'signin';
     render();
   }catch(ex){
     err.style.display='block';
     err.textContent = ex.message || 'Could not send that';
-    btn.disabled=false; btn.textContent='Send me the link';
+    btn.disabled=false; btn.textContent='Send me a code';
   }
+}
+
+/** Check the code, then go straight to choosing a password. */
+async function doVerifyCode(e){
+  e.preventDefault();
+  const code = e.target.elements.namedItem('code').value.trim();
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('loginErr');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try{
+    const out = await API.verifyCode(ui.codeFor, code);
+    ui.codeFor = null;
+    setupToken = out.token;
+    setupFor = { name: out.name, email: out.email };
+    render();
+  }catch(ex){
+    err.style.display = 'block';
+    err.textContent = ex.message || 'That code did not work';
+    btn.disabled = false; btn.textContent = 'Continue';
+  }
+}
+
+async function resendCode(){
+  try{ await API.forgot(ui.codeFor); toast('Another code is on its way'); }
+  catch(e){ toast(e.message || 'Could not send another'); }
 }
 
 /** The one-time sign-in link, from whatever is in the email box. */
@@ -5835,6 +5890,8 @@ function openPrintable(title, bodyHTML) {
 .mgr-l{font-size:11px;color:var(--ink-muted);margin-top:3px;letter-spacing:.01em}
 
 .segs{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
+.otp{font-family:ui-monospace,Menlo,monospace;font-size:26px;letter-spacing:.3em;
+  text-align:center;font-weight:700}
 .seg{display:flex;align-items:baseline;gap:6px;border:1px solid var(--line);background:var(--card);
   border-radius:999px;padding:7px 14px;cursor:pointer;font:inherit;transition:all .12s}
 .seg:hover{border-color:var(--ink-muted)}
