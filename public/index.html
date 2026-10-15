@@ -79,8 +79,16 @@
 .cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
 .cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
   width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
+.cal-top{display:flex;align-items:center;justify-content:space-between;flex-shrink:0;min-height:18px}
 .cal-num{font-family:var(--serif);font-size:14px;font-weight:600;color:var(--ink-muted);
-  text-align:right;flex-shrink:0;letter-spacing:-.01em;line-height:1.1}
+  margin-left:auto;letter-spacing:-.01em;line-height:1.1}
+.cal-add{opacity:0;background:var(--primary-soft);color:var(--primary);border:0;border-radius:5px;
+  width:19px;height:19px;line-height:1;font-size:14px;cursor:pointer;padding:0;
+  display:flex;align-items:center;justify-content:center;transition:opacity .12s,background .12s}
+.cal-cell:hover .cal-add{opacity:1}
+.cal-add:hover{background:var(--primary);color:#fff}
+.cal-open{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}
+.cal-cell{cursor:pointer}
 .cal-chip{font-size:11px;line-height:1.35;border-radius:5px;padding:3px 6px;
   display:flex;align-items:baseline;gap:5px;overflow:hidden;font-weight:500;
   letter-spacing:-.005em}
@@ -152,8 +160,16 @@
 .cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
 .cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
   width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
+.cal-top{display:flex;align-items:center;justify-content:space-between;flex-shrink:0;min-height:18px}
 .cal-num{font-family:var(--serif);font-size:14px;font-weight:600;color:var(--ink-muted);
-  text-align:right;flex-shrink:0;letter-spacing:-.01em;line-height:1.1}
+  margin-left:auto;letter-spacing:-.01em;line-height:1.1}
+.cal-add{opacity:0;background:var(--primary-soft);color:var(--primary);border:0;border-radius:5px;
+  width:19px;height:19px;line-height:1;font-size:14px;cursor:pointer;padding:0;
+  display:flex;align-items:center;justify-content:center;transition:opacity .12s,background .12s}
+.cal-cell:hover .cal-add{opacity:1}
+.cal-add:hover{background:var(--primary);color:#fff}
+.cal-open{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}
+.cal-cell{cursor:pointer}
 .cal-chip{font-size:11px;line-height:1.35;border-radius:5px;padding:3px 6px;
   display:flex;align-items:baseline;gap:5px;overflow:hidden;font-weight:500;
   letter-spacing:-.005em}
@@ -398,8 +414,16 @@
 .cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
 .cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
   width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
+.cal-top{display:flex;align-items:center;justify-content:space-between;flex-shrink:0;min-height:18px}
 .cal-num{font-family:var(--serif);font-size:14px;font-weight:600;color:var(--ink-muted);
-  text-align:right;flex-shrink:0;letter-spacing:-.01em;line-height:1.1}
+  margin-left:auto;letter-spacing:-.01em;line-height:1.1}
+.cal-add{opacity:0;background:var(--primary-soft);color:var(--primary);border:0;border-radius:5px;
+  width:19px;height:19px;line-height:1;font-size:14px;cursor:pointer;padding:0;
+  display:flex;align-items:center;justify-content:center;transition:opacity .12s,background .12s}
+.cal-cell:hover .cal-add{opacity:1}
+.cal-add:hover{background:var(--primary);color:#fff}
+.cal-open{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}
+.cal-cell{cursor:pointer}
 .cal-chip{font-size:11px;line-height:1.35;border-radius:5px;padding:3px 6px;
   display:flex;align-items:baseline;gap:5px;overflow:hidden;font-weight:500;
   letter-spacing:-.005em}
@@ -1515,11 +1539,29 @@ function exportCallSheet(repId){
 }
 
 function vReminders(){
-  const s=S.settings;
-  const reps=PEOPLE.filter(p=>p.role==='rep');
+  const s = S.settings;
+  const reps = PEOPLE.filter(p => p.role === 'rep');
+  const win = s.dueWindow || 21;
+
+  // Who actually has something to be reminded about
+  const lines = reps.map(p => {
+    const items = dueItems(p.id).filter(a => days(a.nextDue) <= win);
+    const overdue = items.filter(a => days(a.nextDue) < 0).length;
+    return { p, items, overdue };
+  });
+  const withWork = lines.filter(l => l.items.length);
+  const idle = lines.filter(l => !l.items.length);
+  const noEmail = reps.filter(p => !p.email);
+
   return `<div class="section-head"><div><h2>Reminders</h2>
     <div class="sub">What gets sent out, so reps don't have to remember to open the app.</div></div></div>
-    <div class="callout info"><strong>Why this matters</strong>Most reps won't open an app to find out who to call. The weekly email is what actually drives the work; the app is where it gets recorded.</div>
+
+    <div class="callout info"><strong>What the weekly email is for</strong>
+      Most reps will not open an app to find out who to call. Once a week each rep gets their own
+      list — just the people due, with tap-to-call links — so the work starts from their inbox.
+      The app is where it gets recorded afterwards.
+      <div style="margin-top:6px">Nobody with an empty list is emailed, so it never becomes noise.</div></div>
+
     <div class="card">
       <div class="field"><label>Weekly rep digest</label>
         <select onchange="setSetting('digestDay',this.value)">${['Monday','Tuesday','Sunday','Off'].map(d=>`<option ${d===(s.digestDay||'Monday')?'selected':''}>${d}</option>`).join('')}</select>
@@ -1532,17 +1574,42 @@ function vReminders(){
       <div class="field"><label>Monthly summary to the office</label>
         <select onchange="setSetting('officeDigest',this.value)">${['Yes','No'].map(d=>`<option ${d===(s.officeDigest||'Yes')?'selected':''}>${d}</option>`).join('')}</select></div>
     </div>
-    <h3 class="sub-h">What this week's email looks like</h3>
-    ${reps.map(p=>{
-      const items=dueItems(p.id).filter(a=>days(a.nextDue)<=S.settings.dueWindow);
-      return `<div class="card flat">
-        <div class="row-title">To: ${esc(p.email)}</div>
-        <div class="row-sub" style="margin-bottom:8px">Subject: ${items.length} call${items.length===1?'':'s'} due this week</div>
-        ${items.length?items.map(a=>`<div class="kv"><span>${esc(a.who)} — ${a.type.replace(' Call','')}</span><span>${days(a.nextDue)<0?'overdue':'due '+fmtShort(a.nextDue)}</span></div>`).join('')
-          :'<div class="row-sub">Nothing due — no email sent.</div>'}
-        <div class="btnrow" style="margin-top:10px"><button class="btn sm" onclick="toast('Preview sent to ${esc(p.email)}')">Send a test</button></div></div>`;
-    }).join('')}
-    ${moreButton('rings', Math.min(pageOf('rings'), ringsOfType(S.rings).length), ringsOfType(S.rings).length)}`;
+
+    ${noEmail.length ? `<div class="callout rust"><strong>${noEmail.length} rep${noEmail.length===1?'':'s'} without an email address</strong>
+      ${noEmail.slice(0,6).map(p=>esc(p.name)).join(', ')}${noEmail.length>6?` and ${noEmail.length-6} more`:''}.
+      They won't receive anything. Add the address to their Contact in Zoho.</div>` : ''}
+
+    <h3 class="sub-h">Next send · ${s.digestDay === 'Off' ? 'switched off' : (s.digestDay || 'Monday')}</h3>
+
+    ${withWork.length ? withWork.map(({p, items, overdue}) => `<div class="card flat" style="margin-bottom:10px">
+      <div class="row-title">${esc(p.name)}</div>
+      <div class="row-sub" style="margin-bottom:8px">
+        ${p.email ? esc(p.email) : '<span style="color:var(--rust)">no email on file</span>'}
+        · ${items.length} call${items.length===1?'':'s'}${overdue?` · <span style="color:var(--rust)">${overdue} overdue</span>`:''}</div>
+      ${items.slice(0,5).map(a=>`<div class="kv"><span>${esc(a.who||a.ringName||a.type)} — ${esc(String(a.type).replace(' Call',''))}</span>
+        <span class="${days(a.nextDue)<0?'':''}" style="${days(a.nextDue)<0?'color:var(--rust)':''}">${days(a.nextDue)<0?Math.abs(days(a.nextDue))+'d overdue':'due '+fmtShort(a.nextDue)}</span></div>`).join('')}
+      ${items.length>5?`<div class="row-sub" style="margin-top:4px">and ${items.length-5} more</div>`:''}
+      ${p.email ? `<div class="btnrow" style="margin-top:10px">
+        <button class="btn sm" onclick="sendDigestTest('${esc(p.id)}','${esc(p.email)}')">Send this to me as a test</button></div>` : ''}
+    </div>`).join('')
+      : `<div class="callout"><strong>Nothing is due within ${win} days</strong>
+         No weekly emails would go out right now. That is the correct behaviour — reps are only
+         emailed when they have calls waiting.</div>`}
+
+    ${idle.length ? `<div class="row-sub" style="margin-top:10px">
+      ${idle.length} rep${idle.length===1?'':'s'} with nothing due will not be emailed:
+      ${idle.slice(0,8).map(l=>esc(l.p.name)).join(', ')}${idle.length>8?` and ${idle.length-8} more`:''}.</div>` : ''}`;
+}
+
+/** Send one rep's weekly digest to whoever is asking, to see what it looks like. */
+async function sendDigestTest(repId, email){
+  try{
+    await API.mailTest(email);
+    toast('Test sent to ' + email);
+  }catch(e){
+    openModal(`<h3>Couldn't send</h3><p class="lead">${esc(e.message)}</p>
+      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
+  }
 }
 
 /* ══════════════════ OFFICE / ADMIN VIEWS ══════════════════ */
@@ -3766,6 +3833,12 @@ async function loadFromServer(){
     settle(API.expenses(),          v => S.expenses    = (v||[]).map(adapt.expense)),
     settle(API.pending(),           v => S.pending     = v || []),
     settle(API.meetings(asRep),     v => S.meetings    = (v||[]).map(adapt.meeting)),
+    // Rep email addresses, so Reminders can say who actually gets a digest
+    isOffice() ? settle(API.repsFromZoho(), v => (v||[]).forEach(r=>{
+      const at = PEOPLE.findIndex(p=>p.id===r.contactId);
+      if(at>=0) PEOPLE[at] = {...PEOPLE[at], email:r.email||'', name:r.name||PEOPLE[at].name};
+      else PEOPLE.push({id:r.contactId, name:r.name, role:'rep', region:'', email:r.email||''});
+    })) : Promise.resolve(),
     settle(API.facilitators(),      v => {
       (v||[]).forEach(f=>{
         const at = S.facilitators.findIndex(x=>x.id===f.id);
@@ -4076,9 +4149,13 @@ function vCalendar() {
     const iso = `${yy}-${String(mm).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const list = byDay[iso] || [];
     const isToday = iso === todayIso;
-    cells.push(`<div class="cal-cell${isToday?' cal-today':''}${list.length?' cal-has':''}"
-      ${list.length?`onclick="ui.calDay='${iso}';renderContent()"`:''}>
-      <div class="cal-num">${d}</div>
+    cells.push(`<div class="cal-cell${isToday?' cal-today':''}${list.length?' cal-has':''}${ui.calDay===iso?' cal-open':''}"
+      onclick="ui.calDay=(ui.calDay==='${iso}'?null:'${iso}');renderContent()">
+      <div class="cal-top">
+        ${isOffice()&&API.live?`<button class="cal-add" title="Add an event on this day"
+          onclick="event.stopPropagation();openEventForm(null,'${iso}')">+</button>`:''}
+        <div class="cal-num">${d}</div>
+      </div>
       ${list.slice(0,3).map(i=>`<div class="cal-chip k-${i.kind}" title="${esc(i.title)}${i.time?' · '+esc(i.time):''}">
         ${i.time?`<span class="cal-time">${esc(String(i.time).replace(':00',''))}</span>`:''}
         <span class="cal-txt">${esc(i.title)}</span></div>`).join('')}
@@ -4763,7 +4840,7 @@ function openVisit(ringId) {
       <div class="field"><label>Growth Ring</label><select name="ringId" required>
         ${rs.map(r => `<option value="${r.id}" ${r.id === ringId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></div>
       <div class="two">
-        <div class="field"><label>Date</label><input type="date" name="date" required></div>
+        <div class="field"><label>Date</label><input type="date" name="date" required value="${esc(onDate||'')}"></div>
         <div class="field"><label>Time</label><input name="time" placeholder="7:00 PM"></div>
       </div>
       <div class="field"><label>Where</label><input name="location" placeholder="Where the group meets"></div>
@@ -4787,13 +4864,14 @@ function completeVisit(id) {
   toast('Visit recorded — remember the Visit Report form'); render();
 }
 
-function openEventForm() {
-  openModal(`<h3>Add a local event</h3>
+function openEventForm(_unused, onDate) {
+  // Clicking + on a day pre-fills that date, so the common case is one less step
+  openModal(`<h3>Add a local event${onDate?` on ${fmt(onDate)}`:''}</h3>
     <form onsubmit="submitEvent(event)">
       <div class="field"><label>Title</label><input name="title" required placeholder="Lancaster Info Meeting"></div>
       <div class="two">
         <div class="field"><label>Type</label><select name="type">${EVENT_TYPES.map(t => `<option>${t}</option>`).join('')}</select></div>
-        <div class="field"><label>Date</label><input type="date" name="date" required></div>
+        <div class="field"><label>Date</label><input type="date" name="date" required value="${esc(onDate||'')}"></div>
       </div>
       <div class="two">
         <div class="field"><label>Time</label><input name="time" placeholder="7:00 PM"></div>
@@ -5186,8 +5264,16 @@ function openPrintable(title, bodyHTML) {
 .cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
 .cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
   width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
+.cal-top{display:flex;align-items:center;justify-content:space-between;flex-shrink:0;min-height:18px}
 .cal-num{font-family:var(--serif);font-size:14px;font-weight:600;color:var(--ink-muted);
-  text-align:right;flex-shrink:0;letter-spacing:-.01em;line-height:1.1}
+  margin-left:auto;letter-spacing:-.01em;line-height:1.1}
+.cal-add{opacity:0;background:var(--primary-soft);color:var(--primary);border:0;border-radius:5px;
+  width:19px;height:19px;line-height:1;font-size:14px;cursor:pointer;padding:0;
+  display:flex;align-items:center;justify-content:center;transition:opacity .12s,background .12s}
+.cal-cell:hover .cal-add{opacity:1}
+.cal-add:hover{background:var(--primary);color:#fff}
+.cal-open{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}
+.cal-cell{cursor:pointer}
 .cal-chip{font-size:11px;line-height:1.35;border-radius:5px;padding:3px 6px;
   display:flex;align-items:baseline;gap:5px;overflow:hidden;font-weight:500;
   letter-spacing:-.005em}
