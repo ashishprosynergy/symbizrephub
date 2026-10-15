@@ -57,7 +57,8 @@ const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch
  * but ONLY while no users exist, so it can never be used to add an account later.
  */
 r.get('/setup/status', wrap(async (req, res) => {
-  const out = { dbReady: false, needsSetup: false, zohoReady: false, userCount: 0, readOnly: cfg.readOnly };
+  const out = { dbReady: false, needsSetup: false, zohoReady: false, userCount: 0,
+                readOnly: cfg.readOnly, zohoOrg: null, zohoError: null };
   try {
     const rows = await q.allUsers();
     out.dbReady = true;
@@ -69,8 +70,17 @@ r.get('/setup/status', wrap(async (req, res) => {
       : e.message;
     return res.json(out);
   }
-  try { await zoho.ping(); out.zohoReady = true; }
-  catch (e) { out.zohoError = e.message; }
+  try {
+    const org = await zoho.ping();
+    out.zohoReady = true;
+    out.zohoOrg = (org && (org.company_name || org.name)) || null;
+  } catch (e) {
+    // Keep the real reason. "Not connected" on its own sends people checking
+    // the CRM when the token has simply lapsed.
+    out.zohoError = /token|refresh|401|invalid/i.test(e.message || '')
+      ? 'the connection has lapsed, reconnect in Netlify'
+      : e.message;
+  }
   res.json(out);
 }));
 
