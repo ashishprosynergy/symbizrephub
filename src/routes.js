@@ -545,6 +545,53 @@ r.get('/visits', auth.authRequired, wrap(async (req, res) => {
   res.json(out);
 }));
 
+/**
+ * Group meetings. Reps record these after a ring meets; they go into
+ * Growth_Ring_Meetings_N and come back on the calendar.
+ */
+r.get('/meetings', auth.authRequired, wrap(async (req, res) => {
+  const { ringIds } = await scopeRings(req.user, req.query.as);
+  if (!ringIds.length) return res.json([]);
+  const batches = await Promise.all(
+    chunk(ringIds, 20).map(b => zoho.coql(
+      `select id, Growth_Ring_Group, Meeting_Date, Notes from ${M.MEETING}
+       where Growth_Ring_Group in (${b.map(i => `'${String(i).replace(/'/g,'')}'`).join(',')})
+       order by Meeting_Date desc limit 200`
+    ).catch(() => []))
+  );
+  res.json(batches.flat().map(z => ({
+    id: z.id,
+    ringId: z.Growth_Ring_Group?.id || null,
+    ringName: z.Growth_Ring_Group?.name || '',
+    date: z.Meeting_Date,
+    notes: z.Notes || '',
+  })));
+}));
+
+r.post('/meetings', auth.authRequired, writesAllowed, wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!b.ringId || !b.date) return res.status(400).json({ error: 'A ring and a date are required' });
+
+  if (req.user.role === 'rep') {
+    const { ringIds } = await scopeRings(req.user);
+    if (!ringIds.includes(b.ringId)) return res.status(403).json({ error: 'Not your ring' });
+  }
+
+  const attended = Array.isArray(b.attended) ? b.attended.length : (parseInt(b.attended, 10) || 0);
+  const absent = Array.isArray(b.absent) ? b.absent.length : (parseInt(b.absent, 10) || 0);
+  const note = [b.notes, attended || absent ? `${attended} attended, ${absent} absent` : '']
+    .filter(Boolean).join(' — ');
+
+  const out = await zoho.insertRecords(M.MEETING, [{
+    Growth_Ring_Group: { id: b.ringId },
+    Meeting_Date: b.date,
+    Notes: note,
+  }]);
+  const id = out[0]?.details?.id;
+  await audit(req.user.id, 'meeting.recorded', { id, ringId: b.ringId }, req.ip);
+  res.status(201).json({ id });
+}));
+
 /** Facilitators are Contacts flagged Is_Facilitator. */
 r.get('/facilitators', auth.authRequired, wrap(async (req, res) => {
   const rows = await zoho.coql(queries.facilitators());
@@ -1177,6 +1224,75 @@ r.post('/admin/users/from-zoho', auth.authRequired, auth.requireAdmin, wrap(asyn
     emailed = !!(r && r.ok === true);
   }
   res.status(201).json({ id, tempPassword: temp, emailed });
+}));
+
+/**
+ * Why isn't email working?
+ *
+ * Reports exactly what is configured and, optionally, tries a real send and
+ * hands back the server's own error. Guessing at SMTP problems from the
+ * outside wastes more time than any other part of setup.
+ */
+r.get('/admin/mail-status', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+  const m = cfg.mail;
+  const problems = [];
+  if (!m.enabled) problems.push('MAIL_ENABLED is not set to true');
+  if (!m.host) problems.push('SMTP_HOST is not set');
+  if (!m.user) problems.push('SMTP_USER is not set');
+  if (!m.pass) problems.push('SMTP_PASS is not set');
+  if (m.host && m.port !== 465 && m.port !== 587) {
+    problems.push(`SMTP_PORT is ${m.port} — Zoho and Gmail both want 465`);
+  }
+  if (/gmail/i.test(m.host) && m.pass && m.pass.includes(' ')) {
+    problems.push('SMTP_PASS has spaces in it — Google shows the app password in four blocks, but it must be typed without spaces');
+  }
+  if (m.from && !/@/.test(m.from)) problems.push('MAIL_FROM does not contain an email address');
+
+  res.json({
+    enabled: m.enabled,
+    host: m.host || null,
+    port: m.port,
+    user: m.user ? m.user.replace(/(.{2}).*(@.*)/, '$1***$2') : null,
+    passSet: !!m.pass,
+    passLength: m.pass ? m.pass.length : 0,
+    from: m.from,
+    appUrl: cfg.appUrl,
+    ready: problems.length === 0,
+    problems,
+  });
+}));
+
+/** Send a real email and report what actually happened. */
+r.post('/admin/mail-test', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+  const to = String(req.body?.to || req.user.email || '').trim();
+  if (!to || !to.includes('@')) return res.status(400).json({ error: 'Where should the test go?' });
+
+  const out = await reminders.sendEmail(to, 'Rep Hub test email',
+    `<p>This is a test from Rep Hub.</p>
+     <p>If you are reading it, sign-in links and the accounting summary will work.</p>
+     <p style="color:#8A9284;font-size:12px">Sent ${new Date().toISOString()} from ${esc(cfg.mail.host || 'unknown host')}.</p>`,
+    { userId: req.user.id, kind: 'test' });
+
+  if (out && out.ok) {
+    await audit(req.user.id, 'mail.test', { to, ok: true }, req.ip);
+    return res.json({ ok: true, to, host: cfg.mail.host, from: cfg.mail.from });
+  }
+
+  // Turn the usual SMTP errors into something actionable
+  const raw = (out && out.error) || 'Unknown error';
+  let hint = null;
+  if (/invalid login|535|authentication failed/i.test(raw)) {
+    hint = 'The username or password was rejected. Use an app password, not the normal account password.';
+  } else if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(raw)) {
+    hint = `The host "${cfg.mail.host}" could not be found. Check the spelling — smtp.zoho.com or smtp.gmail.com.`;
+  } else if (/ECONNREFUSED|ETIMEDOUT|ESOCKET/i.test(raw)) {
+    hint = `Could not connect on port ${cfg.mail.port}. Try 465.`;
+  } else if (/not configured/i.test(raw)) {
+    hint = 'MAIL_ENABLED is not true, or the deploy has not run since the variables were added.';
+  } else if (/self.signed|certificate/i.test(raw)) {
+    hint = 'The mail server certificate was rejected. Check the host name is right.';
+  }
+  res.status(502).json({ ok: false, error: raw, hint, host: cfg.mail.host, port: cfg.mail.port });
 }));
 
 r.get('/admin/users', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
