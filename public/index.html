@@ -40,8 +40,9 @@
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;}
-  body{background:var(--bg);color:var(--ink);font-family:'Work Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;font-size:15px;}
-  h1,h2,h3,.wordmark{font-family:'Fraunces',Georgia,serif;font-weight:500;letter-spacing:-.012em;margin:0;}
+  :root{--serif:'Fraunces',Georgia,serif;--sans:'Work Sans',system-ui,sans-serif}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;min-height:100vh;font-size:15px;}
+  h1,h2,h3,.wordmark{font-family:var(--serif);font-weight:500;letter-spacing:-.012em;margin:0;}
   button{font-family:inherit;} a{color:inherit;}
   :focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
   @media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important;}}
@@ -63,10 +64,11 @@
   .viewas .sel{max-width:230px;}
   @media (max-width:760px){ .viewas span{display:none;} .viewas .sel{max-width:150px;font-size:12.5px;} }
   /* ── month calendar ── */
-.cal-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px;flex-wrap:wrap}
+.cal-head{display:flex;align-items:center;gap:9px;margin:14px 0 10px;flex-wrap:wrap}
+.cal-head strong{font-family:var(--serif);font-size:17px;font-weight:600;letter-spacing:-.01em;min-width:140px}
 .cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
-.cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
-  text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
+.cal-dow div{font-family:var(--serif);font-size:12px;font-weight:600;color:var(--ink-muted);
+  text-align:center;letter-spacing:.07em;padding:5px 0;text-transform:uppercase}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
 .cal-cell{background:var(--card);border:1px solid var(--line);border-radius:8px;
   min-height:104px;padding:6px 6px 5px;overflow:hidden;transition:box-shadow .12s,border-color .12s;
@@ -77,14 +79,18 @@
 .cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
 .cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
   width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
-.cal-num{font-size:12px;color:var(--ink-muted);text-align:right;flex-shrink:0}
-.cal-chip{font-size:10.5px;line-height:1.3;border-radius:4px;padding:2px 5px;
-  display:flex;align-items:baseline;gap:4px;overflow:hidden}
+.cal-num{font-family:var(--serif);font-size:14px;font-weight:600;color:var(--ink-muted);
+  text-align:right;flex-shrink:0;letter-spacing:-.01em;line-height:1.1}
+.cal-chip{font-size:11px;line-height:1.35;border-radius:5px;padding:3px 6px;
+  display:flex;align-items:baseline;gap:5px;overflow:hidden;font-weight:500;
+  letter-spacing:-.005em}
 .cal-chip .cal-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cal-time{font-weight:700;font-size:9.5px;opacity:.75;flex-shrink:0;letter-spacing:-.02em}
+.cal-time{font-weight:700;font-size:10px;opacity:.8;flex-shrink:0;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .cal-chip.k-event{background:var(--rust-soft);color:var(--rust)}
 .cal-chip.k-visit{background:var(--info-soft);color:var(--info)}
 .cal-chip.k-meeting{background:var(--primary-soft);color:var(--primary)}
+.cal-chip.k-meeting.held{background:var(--primary);color:#fff}
 .cal-dot{width:7px;height:7px;border-radius:2px;flex-shrink:0;display:inline-block}
 .cal-more{font-size:9.5px;color:var(--ink-muted);padding-left:5px}
 .cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
@@ -131,10 +137,11 @@
     .tour-btns{margin-left:auto;}
   }
   /* ── month calendar ── */
-.cal-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px;flex-wrap:wrap}
+.cal-head{display:flex;align-items:center;gap:9px;margin:14px 0 10px;flex-wrap:wrap}
+.cal-head strong{font-family:var(--serif);font-size:17px;font-weight:600;letter-spacing:-.01em;min-width:140px}
 .cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
-.cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
-  text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
+.cal-dow div{font-family:var(--serif);font-size:12px;font-weight:600;color:var(--ink-muted);
+  text-align:center;letter-spacing:.07em;padding:5px 0;text-transform:uppercase}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
 .cal-cell{background:var(--card);border:1px solid var(--line);border-radius:8px;
   min-height:104px;padding:6px 6px 5px;overflow:hidden;transition:box-shadow .12s,border-color .12s;
@@ -145,14 +152,18 @@
 .cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
 .cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
   width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
-.cal-num{font-size:12px;color:var(--ink-muted);text-align:right;flex-shrink:0}
-.cal-chip{font-size:10.5px;line-height:1.3;border-radius:4px;padding:2px 5px;
-  display:flex;align-items:baseline;gap:4px;overflow:hidden}
+.cal-num{font-family:var(--serif);font-size:14px;font-weight:600;color:var(--ink-muted);
+  text-align:right;flex-shrink:0;letter-spacing:-.01em;line-height:1.1}
+.cal-chip{font-size:11px;line-height:1.35;border-radius:5px;padding:3px 6px;
+  display:flex;align-items:baseline;gap:5px;overflow:hidden;font-weight:500;
+  letter-spacing:-.005em}
 .cal-chip .cal-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cal-time{font-weight:700;font-size:9.5px;opacity:.75;flex-shrink:0;letter-spacing:-.02em}
+.cal-time{font-weight:700;font-size:10px;opacity:.8;flex-shrink:0;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .cal-chip.k-event{background:var(--rust-soft);color:var(--rust)}
 .cal-chip.k-visit{background:var(--info-soft);color:var(--info)}
 .cal-chip.k-meeting{background:var(--primary-soft);color:var(--primary)}
+.cal-chip.k-meeting.held{background:var(--primary);color:#fff}
 .cal-dot{width:7px;height:7px;border-radius:2px;flex-shrink:0;display:inline-block}
 .cal-more{font-size:9.5px;color:var(--ink-muted);padding-left:5px}
 .cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
@@ -372,10 +383,11 @@
   .lane-card .t{font-size:13.5px;font-weight:600;} .lane-card .s{font-size:12px;color:var(--ink-muted);margin-top:2px;}
 
   /* ── month calendar ── */
-.cal-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px;flex-wrap:wrap}
+.cal-head{display:flex;align-items:center;gap:9px;margin:14px 0 10px;flex-wrap:wrap}
+.cal-head strong{font-family:var(--serif);font-size:17px;font-weight:600;letter-spacing:-.01em;min-width:140px}
 .cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
-.cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
-  text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
+.cal-dow div{font-family:var(--serif);font-size:12px;font-weight:600;color:var(--ink-muted);
+  text-align:center;letter-spacing:.07em;padding:5px 0;text-transform:uppercase}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
 .cal-cell{background:var(--card);border:1px solid var(--line);border-radius:8px;
   min-height:104px;padding:6px 6px 5px;overflow:hidden;transition:box-shadow .12s,border-color .12s;
@@ -386,14 +398,18 @@
 .cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
 .cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
   width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
-.cal-num{font-size:12px;color:var(--ink-muted);text-align:right;flex-shrink:0}
-.cal-chip{font-size:10.5px;line-height:1.3;border-radius:4px;padding:2px 5px;
-  display:flex;align-items:baseline;gap:4px;overflow:hidden}
+.cal-num{font-family:var(--serif);font-size:14px;font-weight:600;color:var(--ink-muted);
+  text-align:right;flex-shrink:0;letter-spacing:-.01em;line-height:1.1}
+.cal-chip{font-size:11px;line-height:1.35;border-radius:5px;padding:3px 6px;
+  display:flex;align-items:baseline;gap:5px;overflow:hidden;font-weight:500;
+  letter-spacing:-.005em}
 .cal-chip .cal-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cal-time{font-weight:700;font-size:9.5px;opacity:.75;flex-shrink:0;letter-spacing:-.02em}
+.cal-time{font-weight:700;font-size:10px;opacity:.8;flex-shrink:0;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .cal-chip.k-event{background:var(--rust-soft);color:var(--rust)}
 .cal-chip.k-visit{background:var(--info-soft);color:var(--info)}
 .cal-chip.k-meeting{background:var(--primary-soft);color:var(--primary)}
+.cal-chip.k-meeting.held{background:var(--primary);color:#fff}
 .cal-dot{width:7px;height:7px;border-radius:2px;flex-shrink:0;display:inline-block}
 .cal-more{font-size:9.5px;color:var(--ink-muted);padding-left:5px}
 .cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
@@ -496,6 +512,8 @@ const API = {
   cycleStart(perWeek){ return this.call('/cycle/start',{method:'POST',body:JSON.stringify({perWeek})}); },
   bulkRings(ids,fields){ return this.call('/rings/bulk',{method:'PATCH',body:JSON.stringify({ids,fields})}); },
   resendLogin(id){ return this.call('/admin/users/'+id+'/resend',{method:'POST'}); },
+  mailStatus(){ return this.call('/admin/mail-status'); },
+  mailTest(to){ return this.call('/admin/mail-test',{method:'POST',body:JSON.stringify({to})}); },
   removeUser(id){ return this.call('/admin/users/'+id,{method:'DELETE'}); },
   pending(){ return this.call('/pending'); },
   askRegistration(d){ return this.call('/pending/registration',{method:'POST',body:JSON.stringify(d)}); },
@@ -507,6 +525,8 @@ const API = {
   createRing(d){ return this.call('/rings',{method:'POST',body:JSON.stringify(d)}); },
   updateRing(id,d){ return this.call('/rings/'+id,{method:'PATCH',body:JSON.stringify(d)}); },
   logActivity(d){ return this.call('/activities',{method:'POST',body:JSON.stringify(d)}); },
+  logMeeting(d){ return this.call('/meetings',{method:'POST',body:JSON.stringify(d)}); },
+  meetings(as){ return this.call('/meetings' + (as ? '?as='+encodeURIComponent(as) : '')); },
   pushQueue(items){ return this.call('/sync/push',{method:'POST',body:JSON.stringify({items})}); },
   health(){ return fetch(this.base+'/healthz').then(r=>r.json()).catch(()=>({ok:false})); },
   setupStatus(){ return this.call('/setup/status'); },
@@ -769,6 +789,7 @@ function seed(){
       defaultFacFreq:'Quarterly', defaultMemFreq:'Annual', defaultCapacity:8,
       retryDays:4, rescheduleDays:7, dueWindow:21,
       accountingEmail:'accounting@symbiz.org', accountingDay:'1',
+      supportPhone:'', supportName:'the office',
       links:{f_exit:'',f_visit:'',f_conv:'',f_reimb:'',d_rep:'',d_summit:'',doc_job:'',doc_manual:''}
     },
     ids:{ring:1,mem:1,act:1,req:1,fac:1,meet:1,note:1,ev:1,reg:1,vis:1,time:1,exp:1}
@@ -2294,13 +2315,27 @@ function vTeam(){
 
 function vSettings(){
   const s=S.settings;
-  return `<div class="section-head"><div><h2>Settings</h2><div class="sub">Defaults for new rings and how reminders behave.</div></div></div>
+  return `<div class="section-head"><div><h2>Settings</h2><div class="sub">Defaults for new rings and how reminders behave.</div></div>
+    ${API.live && isAdmin() ? `<button class="btn" onclick="openMailCheck()">Check email</button>` : ''}</div>
+    ${API.live && isAdmin() ? `<div class="callout" style="font-size:12.5px">
+      <strong>Not receiving emails?</strong>
+      Sign-in links, the accounting summary and rep welcome emails all need SMTP settings.
+      <strong>Check email</strong> above shows exactly what is missing and sends a test.</div>` : ''}
     <div class="card">
       <div class="two">
         <div class="field"><label>Default facilitator call cadence</label>
           <select onchange="setSetting('defaultFacFreq',this.value)">${['Quarterly','Semi-Annual'].map(x=>`<option ${x===s.defaultFacFreq?'selected':''}>${x}</option>`).join('')}</select></div>
         <div class="field"><label>Default member call cadence</label>
           <select onchange="setSetting('defaultMemFreq',this.value)">${['Annual','Semi-Annual'].map(x=>`<option ${x===s.defaultMemFreq?'selected':''}>${x}</option>`).join('')}</select></div>
+      </div>
+      <div class="two">
+        <div class="field"><label>Support phone</label>
+          <input value="${esc(s.supportPhone||'')}" placeholder="e.g. (717) 555-0100"
+                 onchange="setSetting('supportPhone',this.value)">
+          <div class="hint">Shown on the sign-in screen and printed forms, so a rep who is stuck knows who to ring.</div></div>
+        <div class="field"><label>Who they are calling</label>
+          <input value="${esc(s.supportName||'the office')}" placeholder="the office"
+                 onchange="setSetting('supportName',this.value)"></div>
       </div>
       <div class="two">
         <div class="field"><label>Default group size limit</label><input type="number" value="${s.defaultCapacity}" onchange="setSetting('defaultCapacity',parseInt(this.value)||8)"></div>
@@ -2761,6 +2796,62 @@ function vManager(){
   `;
 }
 
+/* ── why isn't email working ── */
+async function openMailCheck(){
+  openModal(`<h3>Email check</h3><p class="lead">Looking at the settings…</p>`);
+  let st;
+  try{ st = await API.mailStatus(); }
+  catch(e){
+    openModal(`<h3>Couldn't check</h3><p class="lead">${esc(e.message)}</p>
+      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
+    return;
+  }
+  openModal(`<h3>Email check</h3>
+    <div class="card flat" style="font-size:12.5px">
+      <div class="kv"><span class="k">Switched on</span><span>${st.enabled?'Yes':'<strong style="color:var(--rust)">No</strong>'}</span></div>
+      <div class="kv"><span class="k">Server</span><span>${esc(st.host||'not set')}</span></div>
+      <div class="kv"><span class="k">Port</span><span>${st.port}</span></div>
+      <div class="kv"><span class="k">Username</span><span>${esc(st.user||'not set')}</span></div>
+      <div class="kv"><span class="k">Password</span><span>${st.passSet?`set (${st.passLength} characters)`:'<strong style="color:var(--rust)">not set</strong>'}</span></div>
+      <div class="kv"><span class="k">Sends from</span><span>${esc(st.from||'')}</span></div>
+      <div class="kv"><span class="k">Site address</span><span>${esc(st.appUrl||'')}</span></div>
+    </div>
+    ${st.problems && st.problems.length ? `<div class="callout rust" style="margin-top:10px">
+      <strong>${st.problems.length} thing${st.problems.length===1?'':'s'} to fix</strong>
+      ${st.problems.map(p=>`• ${esc(p)}`).join('<br>')}
+      <div style="margin-top:8px;font-size:12px">Set these in Netlify under Environment variables,
+        then trigger a deploy — variables only apply to a new build.</div></div>`
+      : `<div class="callout ok" style="margin-top:10px"><strong>Settings look right</strong>
+         Send a test to be sure it actually goes.</div>`}
+    <div class="field" style="margin-top:12px"><label>Send a test to</label>
+      <input id="mailTestTo" type="email" value="${esc((me()||{}).email||'')}"></div>
+    <div id="mailTestOut"></div>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Close</button>
+    <button class="btn primary" onclick="runMailTest()">Send a test</button></div>`);
+}
+
+async function runMailTest(){
+  const to = document.getElementById('mailTestTo').value.trim();
+  const out = document.getElementById('mailTestOut');
+  out.innerHTML = `<div class="callout" style="margin-top:10px">Sending…</div>`;
+  try{
+    const r = await API.mailTest(to);
+    out.innerHTML = `<div class="callout ok" style="margin-top:10px">
+      <strong>Sent to ${esc(r.to)}</strong>
+      Via ${esc(r.host||'')} as ${esc(r.from||'')}. If it hasn't arrived in a minute, check spam.</div>`;
+  }catch(e){
+    // The server hands back the real SMTP error plus a plain-English hint
+    let detail = e.message || 'Unknown error';
+    let hint = '';
+    try{ const j = JSON.parse(e.body||'{}'); if(j.hint) hint = j.hint; }catch(_){}
+    if(!hint && /invalid login|535/i.test(detail)) hint = 'Use an app password, not the normal account password.';
+    out.innerHTML = `<div class="callout rust" style="margin-top:10px">
+      <strong>It didn't send</strong>
+      ${esc(detail)}
+      ${hint?`<div style="margin-top:6px">${esc(hint)}</div>`:''}</div>`;
+  }
+}
+
 /* ══════════════════ MODALS ══════════════════ */
 function openModal(h){ document.getElementById('modalBody').innerHTML=h; document.getElementById('overlay').classList.add('open'); }
 function closeModal(){ document.getElementById('overlay').classList.remove('open'); document.getElementById('modalBody').innerHTML=''; }
@@ -2835,13 +2926,31 @@ function openMeeting(ringId){
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
       <button type="submit" class="btn primary">Save meeting</button></div></form>`);
 }
-function submitMeeting(e,ringId){
+async function submitMeeting(e,ringId){
   e.preventDefault(); const f=e.target, mem=ringMembers(ringId);
   const att=[],abs=[];
   mem.forEach(m=>{const el=f.elements.namedItem('att_'+m.id); (el&&el.checked?att:abs).push(m.id);});
-  S.meetings.push({id:'t'+(S.ids.meet++),ringId,date:fv(f,'date'),attended:att,absent:abs,notes:fv(f,'notes')});
-  const r=ring(ringId); if(!r.launchSteps.includes(4)) r.launchSteps.push(4);
-  save(); queueWrite('meeting'); logAudit(`Recorded meeting for ${r.name}`); closeModal(); toast('Meeting recorded'); render();
+  const entry = { ringId, date: fv(f,'date'), attended: att, absent: abs, notes: fv(f,'notes') };
+  if(API.live){
+    try{
+      await API.logMeeting(entry);
+      closeModal();
+      toast('Meeting recorded');
+      await loadFromServer();
+      render();
+      return;
+    }catch(ex){
+      // Keep it on the device rather than losing what they typed
+      S.meetings.push({ id:'t'+(S.ids.meet++), ...entry });
+      save(); queueWrite('meeting'); closeModal();
+      toast('Saved here — will sync when the connection is back');
+      render();
+      return;
+    }
+  }
+  S.meetings.push({ id:'t'+(S.ids.meet++), ...entry });
+  save(); queueWrite('meeting'); logAudit('Recorded a group meeting');
+  closeModal(); toast('Meeting recorded'); render();
 }
 
 function openExit(memberId){
@@ -3169,6 +3278,17 @@ function openPreviewPicker(){
  * Gmail — the rest are on Yahoo, iCloud and their own business domains — so a
  * "sign in with Google" button would have served one person and shut out ten.
  */
+/** Who a rep calls when they're stuck. Set in Settings, not hardcoded. */
+function supportLine(){
+  let phone = '', who = 'the office';
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(raw){ const st = JSON.parse(raw); phone = (st.settings||{}).supportPhone || ''; who = (st.settings||{}).supportName || who; }
+  }catch(e){}
+  if(!phone) return `Trouble signing in? Contact ${esc(who)}.`;
+  return `Trouble signing in? Call ${esc(who)} on <a href="tel:${esc(phone.replace(/[^0-9+]/g,''))}">${esc(phone)}</a>.`;
+}
+
 function loginScreen(){
   const sentTo = ui.linkSentTo;
   return `<div class="login"><div class="login-box">
@@ -3210,7 +3330,7 @@ function loginScreen(){
     ${ui.linkError?`<div class="callout rust" style="margin-top:12px;text-align:left">
       <strong>That link didn't work</strong>${esc(ui.linkError)}</div>`:''}
     <div id="setupNote"></div>
-    <p class="tag" style="margin-top:16px;font-size:12.5px">Trouble signing in? Call the office on 800-394-7970.</p>
+    <p class="tag" style="margin-top:16px;font-size:12.5px">${supportLine()}</p>
   </div></div>`;
 }
 
@@ -3522,6 +3642,15 @@ const adapt = {
     };
   },
 
+  meeting(m){
+    return {
+      id: m.id, ringId: m.ringId, ringName: m.ringName || '',
+      date: m.date, time: m.time || '',
+      attended: m.attended || 0, absent: m.absent || 0,
+      notes: m.notes || '',
+    };
+  },
+
   visit(v){
     return {
       id: v.id, ringId: v.ringId, repId: v.repZohoId || null,
@@ -3627,6 +3756,7 @@ async function loadFromServer(){
     settle(API.time(),              v => S.timeEntries = (v||[]).map(adapt.timeEntry)),
     settle(API.expenses(),          v => S.expenses    = (v||[]).map(adapt.expense)),
     settle(API.pending(),           v => S.pending     = v || []),
+    settle(API.meetings(asRep),     v => S.meetings    = (v||[]).map(adapt.meeting)),
     settle(API.facilitators(),      v => {
       (v||[]).forEach(f=>{
         const at = S.facilitators.findIndex(x=>x.id===f.id);
@@ -3860,6 +3990,21 @@ function calendarItems(repId) {
                sub: v.location, id: v.id, repId: v.repId || (g ? g.repId : null),
                go: g ? `openRing('${g.id}')` : '' });
   });
+  // Meetings a rep has actually recorded. These were being saved and then
+  // never shown, so the calendar looked empty even after logging one.
+  (S.meetings || []).forEach(mt => {
+    const g = ring(mt.ringId);
+    if(!g || !mine(g)) return;
+    const attended = Array.isArray(mt.attended) ? mt.attended.length : (mt.attended || 0);
+    const absent = Array.isArray(mt.absent) ? mt.absent.length : (mt.absent || 0);
+    out.push({
+      kind: 'meeting', date: mt.date, time: mt.time || '',
+      title: `${g.name} met`, repId: g.repId, id: mt.id, held: true,
+      sub: attended || absent ? `${attended} there${absent?`, ${absent} away`:''}` : (mt.notes || 'recorded'),
+      go: `openRing('${g.id}')`,
+    });
+  });
+
   S.rings.filter(r => r.status === 'active' && mine(r) && r.meetDay).forEach(r => {
     const d = nextRecurring(r.meetDay);
     if (d) out.push({
@@ -5013,10 +5158,11 @@ function openPrintable(title, bodyHTML) {
     .rcpt img{max-width:100%;max-height:230mm;border:1px solid #ccc;}
     .rcpt h2{font-size:13px;margin:0 0 8px;}
     /* ── month calendar ── */
-.cal-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px;flex-wrap:wrap}
+.cal-head{display:flex;align-items:center;gap:9px;margin:14px 0 10px;flex-wrap:wrap}
+.cal-head strong{font-family:var(--serif);font-size:17px;font-weight:600;letter-spacing:-.01em;min-width:140px}
 .cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
-.cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
-  text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
+.cal-dow div{font-family:var(--serif);font-size:12px;font-weight:600;color:var(--ink-muted);
+  text-align:center;letter-spacing:.07em;padding:5px 0;text-transform:uppercase}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
 .cal-cell{background:var(--card);border:1px solid var(--line);border-radius:8px;
   min-height:104px;padding:6px 6px 5px;overflow:hidden;transition:box-shadow .12s,border-color .12s;
@@ -5027,14 +5173,18 @@ function openPrintable(title, bodyHTML) {
 .cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
 .cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
   width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
-.cal-num{font-size:12px;color:var(--ink-muted);text-align:right;flex-shrink:0}
-.cal-chip{font-size:10.5px;line-height:1.3;border-radius:4px;padding:2px 5px;
-  display:flex;align-items:baseline;gap:4px;overflow:hidden}
+.cal-num{font-family:var(--serif);font-size:14px;font-weight:600;color:var(--ink-muted);
+  text-align:right;flex-shrink:0;letter-spacing:-.01em;line-height:1.1}
+.cal-chip{font-size:11px;line-height:1.35;border-radius:5px;padding:3px 6px;
+  display:flex;align-items:baseline;gap:5px;overflow:hidden;font-weight:500;
+  letter-spacing:-.005em}
 .cal-chip .cal-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cal-time{font-weight:700;font-size:9.5px;opacity:.75;flex-shrink:0;letter-spacing:-.02em}
+.cal-time{font-weight:700;font-size:10px;opacity:.8;flex-shrink:0;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .cal-chip.k-event{background:var(--rust-soft);color:var(--rust)}
 .cal-chip.k-visit{background:var(--info-soft);color:var(--info)}
 .cal-chip.k-meeting{background:var(--primary-soft);color:var(--primary)}
+.cal-chip.k-meeting.held{background:var(--primary);color:#fff}
 .cal-dot{width:7px;height:7px;border-radius:2px;flex-shrink:0;display:inline-block}
 .cal-more{font-size:9.5px;color:var(--ink-muted);padding-left:5px}
 .cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
