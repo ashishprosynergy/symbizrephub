@@ -155,6 +155,16 @@ CREATE TABLE IF NOT EXISTS pending_writes (
   decided_by  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS login_tokens (
+  token      TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at    TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ip         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_user ON login_tokens (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_writes (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries (user_id, entry_date);
 CREATE INDEX IF NOT EXISTS idx_exp_user  ON expenses (user_id, entry_date);
@@ -268,6 +278,19 @@ const q = {
             zoho_id=COALESCE($4,zoho_id), error=$5, note=COALESCE($6,note)
      WHERE id = $1`,
     [id, status, by, extra.zohoId || null, extra.error || null, extra.note || null]),
+
+  /* ── sign-in links ── */
+  addLoginToken: (token, userId, expiresAt, ip) => query(
+    'INSERT INTO login_tokens (token,user_id,expires_at,ip) VALUES ($1,$2,$3,$4)',
+    [token, userId, expiresAt, ip || null]),
+  findLoginToken: token => one('SELECT * FROM login_tokens WHERE token = $1', [token]),
+  useLoginToken: token => query('UPDATE login_tokens SET used_at = now() WHERE token = $1', [token]),
+  // How many links this person asked for recently, so one address cannot be
+  // used to spam someone's inbox.
+  recentTokenCount: userId => one(
+    "SELECT count(*)::int AS c FROM login_tokens WHERE user_id = $1 AND created_at > now() - interval '15 minutes'",
+    [userId]),
+  purgeOldTokens: () => query("DELETE FROM login_tokens WHERE expires_at < now() - interval '1 day'"),
 
   logSend: (userId, kind, channel, subject, ok, error) => query(
     'INSERT INTO sent_log (user_id,kind,channel,subject,ok,error) VALUES ($1,$2,$3,$4,$5,$6)',
