@@ -127,6 +127,26 @@ function makePassword(){ return Math.random().toString(36).slice(2,10); }
  * The email someone gets when they ask to sign in.
  * Deliberately short — on a phone this is read in two seconds and tapped.
  */
+/**
+ * Where this site actually lives.
+ *
+ * APP_URL is the right answer when it's set, but its default is a localhost
+ * address meant for development — and a sign-in link pointing at localhost is
+ * useless in someone's inbox. Fall back to the host the request arrived on,
+ * which on Netlify is always correct.
+ */
+function siteUrl(req) {
+  const configured = (cfg.appUrl || '').replace(/\/$/, '');
+  if (configured && !/localhost|127\.0\.0\.1/.test(configured)) return configured;
+
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  if (host && !/localhost|127\.0\.0\.1/.test(host)) {
+    const proto = req.headers['x-forwarded-proto'] || 'https';
+    return `${proto}://${host}`;
+  }
+  return configured || 'http://localhost:3000';
+}
+
 function signInEmail({ name, url, minutes }) {
   return `<!doctype html><html><body style="margin:0;background:#F2F5EC;font-family:-apple-system,Segoe UI,Arial,sans-serif;">
   <div style="max-width:480px;margin:0 auto;padding:26px 18px;">
@@ -174,7 +194,7 @@ r.post('/auth/request-link', wrap(async (req, res) => {
   await q.addLoginToken(token, user.id, expires, req.ip);
   await q.purgeOldTokens().catch(() => {});
 
-  const url = `${cfg.appUrl.replace(/\/$/, '')}/?token=${token}`;
+  const url = `${siteUrl(req)}/?token=${token}`;
   const sent = await reminders.sendEmail(user.email, 'Your Rep Hub sign-in link',
     signInEmail({ name: user.name, url, minutes }), { userId: user.id, kind: 'signin' });
 
@@ -1257,6 +1277,8 @@ r.get('/admin/mail-status', auth.authRequired, auth.requireAdmin, wrap(async (re
     passLength: m.pass ? m.pass.length : 0,
     from: m.from,
     appUrl: cfg.appUrl,
+    linkBase: siteUrl(req),
+    linkBaseFromRequest: !cfg.appUrl || /localhost|127\.0\.0\.1/.test(cfg.appUrl),
     ready: problems.length === 0,
     problems,
   });
