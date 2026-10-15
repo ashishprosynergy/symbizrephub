@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS pending_writes (
 CREATE TABLE IF NOT EXISTS login_tokens (
   token      TEXT PRIMARY KEY,
   user_id    TEXT NOT NULL,
+  purpose    TEXT NOT NULL DEFAULT 'signin',
   expires_at TIMESTAMPTZ NOT NULL,
   used_at    TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -280,15 +281,24 @@ const q = {
     [id, status, by, extra.zohoId || null, extra.error || null, extra.note || null]),
 
   /* ── sign-in links ── */
-  addLoginToken: (token, userId, expiresAt, ip) => query(
-    'INSERT INTO login_tokens (token,user_id,expires_at,ip) VALUES ($1,$2,$3,$4)',
-    [token, userId, expiresAt, ip || null]),
+  addLoginToken: (token, userId, expiresAt, ip, purpose) => query(
+    'INSERT INTO login_tokens (token,user_id,purpose,expires_at,ip) VALUES ($1,$2,$3,$4,$5)',
+    [token, userId, purpose || 'signin', expiresAt, ip || null]),
   findLoginToken: token => one('SELECT * FROM login_tokens WHERE token = $1', [token]),
   useLoginToken: token => query('UPDATE login_tokens SET used_at = now() WHERE token = $1', [token]),
   // How many links this person asked for recently, so one address cannot be
   // used to spam someone's inbox.
-  recentTokenCount: userId => one(
-    "SELECT count(*)::int AS c FROM login_tokens WHERE user_id = $1 AND created_at > now() - interval '15 minutes'",
+  // Counted per purpose: asking for a sign-in link should not use up the
+  // allowance for password codes, and vice versa.
+  recentTokenCount: (userId, purpose) => one(
+    `SELECT count(*)::int AS c FROM login_tokens
+     WHERE user_id = $1 AND created_at > now() - interval '10 minutes'
+       AND ($2::text IS NULL OR purpose = $2)`,
+    [userId, purpose || null]),
+  // When a new code is issued the older ones stop working, so there is never
+  // any doubt about which code in the inbox is the live one.
+  expireOlderCodes: userId => query(
+    "UPDATE login_tokens SET used_at = now() WHERE user_id = $1 AND purpose = 'otp' AND used_at IS NULL",
     [userId]),
   purgeOldTokens: () => query("DELETE FROM login_tokens WHERE expires_at < now() - interval '1 day'"),
 
