@@ -353,6 +353,13 @@ const API = {
   cycleStart(perWeek){ return this.call('/cycle/start',{method:'POST',body:JSON.stringify({perWeek})}); },
   bulkRings(ids,fields){ return this.call('/rings/bulk',{method:'PATCH',body:JSON.stringify({ids,fields})}); },
   resendLogin(id){ return this.call('/admin/users/'+id+'/resend',{method:'POST'}); },
+  removeUser(id){ return this.call('/admin/users/'+id,{method:'DELETE'}); },
+  pending(){ return this.call('/pending'); },
+  askRegistration(d){ return this.call('/pending/registration',{method:'POST',body:JSON.stringify(d)}); },
+  askCancellation(d){ return this.call('/pending/cancellation',{method:'POST',body:JSON.stringify(d)}); },
+  askLead(d){ return this.call('/pending/lead',{method:'POST',body:JSON.stringify(d)}); },
+  approvePending(id){ return this.call('/pending/'+id+'/approve',{method:'POST'}); },
+  rejectPending(id,reason){ return this.call('/pending/'+id+'/reject',{method:'POST',body:JSON.stringify({reason})}); },
   membersNoRing(){ return this.call('/members/no-ring'); },
   createRing(d){ return this.call('/rings',{method:'POST',body:JSON.stringify(d)}); },
   updateRing(id,d){ return this.call('/rings/'+id,{method:'PATCH',body:JSON.stringify(d)}); },
@@ -416,6 +423,33 @@ const LAUNCH_STEPS = ['Facilitator briefed on format','Meeting date and place se
 const REQ_STAGES = ['New','Contacted','Placed'];
 const EVENT_TYPES = ['Info Meeting','Expo','Summit','Local Event'];
 const TIME_CATEGORIES = ['Growth Ring visit','Facilitator call','Member call','Local event','Travel','Admin','Training'];
+/**
+ * Their growth stages, straight from Zoho's Life_Stage picklist. Mel wanted
+ * these visible so a rep knows who they are walking in to see.
+ */
+const LIFE_STAGES = {
+  'Seedling':   { tag:'soon',  hint:'New — still finding their feet' },
+  'Sapling':    { tag:'info',  hint:'Growing — building momentum' },
+  'Mighty Oak': { tag:'ok',    hint:'Established — a good mentor for others' },
+  'Bookshelf':  { tag:'later', hint:'Bookshelf cohort' },
+};
+function lifeStageTag(stage){
+  if(!stage) return '';
+  const s = LIFE_STAGES[stage] || { tag:'later', hint:'' };
+  return `<span class="tag ${s.tag}" title="${esc(s.hint)}">${esc(stage)}</span>`;
+}
+
+/** Every number we hold for someone, each one tappable. */
+function callButtons(m){
+  const nums = [
+    ['Phone', m.phone], ['Mobile', m.mobile], ['Other', m.phone2],
+  ].filter(([,v]) => v);
+  if(!nums.length) return '<div class="row-sub">No phone number in Zoho</div>';
+  return `<div class="btnrow">${nums.map(([label,v]) =>
+    `<a class="btn primary" href="tel:${esc(String(v).replace(/[^0-9+ext.]/gi,''))}">Call ${label.toLowerCase()} · ${esc(v)}</a>`
+  ).join('')}</div>`;
+}
+
 const EXPENSE_CATEGORIES = ['Mileage','Meals','Lodging','Event supplies','Printing','Other'];
 const EXPENSE_STATUS = ['Draft','Submitted','Approved','Reimbursed'];
 const REGIONS = ['Lancaster PA','Holmes County OH','Shenandoah VA'];
@@ -467,6 +501,49 @@ function seed(){
 /* ══════════════════ STATE ══════════════════ */
 let S = load();
 let loading = false;
+/**
+ * How many rows a long list renders at once.
+ *
+ * Building 423 member rows as one string cost ~170ms per keystroke, which is
+ * what made the app feel heavy. Rendering a page at a time keeps every
+ * interaction under a frame; "Show more" adds the next page.
+ */
+const PAGE = 25;   // a screenful; "Show more" adds another
+let pageSize = {};
+function pageOf(key){ return pageSize[key] || PAGE; }
+function showMore(key, total){
+  pageSize[key] = pageOf(key) + PAGE;
+  if(pageSize[key] > total) pageSize[key] = total;
+  renderContent();
+}
+function resetPaging(){ pageSize = {}; }
+function moreButton(key, shown, total){
+  if(shown >= total) return '';
+  return `<div class="btnrow" style="margin-top:12px;justify-content:center">
+    <button class="btn" onclick="showMore('${key}', ${total})">
+      Show ${Math.min(PAGE, total - shown)} more · ${shown} of ${total}</button></div>`;
+}
+
+/**
+ * Re-render without losing what someone is typing. Rebuilding the view
+ * destroys the input and the caret with it, which felt like dropped keys.
+ */
+let searchTimer = null;
+function onSearchInput(value, key){
+  ui[key || 'q'] = value;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    const active = document.activeElement;
+    const caret = active && active.selectionStart;
+    const id = active && active.id;
+    resetPaging();
+    renderContent();
+    if(id){
+      const again = document.getElementById(id);
+      if(again){ again.focus(); try{ again.setSelectionRange(caret, caret); }catch(e){} }
+    }
+  }, 160);
+}
 /**
  * Lets the office look at the app exactly as one rep sees it — their rings,
  * their calls, their calendar. Clearly banner-flagged, read-only in spirit,
@@ -543,7 +620,15 @@ function load(){
   }catch(e){}
   return s;
 }
-function save(){ try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){} }
+/**
+ * Write straight away. Deferring this saved about a millisecond and risked
+ * losing a rep's logged call if the tab closed first — a bad trade.
+ */
+function save(){
+  bumpData();                       // data changed, so the lookups are stale
+  try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){}
+}
+const saveNow = save;
 function resetDemo(){
   S=seed(); save();
   ui={me:ui.me,view:'today',ringId:null,memberId:null,facId:null,q:'',filter:'all',offline:false,gq:'',report:'contact-due'};
@@ -566,11 +651,49 @@ const isAdmin = () => me().role==='admin';
 const isOffice = () => me().role==='staff' || me().role==='admin';
 const ring = id => S.rings.find(r=>r.id===id);
 const member = id => S.members.find(m=>m.id===id);
-const fac = id => S.facilitators.find(f=>f.id===id);
+const fac = id => facById(id);
 const pname = id => (PEOPLE.find(p=>p.id===id)||{name:'—'}).name;
 const initials = n => n.split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase();
 const myRings = id => S.rings.filter(r=>r.repId===id);
-const ringMembers = gid => S.members.filter(m=>m.ringId===gid && m.status==='active');
+/**
+ * Members of a ring.
+ *
+ * Called once per row, and each call scanned all 423 members — 81 rows meant
+ * 34,000 comparisons per render. Cached per render pass instead; any write
+ * clears it via bumpData().
+ */
+let _ringMembersCache = null;
+function ringMembers(gid){
+  if(!_ringMembersCache){
+    _ringMembersCache = new Map();
+    S.members.forEach(m=>{
+      if(m.status!=='active' || !m.ringId) return;
+      if(!_ringMembersCache.has(m.ringId)) _ringMembersCache.set(m.ringId, []);
+      _ringMembersCache.get(m.ringId).push(m);
+    });
+  }
+  return _ringMembersCache.get(gid) || [];
+}
+
+/** Same problem for facilitator and activity lookups. */
+let _facCache = null;
+function facById(id){
+  if(!_facCache){ _facCache = new Map(); S.facilitators.forEach(f=>_facCache.set(f.id,f)); }
+  return _facCache.get(id) || null;
+}
+let _lastContactCache = null;
+function lastContactCached(memberId){
+  if(!_lastContactCache){
+    _lastContactCache = new Map();
+    [...S.activities].sort((a,b)=>String(b.date).localeCompare(String(a.date))).forEach(a=>{
+      if(a.memberId && !_lastContactCache.has(a.memberId)) _lastContactCache.set(a.memberId, a);
+    });
+  }
+  return _lastContactCache.get(memberId) || null;
+}
+
+/** Call whenever the data changes, so the caches are rebuilt. */
+function bumpData(){ _ringMembersCache = null; _facCache = null; _lastContactCache = null; }
 const activeMembers = id => S.members.filter(m=>m.repId===id && m.status==='active');
 
 function days(d){ if(!d) return null; return Math.round((new Date(d+'T09:00:00')-TODAY)/86400000); }
@@ -592,10 +715,7 @@ function dueItems(repId){
   return S.activities.filter(a=>a.nextDue && (!repId||a.repId===repId))
     .sort((a,b)=> new Date(a.nextDue)-new Date(b.nextDue));
 }
-function lastContact(memberId){
-  const l=S.activities.filter(a=>a.memberId===memberId).sort((a,b)=>new Date(b.date)-new Date(a.date));
-  return l[0]||null;
-}
+function lastContact(memberId){ return lastContactCached(memberId); }
 function lastFacContact(facId){
   const l=S.activities.filter(a=>a.facId===facId).sort((a,b)=>new Date(b.date)-new Date(a.date));
   return l[0]||null;
@@ -779,6 +899,13 @@ function vToday(){
         ? `<strong>${dueThisWeek} ${dueThisWeek===1?'person needs':'people need'} a call</strong>${overdue.length?` — ${overdue.length} already overdue`:''}.`
         : (S.activities.length ? `Nothing due right now. Your next call is scheduled.` : `Nothing scheduled yet.`)}
     </p>
+    ${(() => {
+      const mine = (S.pending||[]).filter(p=>p.rep_id===((PEOPLE.find(x=>x.id===ui.me)||{}).loginId||p.rep_id));
+      const sentBack = (S.pending||[]).filter(p=>p.status==='rejected');
+      if(!sentBack.length) return '';
+      return `<div class="callout rust"><strong>${sentBack.length} request${sentBack.length===1?'':'s'} sent back</strong>
+        ${sentBack.slice(0,3).map(p=>`${esc(p.summary||'')} — ${esc(p.note||'')}`).join('<br>')}</div>`;
+    })()}
     <div class="stats">
       <div class="stat click" onclick="setView('today')"><div class="n" style="color:var(--rust)">${overdue.length}</div><div class="l">Overdue</div></div>
       <div class="stat"><div class="n" style="color:var(--accent)">${soon.length}</div><div class="l">Due soon</div></div>
@@ -807,7 +934,7 @@ function vToday(){
 }
 
 function vMyRings(){
-  const rs=myRings(ui.me);
+  const rs=ringsOfType(myRings(ui.me));
   const rows=rs.map(r=>{
     const mc=ringMembers(r.id).length, h=ringHealth(r);
     return `<div class="row clicky" onclick="openRing('${r.id}')">
@@ -815,7 +942,7 @@ function vMyRings(){
         ${glyph(r.status)}
         <div class="row-main">
           <div class="row-title">${esc(r.name)}</div>
-          <div class="row-sub">${fac(r.facId)?esc(fac(r.facId).name):'no facilitator'} · ${mc}/${r.capacity} members${r.status==='active'&&!launchDone(r)?' · launch unfinished':''}</div>
+          <div class="row-sub">${r.groupType&&r.groupType!=='Growth Ring'?esc(r.groupType)+' · ':''}${r.facName||(fac(r.facId)?esc(fac(r.facId).name):'no facilitator')} · ${r.serverMemberCount||mc}${r.capacity?'/'+r.capacity:''} members</div>
         </div>
       </div>
       <div style="text-align:right">
@@ -823,7 +950,8 @@ function vMyRings(){
         <div class="row-sub" style="margin-top:3px">${h===null?'Not rated yet':'Health '+h}</div>
       </div></div>`;
   }).join('')||emptyState('your Growth Rings', "You have no Growth Rings yet. The office assigns them in Zoho.");
-  return `<div class="section-head"><div><h2>My Growth Rings</h2><div class="sub">Groups you organize and support.</div></div>
+  return `${typeFilterChips()}
+    <div class="section-head"><div><h2>My Growth Rings</h2><div class="sub">Groups you organize and support.</div></div>
       <button class="btn primary" onclick="openNewRing()">Start a ring</button></div>
     ${rows}`;
 }
@@ -899,7 +1027,7 @@ function vPeople(){
     return `<div class="row clicky" onclick="openMember('${m.id}')">
       <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
         <div class="av">${initials(m.name)}</div>
-        <div class="row-main"><div class="row-title">${esc(m.name)}${m.status!=='active'?` <span class="tag later">${m.status}</span>`:''}</div>
+        <div class="row-main"><div class="row-title">${esc(m.name)}${m.status!=='active'?` <span class="tag later">${m.status}</span>`:''}${m.lifeStage?' '+lifeStageTag(m.lifeStage):''}</div>
         <div class="row-sub">${esc(m.business)} · ${ring(m.ringId)?esc(ring(m.ringId).name):'no ring'} · last spoke ${lc?fmt(lc.date):'never'}</div></div>
       </div>${due?tag(due.nextDue):''}</div>`;
   }).join('')||`<div class="empty">Nobody matches that.</div>`;
@@ -914,8 +1042,9 @@ function vPeople(){
       </div></div>`;
   }).join('')||`<div class="row-sub" style="padding:9px 0">No facilitators yet.</div>`;
 
-  return `<div class="section-head"><div><h2>My people</h2><div class="sub">Members and facilitators across your rings.</div></div></div>
-    <input class="srch" placeholder="Search by name or business" value="${esc(ui.q)}" oninput="ui.q=this.value;renderContent()">
+  return `<div class="section-head"><div><h2>My people</h2><div class="sub">Members and facilitators across your rings.</div></div>
+    ${API.live?`<button class="btn primary" onclick="openAddLead()">Add a lead</button>`:''}</div>
+    <input class="srch" id="peopleSearch" placeholder="Search by name or business" value="${esc(ui.q)}" oninput="onSearchInput(this.value)">
     <div class="chips">${['all','overdue','never','renewing'].map(f=>
       `<button class="chip ${ui.filter===f?'on':''}" onclick="ui.filter='${f}';renderContent()">${f==='all'?'Everyone':f==='never'?'Never contacted':f==='renewing'?'Renewing soon':'Overdue'}</button>`).join('')}</div>
     <h3 class="sub-h">Facilitators</h3>${facRows}
@@ -931,21 +1060,30 @@ function vMemberDetail(){
   const att=mts.length?Math.round(mts.filter(t=>t.attended.includes(m.id)).length/mts.length*100):null;
 
   return `<button class="back" onclick="setView(isRep()?'people':'members')">← Back</button>
-    <div class="section-head"><div><h2>${esc(m.name)}</h2><div class="sub">${esc(m.business)} · ${g?esc(g.name):'no ring'}</div></div>
+    <div class="section-head"><div><h2>${esc(m.name)}</h2>
+      <div class="sub">${esc(m.business)} · ${g?esc(g.name):'no ring'}${m.memberNo?' · #'+m.memberNo:''}</div>
+      <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+        ${lifeStageTag(m.lifeStage)}
+        ${m.memberType?`<span class="tag later">${esc(m.memberType)}</span>`:''}
+        ${m.onlineMember?`<span class="tag info">Online member</span>`:''}
+      </div></div>
       <div class="status ${m.status}"><span class="dot"></span>${statusText(m.status)}</div></div>
     ${m.status==='discontinued'?`<div class="callout"><strong>Membership discontinued</strong>Exit interview is on file below.</div>`:''}
     ${m.renews&&days(m.renews)<=45&&days(m.renews)>=0&&m.status==='active'?`<div class="callout"><strong>Renews in ${days(m.renews)} days</strong>Worth a conversation before the date.</div>`:''}
+    <div style="margin-bottom:10px">${callButtons(m)}</div>
     <div class="card">
-      <div class="kv"><span class="k">Phone</span><a href="tel:${esc(m.phone)}">${esc(m.phone)}</a></div>
-      <div class="kv"><span class="k">Email</span><a href="mailto:${esc(m.email)}">${esc(m.email)}</a></div>
-      <div class="kv"><span class="k">Member since</span><span>${fmt(m.joined)}</span></div>
-      <div class="kv"><span class="k">Renews</span><span>${fmt(m.renews)}</span></div>
+      ${m.email?`<div class="kv"><span class="k">Email</span><a href="mailto:${esc(m.email)}">${esc(m.email)}</a></div>`:''}
+      ${m.address?`<div class="kv"><span class="k">Address</span>
+        <a href="https://maps.google.com/?q=${encodeURIComponent(m.address)}" target="_blank" rel="noopener">${esc(m.address)}</a></div>`:''}
+      ${m.lifeStage?`<div class="kv"><span class="k">Life stage</span><span>${esc(m.lifeStage)}${LIFE_STAGES[m.lifeStage]?` — ${esc(LIFE_STAGES[m.lifeStage].hint)}`:''}</span></div>`:''}
+      ${m.memberType?`<div class="kv"><span class="k">Membership type</span><span>${esc(m.memberType)}</span></div>`:''}
+      <div class="kv"><span class="k">Member since</span><span>${fmt(m.memberSince||m.joined)}</span></div>
       <div class="kv"><span class="k">Next call due</span><span>${due?fmt(due.nextDue):'not scheduled'}</span></div>
       ${att!==null?`<div class="kv"><span class="k">Meeting attendance</span><span>${att}%</span></div>`:''}
       <div class="kv"><span class="k">Rep</span><span>${pname(m.repId)}</span></div>
     </div>
     ${m.status==='active'&&mine?`<div class="btnrow" style="margin-bottom:8px;">
-      <a class="btn" href="tel:${esc(m.phone)}">Call</a><a class="btn" href="mailto:${esc(m.email)}">Email</a>
+      <a class="btn" href="mailto:${esc(m.email)}">Email</a>
       <button class="btn primary" onclick='openLog(${JSON.stringify({ringId:m.ringId,who:m.name,type:"Member Call",memberId:m.id})})'>Log a call</button>
       <button class="btn danger" onclick="openExit('${m.id}')">Exit interview</button></div>`:''}
     <h3 class="sub-h">Conversation history</h3>
@@ -1097,7 +1235,8 @@ function vReminders(){
         ${items.length?items.map(a=>`<div class="kv"><span>${esc(a.who)} — ${a.type.replace(' Call','')}</span><span>${days(a.nextDue)<0?'overdue':'due '+fmtShort(a.nextDue)}</span></div>`).join('')
           :'<div class="row-sub">Nothing due — no email sent.</div>'}
         <div class="btnrow" style="margin-top:10px"><button class="btn sm" onclick="toast('Preview sent to ${esc(p.email)}')">Send a test</button></div></div>`;
-    }).join('')}`;
+    }).join('')}
+    ${moreButton('rings', Math.min(pageOf('rings'), ringsOfType(S.rings).length), ringsOfType(S.rings).length)}`;
 }
 
 /* ══════════════════ OFFICE / ADMIN VIEWS ══════════════════ */
@@ -1109,7 +1248,13 @@ function vOfficeDash(){
   const rings=S.rings.filter(r=>r.status==='active');
   const atRisk=rings.filter(r=>ringHealth(r)<50);
   const exits=S.activities.filter(a=>a.type==='Exit Interview'&&a.date>='2026-01-01').length;
-  const newM=S.members.filter(m=>m.joined>='2026-01-01').length;
+  // Joined = Paid_Membership_StartDate in Zoho, counted across the members
+  // loaded. "Left" cannot be dated: Zoho records that someone is Inactive
+  // but not WHEN they went inactive, so we show the current total instead
+  // of inventing a year figure.
+  const yr = String(new Date().getFullYear());
+  const newM = S.members.filter(m => m.status==='active' && m.joined && m.joined >= yr+'-01-01').length;
+  const inactive = S.members.filter(m => m.status !== 'active').length;
 
   return `${announceBanner()}
     <div class="section-head"><div><h2>Network overview</h2><div class="sub">Where things stand across every rep and ring.</div></div></div>
@@ -1118,8 +1263,10 @@ function vOfficeDash(){
       <div class="stat click" onclick="setView('coverage')"><div class="n" style="color:var(--rust)">${od}</div><div class="l">Overdue contacts</div></div>
       <div class="stat click" onclick="setView('members')"><div class="n">${act}</div><div class="l">Active members</div></div>
       <div class="stat click" onclick="setView('allrings')"><div class="n">${rings.length}</div><div class="l">Active rings</div></div>
-      <div class="stat"><div class="n" style="color:var(--primary)">+${newM}</div><div class="l">Joined in 2026</div></div>
-      <div class="stat click" onclick="setView('insights')"><div class="n" style="color:var(--rust)">−${exits}</div><div class="l">Left in 2026</div></div>
+      <div class="stat click" onclick="setView('members')" title="Members whose paid start date in Zoho falls this year">
+        <div class="n" style="color:var(--primary)">+${newM}</div><div class="l">Joined in ${yr}</div></div>
+      <div class="stat click" onclick="setView('insights')" title="Members marked Inactive in Zoho. Zoho does not record the date they left, so this is a running total, not a figure for this year.">
+        <div class="n" style="color:var(--rust)">${inactive}</div><div class="l">Inactive members</div></div>
     </div>
     ${(() => {
       const rated = rings.map(r=>({r, h:ringHealth(r)})).filter(x=>x.h!==null);
@@ -1174,6 +1321,19 @@ function vOfficeDash(){
 }
 
 function vApprovals(){
+  const asks = (S.pending||[]);
+  const waiting = asks.filter(p=>p.status==='pending');
+  const decided = asks.filter(p=>p.status!=='pending').slice(0,20);
+  const zohoAsks = `
+    <h3 class="sub-h">Requests to add to Zoho · ${waiting.length}</h3>
+    <div class="row-sub" style="margin-bottom:10px">Registrations, cancellations and leads submitted by reps.
+      Nothing reaches the CRM until you approve it here.</div>
+    ${waiting.length ? pendingRows(waiting, true) : `<div class="empty">Nothing waiting.</div>`}
+    ${decided.length ? `<h3 class="sub-h">Recently decided</h3>${pendingRows(decided, false)}` : ''}
+  `;
+  return vApprovalsInner(zohoAsks);
+}
+function vApprovalsInner(extra){
   const pend=S.rings.filter(r=>r.status==='pending');
   const rows=pend.map(r=>{const f=fac(r.facId);return `<div class="card">
     <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
@@ -1189,7 +1349,8 @@ function vApprovals(){
       <button class="btn sm" onclick="openEditRing('${r.id}',true)">Edit and approve</button>
       <button class="btn danger sm" onclick="openReject('${r.id}')">Send back</button></div></div>`;}).join('')
     ||`<div class="empty">Nothing waiting on your review.</div>`;
-  return `<div class="section-head"><div><h2>Approvals</h2><div class="sub">New Growth Rings reps have submitted.</div></div></div>${rows}`;
+  return `${extra||''}
+    <div class="section-head"><div><h2>Growth Rings awaiting approval</h2><div class="sub">New Growth Rings reps have submitted.</div></div></div>${rows}`;
 }
 
 function vCoverage(){
@@ -1331,13 +1492,15 @@ function vReports(){
   const rows=r.rows();
   return `<div class="section-head"><div><h2>Reports</h2><div class="sub">Built around the rep roles. Every report exports to CSV for Zoho or Excel.</div></div></div>
     <div class="chips">${Object.entries(REPORTS).map(([k,v])=>
-      `<button class="chip ${ui.report===k?'on':''}" onclick="ui.report='${k}';renderContent()">${v.name}</button>`).join('')}</div>
+      `<button class="chip ${ui.report===k?'on':''}" onclick="ui.report='${k}';resetPaging();renderContent()">${v.name}</button>`).join('')}</div>
     <div class="card flat"><div class="row-title">${r.name}</div><div class="row-sub">${r.desc} · ${rows.length} row${rows.length===1?'':'s'}</div>
       <div class="btnrow" style="margin-top:10px"><button class="btn primary sm" onclick="exportReport()">Export CSV</button>
       <button class="btn sm" onclick="window.print()">Print</button></div></div>
     <div class="tbl-wrap"><table class="rep"><thead><tr>${r.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead>
-      <tbody>${rows.length?rows.map(row=>`<tr>${row.map(c=>`<td>${esc(c)}</td>`).join('')}</tr>`).join('')
-        :`<tr><td colspan="${r.cols.length}" style="color:var(--ink-muted);padding:18px">Nothing to show.</td></tr>`}</tbody></table></div>`;
+      <tbody>${rows.length?rows.slice(0, pageOf('report')).map(row=>`<tr>${row.map(c=>`<td>${esc(c)}</td>`).join('')}</tr>`).join('')
+        :`<tr><td colspan="${r.cols.length}" style="color:var(--ink-muted);padding:18px">Nothing to show.</td></tr>`}</tbody></table></div>
+    ${moreButton('report', Math.min(pageOf('report'), rows.length), rows.length)}
+    ${rows.length > pageOf('report') ? `<div class="row-sub" style="margin-top:8px">Export includes all ${rows.length} rows.</div>` : ''}`;
 }
 function exportReport(){
   const r=REPORTS[ui.report];
@@ -1347,35 +1510,62 @@ function exportCoverage(){ ui.report='rep-activity'; exportReport(); }
 
 function vMembersAll(){
   const q=ui.q.toLowerCase();
-  let list=S.members.filter(m=>!q||m.name.toLowerCase().includes(q)||m.business.toLowerCase().includes(q));
+  let list=S.members.filter(m=>!q||m.name.toLowerCase().includes(q)||(m.business||'').toLowerCase().includes(q));
   if(ui.filter==='active') list=list.filter(m=>m.status==='active');
   if(ui.filter==='discontinued') list=list.filter(m=>m.status==='discontinued');
   if(ui.filter==='renewing') list=list.filter(m=>m.renews&&days(m.renews)<=90&&days(m.renews)>=0&&m.status==='active');
+
+  const facs = S.facilitators.filter(f=>!q||f.name.toLowerCase().includes(q));
+  const facShown = facs.slice(0, pageOf('facs'));
+  const shown = list.slice(0, pageOf('members'));
+
   return `<div class="section-head"><div><h2>Members</h2><div class="sub">Everyone in the network, across all reps.</div></div>
     <button class="btn" onclick="ui.report='member-directory';exportReport()">Export CSV</button></div>
-    <input class="srch" placeholder="Search members" value="${esc(ui.q)}" oninput="ui.q=this.value;renderContent()">
+    <input class="srch" id="memberSearch" placeholder="Search members" value="${esc(ui.q)}"
+           oninput="onSearchInput(this.value)">
     <div class="chips">${['all','active','renewing','discontinued'].map(f=>
-      `<button class="chip ${ui.filter===f?'on':''}" onclick="ui.filter='${f}';renderContent()">${f[0].toUpperCase()+f.slice(1)}</button>`).join('')}</div>
-    <h3 class="sub-h">Facilitators · ${S.facilitators.length}</h3>
-    ${S.facilitators.filter(f=>!q||f.name.toLowerCase().includes(q)).map(f=>`<div class="row clicky" onclick="openFac('${f.id}')">
-      <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0"><div class="av" style="background:var(--primary-soft);color:var(--primary)">${initials(f.name)}</div>
-      <div class="row-main"><div class="row-title">${esc(f.name)}</div><div class="row-sub">${esc(f.business)} · ${S.rings.filter(r=>r.facId===f.id).length} ring(s)</div></div></div></div>`).join('')}
+      `<button class="chip ${ui.filter===f?'on':''}" onclick="ui.filter='${f}';resetPaging();renderContent()">${f[0].toUpperCase()+f.slice(1)}</button>`).join('')}</div>
+
+    <h3 class="sub-h">Facilitators · ${facs.length}</h3>
+    ${facShown.map(f=>`<div class="row clicky" onclick="openFac('${f.id}')">
+      <div class="av" style="background:var(--primary-soft);color:var(--primary)">${initials(f.name)}</div>
+      <div class="row-main"><div class="row-title">${esc(f.name)}</div>
+      <div class="row-sub">${esc(f.business||'—')}</div></div></div>`).join('')
+      || emptyState('facilitators')}
+    ${moreButton('facs', facShown.length, facs.length)}
+
     <h3 class="sub-h">Members · ${list.length}</h3>
-    ${list.map(m=>{const lc=lastContact(m.id);return `<div class="row clicky" onclick="openMember('${m.id}')">
-      <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0"><div class="av">${initials(m.name)}</div>
+    ${shown.map(m=>{const lc=lastContact(m.id);return `<div class="row clicky" onclick="openMember('${m.id}')">
+      <div class="av">${initials(m.name)}</div>
       <div class="row-main"><div class="row-title">${esc(m.name)}${m.status!=='active'?` <span class="tag later">${m.status}</span>`:''}</div>
-      <div class="row-sub">${esc(m.business)} · ${ring(m.ringId)?esc(ring(m.ringId).name):''} · ${pname(m.repId)} · last spoke ${lc?fmt(lc.date):'never'}</div></div></div>
-      ${m.renews&&days(m.renews)<=90&&days(m.renews)>=0?`<span class="tag soon">renews ${fmtShort(m.renews)}</span>`:''}</div>`;}).join('')||`<div class="empty">Nobody matches.</div>`}`;
+      <div class="row-sub">${esc(m.business||'—')}${m.ringNames&&m.ringNames.length?' · '+esc(m.ringNames[0]):''} · last spoke ${lc?fmt(lc.date):'never'}</div></div>
+      ${m.renews&&days(m.renews)<=90&&days(m.renews)>=0?`<span class="tag soon">renews ${fmtShort(m.renews)}</span>`:''}</div>`;}).join('')
+      || (q ? `<div class="empty">Nobody matches that.</div>` : emptyState('members'))}
+    ${moreButton('members', shown.length, list.length)}`;
 }
 
+/* ── selecting rings for a bulk edit ── */
 let bulkPick = new Set();
+
 function toggleBulk(id){
   bulkPick.has(id) ? bulkPick.delete(id) : bulkPick.add(id);
-  renderContent();
+  // Only the banner changes. Rebuilding all 81 rows to tick one box was the
+  // laggiest interaction in the app.
+  updateBulkBanner();
+}
+function updateBulkBanner(){
+  const el = document.getElementById('bulkBanner');
+  if(!el){ renderContent(); return; }
+  el.innerHTML = bulkPick.size
+    ? `<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <span><strong>${bulkPick.size} selected</strong></span>
+        <span class="btnrow"><button class="btn sm primary" onclick="openBulkEdit()">Set details</button>
+        <button class="btn sm" onclick="bulkClear()">Clear</button></span></div>`
+    : '';
 }
 function bulkPickAllMissing(){
   bulkPick = new Set(S.rings.filter(r=>r.status==='active' && (!r.meetingRhythm || !r.meetingFormat)).map(r=>r.id));
-  renderContent();
+  renderContent();   // every checkbox changes, so a full redraw is right here
 }
 function bulkClear(){ bulkPick = new Set(); renderContent(); }
 
@@ -1386,13 +1576,11 @@ function openBulkEdit(){
       those are per-ring decisions.</p>
     <form onsubmit="submitBulkEdit(event)">
       <div class="field"><label>How often the group meets</label>
-        <select name="meetingFrequency">
-          <option value="">— leave as is —</option>
+        <select name="meetingFrequency"><option value="">— leave as is —</option>
           ${['Weekly','Monthly','Bi Monthly','Quarterly','Yearly','Other'].map(x=>`<option>${x}</option>`).join('')}
         </select></div>
       <div class="field"><label>Meeting format</label>
-        <select name="meetingFormat">
-          <option value="">— leave as is —</option>
+        <select name="meetingFormat"><option value="">— leave as is —</option>
           ${['In Person','Virtual','Hybrid'].map(x=>`<option>${x}</option>`).join('')}
         </select></div>
       <div class="field"><label>Target group size</label>
@@ -1420,6 +1608,29 @@ async function submitBulkEdit(e){
   }
 }
 
+/**
+ * Group types, from Zoho's Group_Type picklist: Growth Ring, Oak Grove,
+ * Bookshelf Cohort. Today every group is a Growth Ring, so the filter stays
+ * hidden — a one-option filter is clutter. It appears on its own the moment
+ * Symbiz creates a group of another type.
+ */
+function groupTypesPresent(){
+  return [...new Set(S.rings.map(r => r.groupType || 'Growth Ring'))].sort();
+}
+function typeFilterChips(){
+  const types = groupTypesPresent();
+  if(types.length < 2) return '';
+  return `<div class="chips">
+    <button class="chip ${!ui.ringType?'on':''}" onclick="ui.ringType=null;resetPaging();renderContent()">All ${S.rings.length}</button>
+    ${types.map(t=>{
+      const n = S.rings.filter(r=>(r.groupType||'Growth Ring')===t).length;
+      return `<button class="chip ${ui.ringType===t?'on':''}" onclick="ui.ringType='${esc(t)}';resetPaging();renderContent()">${esc(t)} ${n}</button>`;
+    }).join('')}</div>`;
+}
+function ringsOfType(list){
+  return ui.ringType ? list.filter(r => (r.groupType||'Growth Ring') === ui.ringType) : list;
+}
+
 function vAllRings(){
   const missing = S.rings.filter(r=>r.status==='active' && (!r.meetingRhythm || !r.meetingFormat)).length;
   return `<div class="section-head"><div><h2>All Growth Rings</h2><div class="sub">Every ring across every rep, with health.</div></div>
@@ -1430,11 +1641,12 @@ function vAllRings(){
       <div class="btnrow" style="margin-top:9px">
         <button class="btn sm primary" onclick="bulkPickAllMissing()">Select all ${missing}</button>
       </div></div>`:''}
-    ${bulkPick.size?`<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    ${typeFilterChips()}
+    <div id="bulkBanner">${bulkPick.size?`<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <span><strong>${bulkPick.size} selected</strong></span>
       <span class="btnrow"><button class="btn sm primary" onclick="openBulkEdit()">Set details</button>
-      <button class="btn sm" onclick="bulkClear()">Clear</button></span></div>`:''}
-    ${S.rings.map(r=>{
+      <button class="btn sm" onclick="bulkClear()">Clear</button></span></div>`:''}</div>
+    ${ringsOfType(S.rings).slice(0, pageOf('rings')).map(r=>{
       const h = ringHealth(r);
       const picked = bulkPick.has(r.id);
       return `<div class="row">
@@ -1449,23 +1661,34 @@ function vAllRings(){
           <div class="row-sub" style="margin-top:3px">${h===null?'Not rated yet':h+' · '+healthWord(h)}</div>
         </div>
       </div>`;
-    }).join('')}`;
+    }).join('')}
+    ${moreButton('rings', Math.min(pageOf('rings'), ringsOfType(S.rings).length), ringsOfType(S.rings).length)}`;
 }
 
 function vInsights(){
   const exits=S.activities.filter(a=>a.type==='Exit Interview');
   const counts={}; exits.forEach(e=>{const k=e.exitReason||'Not recorded'; counts[k]=(counts[k]||0)+1;});
   const max=Math.max(1,...Object.values(counts));
-  const joined=S.members.filter(m=>m.joined>='2026-01-01').length;
-  const left=exits.filter(e=>e.date>='2026-01-01').length;
-  const net=joined-left;
+  const yr = String(new Date().getFullYear());
+  const joined = S.members.filter(m => m.status==='active' && m.joined && m.joined >= yr+'-01-01').length;
+  // Exit interviews logged here. Separate from Zoho's Inactive flag, which
+  // carries no date, so the two numbers answer different questions.
+  const left = exits.filter(e => e.date >= yr+'-01-01').length;
+  const inactive = S.members.filter(m => m.status !== 'active').length;
+  const net = joined - left;
   const retention=S.members.length?Math.round(S.members.filter(m=>m.status==='active').length/S.members.length*100):0;
   return `<div class="section-head"><div><h2>Retention insights</h2><div class="sub">Why members leave, and whether the network is growing.</div></div>
     <button class="btn" onclick="ui.report='exit-interviews';exportReport()">Export CSV</button></div>
+    <div class="callout"><strong>Where these numbers come from</strong>
+      <em>Joined</em> counts the paid membership start date held in Zoho.
+      <em>Exit interviews</em> counts those logged here by reps.
+      <em>Inactive in Zoho</em> is a running total, not a figure for this year —
+      Zoho records that someone is inactive but not the date they left.
+      Adding a "date left" field in Zoho would let this show a proper yearly figure.</div>
     <div class="stats">
-      <div class="stat"><div class="n" style="color:var(--primary)">+${joined}</div><div class="l">Joined 2026</div></div>
-      <div class="stat"><div class="n" style="color:var(--rust)">−${left}</div><div class="l">Left 2026</div></div>
-      <div class="stat"><div class="n">${net>=0?'+':''}${net}</div><div class="l">Net change</div></div>
+      <div class="stat"><div class="n" style="color:var(--primary)">+${joined}</div><div class="l">Joined in ${yr}</div></div>
+      <div class="stat"><div class="n" style="color:var(--rust)">−${left}</div><div class="l">Exit interviews in ${yr}</div></div>
+      <div class="stat"><div class="n">${inactive}</div><div class="l">Inactive in Zoho</div></div>
       <div class="stat"><div class="n">${retention}%</div><div class="l">Retention</div></div>
     </div>
     <h3 class="sub-h">Reasons given for leaving</h3>
@@ -1580,9 +1803,31 @@ async function doRemoveUser(id, name){
 }
 
 /** Reset someone's password and email them the new one. */
+/** Remove an account completely, so the person can be added again later. */
+async function removeAccount(id, name){
+  openModal(`<h3>Remove ${esc(name)}?</h3>
+    <p class="lead">Their login stops working immediately. Nothing they logged is deleted,
+      and they can be added again from Zoho whenever you like.</p>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
+    <button class="btn danger" onclick="runRemoveAccount('${id}','${esc(name)}')">Remove the account</button></div>`);
+}
+async function runRemoveAccount(id, name){
+  try{
+    await API.removeUser(id);
+    closeModal();
+    toast(`${name} removed`);
+    serverUsers = null; zohoReps = null;
+    await loadUsers();
+  }catch(e){
+    openModal(`<h3>Couldn't remove</h3><p class="lead">${esc(e.message)}</p>
+      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
+  }
+}
+
 async function resendLogin(id, name){
-  openModal(`<h3>Send ${esc(name)} a new login?</h3>
-    <p class="lead">Their current password stops working immediately and a new one is emailed to them.</p>
+  openModal(`<h3>Reset the password for ${esc(name)}?</h3>
+    <p class="lead">A new password is generated and shown here. If email is switched on they get it
+      directly too. Their old password stops working straight away.</p>
     <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
     <button class="btn primary" onclick="runResendLogin('${id}','${esc(name)}')">Send it</button></div>`);
 }
@@ -1591,7 +1836,9 @@ async function runResendLogin(id, name){
   try{
     const out = await API.resendLogin(id);
     openModal(`<h3>New login sent</h3>
-      <p class="lead">${out.emailed ? `Emailed to ${esc(name)}.` : `Email isn't switched on — pass this on yourself.`}</p>
+      <p class="lead">${out.emailed
+        ? `Emailed to ${esc(name)}. The new password is below as well.`
+        : `Email isn't switched on for this site, so give them this yourself.`}</p>
       <div class="card flat" style="text-align:center;padding:16px">
         <div style="font-family:ui-monospace,monospace;font-size:20px;font-weight:700;letter-spacing:.06em">${esc(out.tempPassword)}</div>
       </div>
@@ -1714,7 +1961,8 @@ function vTeam(){
           <div class="row-main"><div class="row-title">${esc(u.name)}</div>
             <div class="row-sub">${esc(u.email)}${u.region?' · '+esc(u.region):''}</div></div></div>
         <div class="row-actions">
-          <button class="btn sm" onclick="resendLogin('${u.id}','${esc(u.name)}')">Resend login</button>
+          <button class="btn sm" onclick="resendLogin('${u.id}','${esc(u.name)}')">Reset password</button>
+          ${isAdmin() && u.id !== ui.me ? `<button class="btn sm danger" onclick="removeAccount('${u.id}','${esc(u.name)}')">Remove</button>` : ''}
           ${u.role==='rep' && !u.zoho_owner_id ? `<span class="tag overdue">not linked to Zoho</span>` : ''}
           <span class="tag ${u.role==='admin'?'info':u.role==='staff'?'ok':'later'}">${u.role==='rep'?'Rep':u.role==='staff'?'Office':'Director'}</span>
           ${isAdmin() ? `<button class="btn sm" onclick="resetUserPassword('${esc(u.id)}','${esc(u.name)}')">Reset password</button>
@@ -1893,6 +2141,206 @@ async function runStartCycle(){
       ${/read-only/i.test(e.message)?`<div class="callout">Writing is switched off. Set READ_ONLY to false once the Zoho fields are added.</div>`:''}
       <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
   }
+}
+
+/* ══════════════════ ASKING THE OFFICE TO WRITE TO ZOHO ══════════════════
+ * Nothing here touches the CRM directly. A rep submits, the office approves,
+ * and only then is anything written — so a mistyped name never reaches Zoho.
+ */
+function openAddRegistration(eventId){
+  const e = S.events.find(x=>x.id===eventId);
+  if(!e) return;
+  openModal(`<h3>Register someone for ${esc(e.title)}</h3>
+    <p class="lead">This goes to the office first. Once they approve it, it appears in Zoho.</p>
+    <form onsubmit="submitRegistration(event,'${eventId}')">
+
+      <h4 class="sub-h" style="margin-top:0">Who is coming</h4>
+      <div class="field"><label>First name</label><input name="firstName" required></div>
+      <div class="field"><label>Last name</label><input name="lastName" required></div>
+      <div class="field"><label>Business</label><input name="business"></div>
+      <div class="field"><label>Phone</label><input name="phone" type="tel"></div>
+      <div class="field"><label>Email</label><input name="email" type="email"></div>
+      <div class="field"><label>Town</label><input name="city"></div>
+      <div class="field"><label>State</label><input name="state" maxlength="20" placeholder="PA"></div>
+      <div class="field"><label>Are they already a member?</label>
+        <select name="registrantType">
+          <option value="Lead">No — new contact</option>
+          <option value="Member">Yes — existing member</option>
+        </select></div>
+
+      <h4 class="sub-h">Bringing anyone?</h4>
+      <div class="field"><label>
+        <input type="checkbox" name="bringingGuest" onchange="toggleGuestFields(this.checked)"
+               style="width:16px;height:16px;accent-color:var(--primary);vertical-align:-2px">
+        Yes, they're bringing a guest</label></div>
+      <div id="guestFields" style="display:none;border-left:3px solid var(--line);padding-left:12px">
+        <div class="field"><label>Guest first name</label><input name="guestFirstName"></div>
+        <div class="field"><label>Guest last name</label><input name="guestLastName"></div>
+        <div class="field"><label>Who are they?</label>
+          <select name="guestType">
+            <option>Spouse</option>
+            <option>Other Guest</option>
+          </select></div>
+        <div class="field"><label>Guest business <span style="font-weight:400;color:var(--ink-muted)">(if different)</span></label>
+          <input name="guestBusiness"></div>
+        <div class="field"><label>Guest phone</label><input name="guestPhone" type="tel"></div>
+        <div class="field"><label>Guest email</label><input name="guestEmail" type="email"></div>
+      </div>
+
+      <div id="regErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+      <button type="submit" class="btn primary">Send to the office</button></div></form>`);
+}
+function toggleGuestFields(on){
+  const el = document.getElementById('guestFields');
+  if(el) el.style.display = on ? 'block' : 'none';
+}
+async function submitRegistration(ev, eventId){
+  ev.preventDefault();
+  const f=ev.target.elements, err=document.getElementById('regErr');
+  const g = f.namedItem('bringingGuest').checked;
+  try{
+    await API.askRegistration({
+      eventId,
+      firstName:f.namedItem('firstName').value,
+      lastName:f.namedItem('lastName').value,
+      name:`${f.namedItem('firstName').value} ${f.namedItem('lastName').value}`.trim(),
+      business:f.namedItem('business').value,
+      phone:f.namedItem('phone').value,
+      email:f.namedItem('email').value,
+      city:f.namedItem('city').value,
+      state:f.namedItem('state').value,
+      registrantType:f.namedItem('registrantType').value,
+      bringingGuest:g,
+      guestFirstName:g?f.namedItem('guestFirstName').value:undefined,
+      guestLastName:g?f.namedItem('guestLastName').value:undefined,
+      guestType:g?f.namedItem('guestType').value:undefined,
+      guestBusiness:g?f.namedItem('guestBusiness').value:undefined,
+      guestPhone:g?f.namedItem('guestPhone').value:undefined,
+      guestEmail:g?f.namedItem('guestEmail').value:undefined,
+    });
+    closeModal();
+    toast('Sent to the office for approval');
+    S.pending = await API.pending(); save(); render();
+  }catch(e){ err.style.display='block'; err.textContent=e.message||'Could not send that'; }
+}
+
+function openCancelRegistration(regId, name, eventName){
+  openModal(`<h3>Cancel ${esc(name)}?</h3>
+    <p class="lead">The office approves cancellations before they reach Zoho.</p>
+    <form onsubmit="submitCancellation(event,'${regId}')">
+      <div class="field"><label>Why are they cancelling?</label>
+        <textarea name="reason" rows="2" placeholder="Couldn't make it, double booked…"></textarea></div>
+      <input type="hidden" name="name" value="${esc(name)}">
+      <input type="hidden" name="eventName" value="${esc(eventName||'')}">
+      <div id="cancErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Keep it</button>
+      <button type="submit" class="btn danger">Request cancellation</button></div></form>`);
+}
+async function submitCancellation(ev, registrationId){
+  ev.preventDefault();
+  const f=ev.target.elements, err=document.getElementById('cancErr');
+  try{
+    await API.askCancellation({ registrationId,
+      name:f.namedItem('name').value, eventName:f.namedItem('eventName').value,
+      reason:f.namedItem('reason').value });
+    closeModal();
+    toast('Cancellation sent to the office');
+    S.pending = await API.pending(); save(); render();
+  }catch(e){ err.style.display='block'; err.textContent=e.message||'Could not send that'; }
+}
+
+function openAddLead(){
+  openModal(`<h3>Add a lead</h3>
+    <p class="lead">Someone you have met who might join. The office checks it before it goes into Zoho.</p>
+    <form onsubmit="submitLead(event)">
+      <div class="field"><label>First name</label><input name="firstName"></div>
+      <div class="field"><label>Last name</label><input name="lastName" required></div>
+      <div class="field"><label>Business</label><input name="company"></div>
+      <div class="field"><label>Phone</label><input name="phone" type="tel"></div>
+      <div class="field"><label>Email</label><input name="email" type="email"></div>
+      <div class="field"><label>Town</label><input name="city"></div>
+      <div class="field"><label>State</label><input name="state" maxlength="20"></div>
+      <div class="field"><label>Where did they come from?</label>
+        <select name="source">
+          <option>Referral</option><option>Local info meeting ad</option>
+          <option>Regional summit</option><option>Existing member</option><option>Other</option>
+        </select></div>
+      <div class="field"><label>Anything worth noting</label><textarea name="notes" rows="2"></textarea></div>
+      <div id="leadErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+      <button type="submit" class="btn primary">Send to the office</button></div></form>`);
+}
+async function submitLead(ev){
+  ev.preventDefault();
+  const f=ev.target.elements, err=document.getElementById('leadErr');
+  try{
+    await API.askLead({
+      firstName:f.namedItem('firstName').value, lastName:f.namedItem('lastName').value,
+      company:f.namedItem('company').value, phone:f.namedItem('phone').value,
+      email:f.namedItem('email').value, city:f.namedItem('city').value,
+      state:f.namedItem('state').value, source:f.namedItem('source').value,
+      notes:f.namedItem('notes').value,
+    });
+    closeModal();
+    toast('Lead sent to the office');
+    S.pending = await API.pending(); save(); render();
+  }catch(e){ err.style.display='block'; err.textContent=e.message||'Could not send that'; }
+}
+
+/* ── the office decides ── */
+async function approvePending(id){
+  try{
+    const out = await API.approvePending(id);
+    toast('Approved and written to Zoho');
+    S.pending = await API.pending(); save(); render();
+  }catch(e){
+    openModal(`<h3>Zoho wouldn't accept that</h3>
+      <p class="lead">${esc(e.message)}</p>
+      <div class="callout">The request is still waiting, so nothing has been lost. Fix the detail in Zoho
+        or send it back to the rep with a reason.</div>
+      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
+  }
+}
+function openRejectPending(id, summary){
+  openModal(`<h3>Send this back?</h3>
+    <p class="lead">${esc(summary)}</p>
+    <form onsubmit="submitRejectPending(event, ${id})">
+      <div class="field"><label>What should the rep change?</label>
+        <textarea name="reason" rows="2" required placeholder="Already registered, name spelled differently…"></textarea></div>
+      <div id="rejErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+      <button type="submit" class="btn danger">Send it back</button></div></form>`);
+}
+async function submitRejectPending(ev, id){
+  ev.preventDefault();
+  const reason = ev.target.elements.namedItem('reason').value;
+  const err = document.getElementById('rejErr');
+  try{
+    await API.rejectPending(id, reason);
+    closeModal(); toast('Sent back to the rep');
+    S.pending = await API.pending(); save(); render();
+  }catch(e){ err.style.display='block'; err.textContent=e.message; }
+}
+
+function pendingRows(list, canDecide){
+  const label = { registration:'Registration', cancellation:'Cancellation', lead:'New lead' };
+  return list.map(p=>`<div class="row">
+    <div class="row-main">
+      <div class="row-title">${esc(p.summary||label[p.kind]||p.kind)}</div>
+      <div class="row-sub">${esc(label[p.kind]||p.kind)} · ${esc(p.rep_name||'')} · ${fmt(String(p.created_at).slice(0,10))}
+        ${p.status==='rejected'&&p.note?` · <span style="color:var(--rust)">sent back: ${esc(p.note)}</span>`:''}
+        ${p.status==='approved'&&p.zoho_id?` · <span style="color:var(--primary)">in Zoho</span>`:''}
+        ${p.status==='pending'&&p.error?` · <span style="color:var(--rust)">last try failed: ${esc(p.error)}</span>`:''}</div>
+    </div>
+    <div class="row-actions">
+      ${p.status==='pending'
+        ? (canDecide
+            ? `<button class="btn sm primary" onclick="approvePending(${p.id})">Approve</button>
+               <button class="btn sm" onclick="openRejectPending(${p.id},'${esc(p.summary||'')}')">Send back</button>`
+            : `<span class="tag soon">waiting on the office</span>`)
+        : `<span class="tag ${p.status==='approved'?'ok':'later'}">${p.status==='approved'?'approved':'sent back'}</span>`}
+    </div></div>`).join('');
 }
 
 /* ══════════════════ MODALS ══════════════════ */
@@ -2205,7 +2653,7 @@ function navItems(){
     ['people','People','☰'],
     ['calendar','Calendar','▦'],
     ['timesheet','Hours','$'],
-    ['resources','Forms','⎘'],
+    ['resources','Web Toolbox','⎘'],
   ];
   const base = [
     ['dash','Overview','◉'],
@@ -2224,7 +2672,7 @@ function navItems(){
 function navGroups(){
   if(isRep()) return [
     ['', [['today','Today'],['rings','My Rings'],['people','People'],['calendar','Calendar']]],
-    ['Admin', [['timesheet','Hours & expenses'],['resources','Forms'],['callsheet','Call sheet']]],
+    ['Admin', [['timesheet','Hours & expenses'],['resources','Web Toolbox'],['callsheet','Call sheet']]],
   ];
   const office = [
     ['', [['dash','Overview'],['approvals','Approvals'],['calendar','Calendar']]],
@@ -2244,7 +2692,7 @@ function badgeFor(id){
   if(id==='dash') return S.rings.filter(r=>r.status==='pending').length;
   return 0;
 }
-function setView(v){ ui.view=v; ui.ringId=null; ui.memberId=null; ui.facId=null; ui.eventId=null; ui.q=''; closeSheet(); render(); }
+function setView(v){ ui.view=v; ui.ringId=null; ui.memberId=null; ui.facId=null; ui.eventId=null; ui.q=''; resetPaging(); closeSheet(); render(); }
 function openRing(id){ ui.ringId=id; ui.view='ringDetail'; closeSheet(); render(); }
 function openMember(id){ ui.memberId=id; ui.view='memberDetail'; closeSheet(); render(); }
 function openFac(id){ ui.facId=id; ui.view='facDetail'; closeSheet(); render(); }
@@ -2507,8 +2955,15 @@ const adapt = {
       memberNo: m.memberNo || null,
       business: m.business || '—',
       phone: m.phone || '',
+      mobile: m.mobile || '',
+      phone2: m.phone2 || '',
       email: m.email || '',
       region: m.region || '',
+      lifeStage: m.lifeStage || '',
+      memberType: m.memberType || '',
+      onlineMember: !!m.onlineMember,
+      address: m.address || '',
+      memberSince: m.memberSince || null,
       ringId,
       ringNames: m.ringNames || [],
       repId: (ringId && ringLookup && ringLookup[ringId]) || null,
@@ -2553,9 +3008,17 @@ const adapt = {
       phone: r.phone || '',
       email: r.email || '',
       registered: r.registeredOn || '',
-      attending: r.status === 'Attending' ? 'Yes' : r.status === 'Tentative' ? 'Maybe' : 'No',
+      attending: r.status === 'Attending' ? 'Yes'
+               : /cancel/i.test(r.status || '') ? 'Cancelled'
+               : r.status === 'Tentative' ? 'Maybe' : 'No',
+      attended: r.attended || '',
       guests: r.bringingGuest ? 1 : 0,
       guestName: r.guestName || '',
+      guestType: r.guestType || '',
+      guestBusiness: r.guestBusiness || '',
+      guestPhone: r.guestPhone || '',
+      guestEmail: r.guestEmail || '',
+      guestAttended: r.guestAttended || '',
     };
   },
 
@@ -2663,6 +3126,7 @@ async function loadFromServer(){
     settle(API.events(),            v => S.events      = (v||[]).map(adapt.event).filter(e=>e.date)),
     settle(API.time(),              v => S.timeEntries = (v||[]).map(adapt.timeEntry)),
     settle(API.expenses(),          v => S.expenses    = (v||[]).map(adapt.expense)),
+    settle(API.pending(),           v => S.pending     = v || []),
     settle(API.facilitators(),      v => {
       (v||[]).forEach(f=>{
         const at = S.facilitators.findIndex(x=>x.id===f.id);
@@ -2817,7 +3281,7 @@ function render(){
     </div></div>
 
     <div class="tabbar">${(isRep()
-      ? [['today','Today','◉'],['calendar','Calendar','▦'],['rings','Rings','◎'],['timesheet','Hours','$'],['resources','Forms','⎘']]
+      ? [['today','Today','◉'],['calendar','Calendar','▦'],['rings','Rings','◎'],['timesheet','Hours','$'],['resources','Web Toolbox','⎘']]
       : navItems().slice(0,5)).map(([id,label,ic])=>{
       const b=badgeFor(id);
       return `<button class="${ui.view===id?'active':''}" onclick="setView('${id}')">${b?`<span class="pill">${b}</span>`:''}<span style="font-size:15px">${ic}</span>${label}</button>`;
@@ -2978,22 +3442,121 @@ function vEventDetail() {
       ${e.notes ? `<div class="kv"><span class="k">Notes</span><span>${esc(e.notes)}</span></div>` : ''}
     </div>
     <div class="btnrow" style="margin-bottom:6px">
-      <button class="btn primary" onclick="openReg('${e.id}')">Add a registration</button>
+      <button class="btn primary" onclick="${API.live?`openAddRegistration('${e.id}')`:`openReg('${e.id}')`}">Add a registration</button>
       <button class="btn" onclick="exportRegs('${e.id}')">Export list</button>
-      <button class="btn" onclick="window.print()">Print sign-in sheet</button>
+      <button class="btn" onclick="printSignInSheet('${e.id}')">Print sign-in sheet</button>
     </div>
-    <h3 class="sub-h">Registrations · ${regs.length}</h3>
-    <div class="tbl-wrap"><table class="rep"><thead><tr>
-      <th>Name</th><th>Business</th><th>Phone</th><th>Email</th><th>Guests</th><th>Attending</th><th style="width:80px">Signed in</th>
-    </tr></thead><tbody>
-      ${regs.length ? regs.map(r => `<tr>
-        <td><strong>${esc(r.name)}</strong></td><td>${esc(r.business || '')}</td>
-        <td><a href="tel:${esc(r.phone)}">${esc(r.phone)}</a></td>
-        <td>${esc(r.email || '')}</td><td>${r.guests || 0}</td>
-        <td><span class="tag ${r.attending === 'Yes' ? 'ok' : r.attending === 'Maybe' ? 'soon' : 'later'}">${esc(r.attending)}</span></td>
-        <td class="writein"></td></tr>`).join('')
-        : `<tr><td colspan="7" style="padding:18px;color:var(--ink-muted)">Nobody has registered yet.</td></tr>`}
-    </tbody></table></div>`;
+    ${(() => {
+      const coming = attendeeList(e.id);
+      const guests = coming.filter(a=>a.guestOf);
+      const cancelled = regs.filter(r=>r.attending==='Cancelled');
+      return `
+      <h3 class="sub-h">Who's coming · ${coming.length}</h3>
+      <div class="row-sub" style="margin-bottom:10px">
+        ${regs.length - cancelled.length} registered${guests.length?` and ${guests.length} guest${guests.length===1?'':'s'}`:''}.
+        ${cancelled.length?`${cancelled.length} cancelled.`:''}</div>
+      ${coming.length ? coming.map(a=>`<div class="row">
+        <div class="row-main">
+          <div class="row-title">${a.name
+            ? esc(a.name)
+            : `<span style="color:var(--ink-muted)">Guest name not in Zoho yet</span>`}
+            ${a.guestOf ? `<span class="tag later">${esc(a.kind)}</span>` : ''}
+            ${a.attended==='Yes' ? `<span class="tag ok">attended</span>` : ''}</div>
+          <div class="row-sub">${a.guestOf
+            ? [`${esc(a.kind.toLowerCase())} of ${esc(a.guestOf)}`, a.business ? esc(a.business) : '', a.email ? esc(a.email) : ''].filter(Boolean).join(' · ')
+            : [a.business, a.email].filter(Boolean).map(esc).join(' · ') || '—'}
+            ${a.phone?` · <a href="tel:${esc(a.phone)}">${esc(a.phone)}</a>`:''}</div>
+        </div>
+        <div class="row-actions">
+          ${!a.guestOf && API.live ? `<button class="btn sm" onclick="openCancelRegistration('${a.key}','${esc(a.name)}','${esc(e.title)}')">Cancel</button>` : ''}
+        </div></div>`).join('')
+        : `<div class="empty">Nobody has registered yet.</div>`}
+      ${cancelled.length ? `<h3 class="sub-h">Cancelled</h3>
+        ${cancelled.map(r=>`<div class="row"><div class="row-main">
+          <div class="row-title" style="color:var(--ink-muted)">${esc(r.name)}</div>
+          <div class="row-sub">${esc(r.business||'')}</div></div>
+          <span class="tag later">cancelled</span></div>`).join('')}` : ''}
+      `;
+    })()}`;
+}
+
+/**
+ * A sign-in sheet to carry to the event.
+ *
+ * Every attendee gets a line with a box to tick — guests included, listed
+ * under the person who registered them, because at the door you are ticking
+ * people off, not registrations. Blank lines at the end for walk-ins.
+ */
+/**
+ * Everyone expected at an event: each registrant, and the guest they are
+ * bringing as their own line. At the door you tick off people, not
+ * registrations, so guests need to be visible in their own right.
+ */
+function attendeeList(eventId){
+  const out = [];
+  eventRegs(eventId).forEach(r => {
+    if(r.attending === 'Cancelled') return;      // cancelled people are not coming
+    out.push({
+      key: r.id, name: r.name, business: r.business || '',
+      phone: r.phone || '', email: r.email || '',
+      kind: 'Registered', attending: r.attending, attended: r.attended,
+    });
+    if(r.guests){
+      out.push({
+        key: r.id + '_g',
+        name: r.guestName || '',               // blank when Zoho has no name yet
+        business: r.guestBusiness || '',
+        phone: r.guestPhone || '', email: r.guestEmail || '',
+        kind: r.guestType || 'Guest',          // Spouse | Other Guest
+        guestOf: r.name, attended: r.guestAttended,
+      });
+    }
+  });
+  return out;
+}
+
+function printSignInSheet(eventId){
+  const e = S.events.find(x => x.id === eventId);
+  if(!e) return;
+  const regs = eventRegs(eventId);
+
+  const lines = attendeeList(eventId).map(a => ({
+    name: a.name,
+    detail: a.guestOf ? `${a.kind.toLowerCase()} of ${a.guestOf}` : (a.business || ''),
+    kind: a.guestOf ? 'Guest' : 'Registered',
+  }));
+
+  const heads = lines.length;
+  const blanks = Math.max(6, 28 - heads);
+
+  const row = (l, i) => `<tr>
+    <td style="width:34px;text-align:center;border:1.4px solid #333;height:30px;font-size:15px">&#9744;</td>
+    <td style="padding:5px 9px">${l.name ? `<strong>${esc(l.name)}</strong>` : '<span style="color:#999">_______________________</span>'}
+      ${l.kind === 'Guest' ? '<span style="font-size:10.5px;color:#666"> · guest</span>' : ''}</td>
+    <td style="padding:5px 9px;font-size:11.5px;color:#555">${esc(l.detail)}</td>
+    <td style="padding:5px 9px;border-bottom:1px solid #bbb;width:150px"></td>
+  </tr>`;
+
+  openPrintable(`Sign-in — ${e.title}`, `
+    <h1 style="margin:0 0 3px">${esc(e.title)}</h1>
+    <p style="margin:0 0 4px;color:#555">${fmt(e.date)}${e.time ? ' · ' + esc(e.time) : ''}${e.location ? ' · ' + esc(e.location) : ''}</p>
+    <p style="margin:0 0 14px;color:#555;font-size:12px">
+      ${regs.length} registered · ${heads} expected including guests</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="border-bottom:2px solid #333">
+        <th style="width:34px;padding:5px;text-align:center">In</th>
+        <th style="text-align:left;padding:5px 9px">Name</th>
+        <th style="text-align:left;padding:5px 9px">Business / notes</th>
+        <th style="text-align:left;padding:5px 9px">Signature</th>
+      </tr></thead>
+      <tbody>
+        ${lines.map(row).join('')}
+        ${Array.from({length: blanks}).map(() => row({name:'',detail:'',kind:'Walk-in'})).join('')}
+      </tbody>
+    </table>
+    <p style="margin-top:14px;font-size:11px;color:#777">
+      Tick the box as each person arrives. Blank lines are for walk-ins —
+      please add their name and business so the office can follow up.</p>`);
 }
 
 /* ══════════════════ MEMBERS NOT IN A GROWTH RING ══════════════════ */
@@ -3049,8 +3612,16 @@ function vResources() {
     </div></div>`;
   };
 
-  return `<div class="section-head"><div><h2>Forms and resources</h2>
-    <div class="sub">Everything you need to hand, in one place.</div></div></div>
+  return `<div class="section-head"><div><h2>Web Toolbox</h2>
+    <div class="sub">Everything you need to hand, in one place — forms, folders and your role.</div></div></div>
+    ${(() => {
+      const missing = [...RESOURCES.folders, ...RESOURCES.docs].filter(f => !S.settings.links[f.key]);
+      if(!missing.length || !isOffice()) return '';
+      return `<div class="callout"><strong>${missing.length} link${missing.length===1?'':'s'} not set yet</strong>
+        Paste the Google Drive addresses in Settings and they appear here for every rep straight away.
+        <div class="btnrow" style="margin-top:9px">
+          <button class="btn sm" onclick="setView('settings')">Set them now</button></div></div>`;
+    })()}
 
     <h3 class="sub-h">Forms to fill in</h3>
     <div class="callout info"><strong>Printable now</strong>Each form opens as a print-ready page — choose "Save as PDF" in the print dialog, or print it to carry. Symbiz's official versions replace these once Keturah sends them.</div>
@@ -3933,8 +4504,10 @@ const CHECKS = [
       S.rings.every(r => !r.facId || !!fac(r.facId)) },
   { group: 'Data', name: 'Every ring is assigned to a real rep', run: () =>
       S.rings.every(r => PEOPLE.some(p => p.id === r.repId)) },
-  { group: 'Data', name: 'Every member belongs to a real rep', run: () =>
-      S.members.every(m => PEOPLE.some(p => p.id === m.repId)) },
+  { group: 'Data', name: 'Every member in a ring belongs to a real rep', run: () =>
+      // Members with no ring have no rep by definition — that is the whole
+      // point of the "No ring yet" screen, not a data fault.
+      S.members.filter(m => m.ringId).every(m => PEOPLE.some(p => p.id === m.repId)) },
   { group: 'Data', name: 'Members in a ring point at a ring that exists', run: () =>
       S.members.every(m => !m.ringId || !!ring(m.ringId)) },
   { group: 'Data', name: 'No ring is over its own size limit', run: () =>
@@ -4004,14 +4577,16 @@ const CHECKS = [
              vCalendar().length > 200; },
     why: 'Keturah asked for info meetings, expos and summits on one calendar.' },
   { group: 'Requested features', name: '3. Registrations carry name, phone and email', run: () => {
-      // Live registrations load only when an event is opened, so this checks the
-      // screen is built to show contact details, plus any already loaded.
-      const canShow = vEventDetail.toString();
-      const hasColumns = /Phone/.test(canShow) && /Email/.test(canShow) && /tel:/.test(canShow);
+      // Live registrations load only when an event is opened, so this checks
+      // the screen is built to show contact details for registrants AND the
+      // guests they bring — Keturah asked for both.
+      const src = attendeeList.toString() + vEventDetail.toString();
+      const hasContact = /phone/i.test(src) && /email/i.test(src) && /tel:/.test(src);
+      const hasGuests = /guestOf/.test(src) && /guestName/.test(attendeeList.toString());
       const loaded = S.registrations || [];
       const shapeOk = loaded.length === 0 || loaded.every(r => 'name' in r && 'phone' in r);
-      return hasColumns && shapeOk; },
-    why: 'Keturah asked for registrant contact details, not just a headcount.' },
+      return hasContact && hasGuests && shapeOk; },
+    why: 'Keturah asked for registrant contact details and guest names, not just a headcount.' },
   { group: 'Requested features', name: '4. Growth Ring visit schedule', run: () => {
       // Having no visits booked is a data state, not a fault. What must hold is
       // that the screen builds and shows whatever is scheduled.
