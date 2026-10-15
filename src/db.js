@@ -138,6 +138,24 @@ CREATE TABLE IF NOT EXISTS expenses (
   approved_by   TEXT
 );
 
+CREATE TABLE IF NOT EXISTS pending_writes (
+  id          SERIAL PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  payload     JSONB NOT NULL,
+  rep_id      TEXT NOT NULL,
+  rep_name    TEXT,
+  rep_zoho_id TEXT,
+  summary     TEXT,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  zoho_id     TEXT,
+  error       TEXT,
+  note        TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at  TIMESTAMPTZ,
+  decided_by  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_writes (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries (user_id, entry_date);
 CREATE INDEX IF NOT EXISTS idx_exp_user  ON expenses (user_id, entry_date);
 CREATE INDEX IF NOT EXISTS idx_queue_status ON sync_queue (status, created_at);
@@ -171,7 +189,11 @@ const q = {
   userById:    id    => one('SELECT * FROM users WHERE id = $1', [id]),
   allReps:     ()    => query("SELECT * FROM users WHERE role = 'rep' AND active = TRUE ORDER BY name"),
   allOffice:   ()    => query("SELECT * FROM users WHERE role IN ('staff','admin') AND active = TRUE"),
-  allUsers:    ()    => query('SELECT id,email,name,role,region,active,phone,zoho_owner_id FROM users ORDER BY role, name'),
+  // Active accounts only. A deactivated one must disappear from the list and
+  // free its Zoho contact so the person can be re-added.
+  allUsers:    ()    => query('SELECT id,email,name,role,region,active,phone,zoho_owner_id FROM users WHERE active = TRUE ORDER BY role, name'),
+  everyUser:   ()    => query('SELECT id,email,name,role,region,active,phone,zoho_owner_id FROM users ORDER BY role, name'),
+  hardDelete:  id    => query('DELETE FROM users WHERE id = $1', [id]),
   touchLogin:  id    => query('UPDATE users SET last_login_at = now() WHERE id = $1', [id]),
   insertUser:  u     => query(
     `INSERT INTO users (id,email,name,phone,role,region,password_hash,zoho_owner_id)
@@ -230,6 +252,22 @@ const q = {
   approveExpense: (id, by) => query(
     "UPDATE expenses SET status='Approved', approved_at=now(), approved_by=$2 WHERE id = $1", [id, by]),
   markExpensesSent: () => query("UPDATE expenses SET status='Reimbursed' WHERE status='Approved'"),
+
+  /* ── things a rep has asked to put into Zoho, awaiting the office ── */
+  addWriteRequest: p => query(
+    `INSERT INTO pending_writes (kind,payload,rep_id,rep_name,rep_zoho_id,summary)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [p.kind, JSON.stringify(p.payload), p.repId, p.repName, p.repZohoId || null, p.summary]),
+  writeRequestsFor: repId => query(
+    'SELECT * FROM pending_writes WHERE rep_id = $1 ORDER BY created_at DESC LIMIT 200', [repId]),
+  allWriteRequests: () => query(
+    "SELECT * FROM pending_writes ORDER BY (status='pending') DESC, created_at DESC LIMIT 300"),
+  oneWriteRequest: id => one('SELECT * FROM pending_writes WHERE id = $1', [id]),
+  markWriteRequest: (id, status, by, extra = {}) => query(
+    `UPDATE pending_writes SET status=$2, decided_at=now(), decided_by=$3,
+            zoho_id=COALESCE($4,zoho_id), error=$5, note=COALESCE($6,note)
+     WHERE id = $1`,
+    [id, status, by, extra.zohoId || null, extra.error || null, extra.note || null]),
 
   logSend: (userId, kind, channel, subject, ok, error) => query(
     'INSERT INTO sent_log (user_id,kind,channel,subject,ok,error) VALUES ($1,$2,$3,$4,$5,$6)',
