@@ -578,6 +578,14 @@ const KEY = 'rephub_v3_symbiz';
  */
 const STORE_VERSION = 'prod-1';
 
+/**
+ * Which build is actually running.
+ *
+ * Shown in Settings and System check. Without it there is no way to tell a
+ * missing feature from an undeployed file, which has cost real time.
+ */
+const BUILD = '2026-10-15 08:01 UTC';
+
 /** Filled from the server at sign-in. Never hardcoded. */
 const PEOPLE = [];
 const OUTCOMES = ['Connected','No answer','Left voicemail','Rescheduled'];
@@ -2317,6 +2325,7 @@ function vSettings(){
   const s=S.settings;
   return `<div class="section-head"><div><h2>Settings</h2><div class="sub">Defaults for new rings and how reminders behave.</div></div>
     ${API.live && isAdmin() ? `<button class="btn" onclick="openMailCheck()">Check email</button>` : ''}</div>
+    <div class="row-sub" style="margin:-6px 0 12px">Build ${esc(BUILD)}</div>
     ${API.live && isAdmin() ? `<div class="callout" style="font-size:12.5px">
       <strong>Not receiving emails?</strong>
       Sign-in links, the accounting summary and rep welcome emails all need SMTP settings.
@@ -4342,18 +4351,20 @@ function vResources() {
     const url = stored(r.id);
     return `<div class="row">
     <div class="row-main"><div class="row-title">${esc(r.name)}</div>
-      <div class="row-sub">${esc(r.note)}${!url && kind !== 'form' ? ' · link not added yet' : ''}</div></div>
+      <div class="row-sub">${esc(r.note)}${!url && kind === 'folder' ? ' · link not added yet' : ''}${!url && kind === 'doc' ? ' · built-in version until Symbiz sends theirs' : ''}</div></div>
     <div class="row-actions">
       ${url ? `<a class="btn sm ${kind === 'form' ? 'primary' : ''}" href="${esc(url)}" target="_blank" rel="noopener">Open</a>` : ''}
       ${kind === 'form' ? `<button class="btn sm ${url ? '' : 'primary'}" onclick="blankFormPDF('${r.id}')">${url ? 'Blank PDF' : 'Open PDF'}</button>` : ''}
-      ${!url && kind !== 'form' ? `<button class="btn sm" onclick="${isAdmin() ? `setView('settings')` : `toast('Ask the office to add this link')`}">${isAdmin() ? 'Add link' : 'Not set'}</button>` : ''}
+      ${kind === 'doc' ? `<button class="btn sm ${url ? '' : 'primary'}" onclick="blankFormPDF('${r.id}')">${url ? 'Built-in version' : 'Read it'}</button>` : ''}
+      ${!url && kind === 'folder' ? `<button class="btn sm" onclick="${isAdmin() ? `setView('settings')` : `toast('Ask the office to add this link')`}">${isAdmin() ? 'Add link' : 'Not set'}</button>` : ''}
     </div></div>`;
   };
 
   return `<div class="section-head"><div><h2>Web Toolbox</h2>
     <div class="sub">Everything you need to hand, in one place — forms, folders and your role.</div></div></div>
     ${(() => {
-      const missing = [...RESOURCES.folders, ...RESOURCES.docs].filter(f => !S.settings.links[f.key]);
+      // These carry an `id`, not a `key` — the old check counted every one as missing.
+      const missing = [...RESOURCES.folders, ...RESOURCES.docs].filter(f => !stored(f.id));
       if(!missing.length || !isOffice()) return '';
       return `<div class="callout"><strong>${missing.length} link${missing.length===1?'':'s'} not set yet</strong>
         Paste the Google Drive addresses in Settings and they appear here for every rep straight away.
@@ -4369,6 +4380,8 @@ function vResources() {
     <div class="card" style="padding:4px 15px">${RESOURCES.folders.map(f => link(f, 'folder')).join('')}</div>
 
     <h3 class="sub-h">Your role</h3>
+    <div class="callout info"><strong>Readable now</strong>Until Symbiz's own versions are added, these open as
+      print-ready pages drawn from how the role was described when the portal was set up.</div>
     <div class="card" style="padding:4px 15px">${RESOURCES.docs.map(f => link(f, 'doc')).join('')}</div>
 
     <h3 class="sub-h">Print from the app</h3>
@@ -5279,6 +5292,108 @@ function timesheetPDF(repId, month) {
 
 /** Blank forms reps can print today, before the official PDFs are supplied. */
 function blankFormPDF(which) {
+  /**
+   * Built-in role documents.
+   *
+   * Written from how Jeremy and Mel described the job when the portal was set
+   * up. They are a stand-in: the moment Keturah adds the real Drive links in
+   * Settings, those take over and these become the fallback.
+   */
+  if (which === 'doc_job') {
+    return openPrintable('Regional Rep — job description', `
+      ${orgHeader('Regional Rep', 'What the role covers')}
+      <p style="font-size:13px;line-height:1.65">A Regional Rep is the person a Growth Ring
+      turns to. You start groups, keep them healthy, and make sure nobody drifts away unnoticed.</p>
+
+      <h2 style="font-size:14px;margin:20px 0 6px">What you do</h2>
+      <ul style="font-size:12.5px;line-height:1.8;padding-left:18px">
+        <li><strong>Conduct launch meetings</strong> for new Growth Rings, and sit in on the first
+          group meeting so the facilitator starts with support rather than alone.</li>
+        <li><strong>Organise new Growth Rings</strong> — gather enough members, place them well,
+          and agree a meeting rhythm everyone can keep.</li>
+        <li><strong>Serve current members and groups</strong> in your region.</li>
+        <li><strong>Coordinate requests to join</strong>, placing new members into a ring that fits.</li>
+        <li><strong>Conduct exit interviews</strong> when a member discontinues, so Symbiz learns
+          why rather than guessing.</li>
+      </ul>
+
+      <h2 style="font-size:14px;margin:20px 0 6px">How often you make contact</h2>
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px">
+        <tr style="border-bottom:1px solid #ddd"><td style="padding:7px 0"><strong>Facilitators</strong></td>
+          <td style="padding:7px 0">Quarterly, or at least twice a year</td></tr>
+        <tr style="border-bottom:1px solid #ddd"><td style="padding:7px 0"><strong>Members</strong></td>
+          <td style="padding:7px 0">At least once a year</td></tr>
+        <tr style="border-bottom:1px solid #ddd"><td style="padding:7px 0"><strong>Group visits</strong></td>
+          <td style="padding:7px 0">Sit in with each ring once or twice a year</td></tr>
+        <tr><td style="padding:7px 0"><strong>Exit interviews</strong></td>
+          <td style="padding:7px 0">Whenever someone leaves</td></tr>
+      </table>
+
+      <h2 style="font-size:14px;margin:20px 0 6px">What is expected of you</h2>
+      <ul style="font-size:12.5px;line-height:1.8;padding-left:18px">
+        <li>Log each call so the next one is scheduled for you — a call you don't record is a
+          call the office cannot see.</li>
+        <li>Record your hours and any expenses as you go, rather than at month end.</li>
+        <li>Tell the office early when a group is struggling. A ring rarely fails suddenly.</li>
+      </ul>
+
+      <p style="font-size:11px;color:#777;margin-top:26px">
+        This is the working description held in the Rep Hub. Symbiz's signed version replaces it
+        once the office adds the link.</p>`);
+  }
+
+  if (which === 'doc_manual') {
+    return openPrintable('Rep manual — how we do things', `
+      ${orgHeader('Rep manual', 'How we do things')}
+
+      <h2 style="font-size:14px;margin:16px 0 6px">Every week</h2>
+      <p style="font-size:12.5px;line-height:1.7">Open <strong>Today</strong>. It shows who is due
+      a call and who is overdue. Work down the list. Tap a name to ring them, and when you come
+      back the app asks how it went — answer honestly, including "no answer".</p>
+
+      <h2 style="font-size:14px;margin:18px 0 6px">Making a call</h2>
+      <ul style="font-size:12.5px;line-height:1.8;padding-left:18px">
+        <li><strong>Connected</strong> — the next call is scheduled on the normal cycle.</li>
+        <li><strong>No answer</strong> or <strong>left voicemail</strong> — you'll be reminded in a
+          few days. This does <em>not</em> push the call out by a year, so log it truthfully.</li>
+        <li><strong>Rescheduled</strong> — comes back in about a week.</li>
+      </ul>
+      <p style="font-size:12.5px;line-height:1.7">Write a line of notes. In six months neither you
+      nor the office will remember the conversation otherwise.</p>
+
+      <h2 style="font-size:14px;margin:18px 0 6px">Visiting a group</h2>
+      <p style="font-size:12.5px;line-height:1.7">Aim to sit in with each ring once or twice a
+      year. Afterwards record the meeting with who was there and who wasn't — attendance over time
+      is the clearest sign of whether a ring is thriving.</p>
+
+      <h2 style="font-size:14px;margin:18px 0 6px">Starting a new ring</h2>
+      <p style="font-size:12.5px;line-height:1.7">Submit it from <strong>My Rings</strong>. The
+      office approves it before it becomes active, so a half-formed group never looks official.
+      Agree a meeting rhythm at the launch meeting, not later.</p>
+
+      <h2 style="font-size:14px;margin:18px 0 6px">When someone leaves</h2>
+      <p style="font-size:12.5px;line-height:1.7">Use the exit interview form. Ask what changed and
+      whether they'd consider returning. This is how Symbiz learns, so take it seriously even when
+      it's uncomfortable.</p>
+
+      <h2 style="font-size:14px;margin:18px 0 6px">Hours and expenses</h2>
+      <p style="font-size:12.5px;line-height:1.7">Log them as they happen. Photograph receipts at
+      the time — the app takes a photo or a PDF. The office approves, then it goes to accounting
+      once a month.</p>
+
+      <h2 style="font-size:14px;margin:18px 0 6px">Working without signal</h2>
+      <p style="font-size:12.5px;line-height:1.7">The app keeps working. Anything you log is saved
+      on the device and sent when you're back in range. You can also print a call sheet to carry.</p>
+
+      <h2 style="font-size:14px;margin:18px 0 6px">If you're stuck</h2>
+      <p style="font-size:12.5px;line-height:1.7">Contact the office — the number is on the sign-in
+      screen.</p>
+
+      <p style="font-size:11px;color:#777;margin-top:24px">
+        Working version held in the Rep Hub, replaced by Symbiz's own manual once the office adds
+        the link in Settings.</p>`);
+  }
+
   const line = (label, n = 1) => `<p style="font-size:12px;margin:14px 0 0"><strong>${label}</strong></p>` +
     Array.from({ length: n }, () => `<div class="blank" style="border-bottom:1px solid #b9bfb2;margin-top:12px"></div>`).join('');
 
@@ -5578,6 +5693,13 @@ function vChecks() {
       <div><h2>System check</h2>
       <div class="sub">Runs real checks against the live app, right now. Nothing here is a recorded result.</div></div>
       <button class="btn primary" onclick="runChecks()">${r ? 'Run again' : 'Run all checks'}</button></div>
+
+    <div class="card flat" style="font-size:12.5px;margin-bottom:12px">
+      <div class="kv"><span class="k">Build running</span><span>${esc(BUILD)}</span></div>
+      <div class="kv"><span class="k">Connected to a server</span><span>${API.live?'Yes':'No — working on this device'}</span></div>
+      <div class="kv"><span class="k">Zoho</span><span>${zohoConnected?'Connected':'Not connected'}</span></div>
+      <div class="kv"><span class="k">Writing to Zoho</span><span>${API.readOnly?'Read-only':'On'}</span></div>
+    </div>
 
     ${r ? `<div class="stats">
       <div class="stat"><div class="n" style="color:var(--primary)">${passed}</div><div class="l">Passed</div></div>
