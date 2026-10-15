@@ -162,6 +162,47 @@ const toZoho = {
     Notes: m.notes || '',
   }),
 
+  /**
+   * Event_Registrations. Field names and picklist values read from the live
+   * org: Registration_Status is "Attending" or "Canceled" (one L, their
+   * spelling), and Registrant is "Member" or "Lead".
+   */
+  registration: r => ({
+    Event: r.eventId ? { id: r.eventId } : undefined,
+    Registrant: r.registrantType || (r.contactId ? 'Member' : 'Lead'),
+    Registrant_Name: r.contactId ? { id: r.contactId } : undefined,
+    Registrant_Name1: r.contactId ? undefined : (r.name || ''),
+    Organization_Name: r.accountId ? { id: r.accountId } : undefined,
+    Lead_Registrant_Organization: r.accountId ? undefined : (r.business || ''),
+    Phone: r.phone || '',
+    Guest_Email: r.email || '',
+    Registration_Status: r.status || 'Attending',
+    Bringing_Guest: r.bringingGuest ? 'Yes' : 'No',
+    Guest_First_Name: r.guestFirstName || undefined,
+    Guest_Last_Name: r.guestLastName || undefined,
+    Guest_Type: r.guestType || undefined,            // Spouse | Other Guest
+    Guest_Organization: r.guestBusiness || undefined,
+    Guest_Phone: r.guestPhone || undefined,
+    Guest_City: r.guestCity || undefined,
+    Registration_Date: r.registeredOn || today(),
+    Address_1_City: r.city || undefined,
+    Address_1_State_Province: r.state || undefined,
+  }),
+
+  /** Leads. Their pipeline starts at "Initial Contact". */
+  lead: l => ({
+    Last_Name: l.lastName || l.name || 'Unknown',
+    First_Name: l.firstName || undefined,
+    Company: l.company || 'Not given',
+    Email: l.email || undefined,
+    Phone: l.phone || undefined,
+    City: l.city || undefined,
+    State: l.state || undefined,
+    Lead_Source: l.source || 'Referral',
+    Lead_Status: l.status || 'Initial Contact',
+    Description: l.notes || undefined,
+  }),
+
   /** Contacts. Deliberately narrow — we do not rewrite member master data. */
   member: m => ({
     Last_Name: m.name,
@@ -219,8 +260,20 @@ const fromZoho = {
     memberNo: z.Member_Id ?? null,
     email: z.Email || '',
     phone: z.Phone || '',
+    mobile: z.Mobile || '',
+    phone2: z.Phone_2 || '',
     business: z.Account_Name?.name || '',
     region: z.Mailing_State || '',
+    // Mel asked for these on the call — the rep sees who they are about to
+    // meet, not just a name and a number.
+    lifeStage: z.Life_Stage || '',
+    memberType: z.Contact_Type || '',
+    onlineMember: z.Online_Member === 'Yes',
+    street: z.Mailing_Street || '',
+    city: z.Mailing_City || '',
+    zip: z.Mailing_Zip || '',
+    address: [z.Mailing_Street, z.Mailing_City, z.Mailing_State, z.Mailing_Zip].filter(Boolean).join(', '),
+    memberSince: z.Member_Since_Date || null,
     isFacilitator: z.Is_Facilitator === 'Yes',
     status: z.Status || 'Active',
     active: z.Active !== false,
@@ -274,6 +327,12 @@ const fromZoho = {
     attended: z.Attended || '',
     bringingGuest: z.Bringing_Guest === 'Yes',
     guestName: [z.Guest_First_Name, z.Guest_Last_Name].filter(Boolean).join(' '),
+    guestType: z.Guest_Type || '',          // Spouse | Other Guest
+    guestBusiness: z.Guest_Organization || '',
+    guestPhone: z.Guest_Phone || '',
+    guestEmail: z.Guest_Email || '',
+    guestCity: z.Guest_City || '',
+    guestAttended: z.Guest_Attended || '',
     registeredOn: z.Registration_Date || null,
     registrantType: z.Registrant || '',
     city: z.Address_1_City || '',
@@ -289,8 +348,15 @@ const RING_FIELDS = `id, Name, Facilitator, Regional_Rep, Region_Lookup, of_Memb
   Target_Group_Size, Status, Active, Group_Type, Meeting_Frequency, Meeting_Format,
   Meeting_Date_Time, Next_Meeting_Date_Time, Last_Rep_Visit, Next_Rep_Visit, GR_Group_Id`;
 
-const MEMBER_FIELDS = `id, Full_Name, Member_Id, Email, Phone, Account_Name,
-  Mailing_State, Is_Facilitator, Status, Active, Paid_Membership_StartDate, Days_without_Group`;
+/**
+ * What a rep needs about a member before a call or a visit.
+ * Life_Stage (Seedling / Sapling / Mighty Oak / Bookshelf) and the full
+ * address were Mel's asks on the October call; both already exist in Zoho.
+ */
+const MEMBER_FIELDS = `id, Full_Name, Member_Id, Email, Phone, Mobile, Phone_2, Account_Name,
+  Mailing_State, Mailing_Street, Mailing_City, Mailing_Zip, Is_Facilitator, Status, Active,
+  Paid_Membership_StartDate, Member_Since_Date, Days_without_Group, Life_Stage, Contact_Type,
+  Online_Member`;
 
 const esc = v => String(v == null ? '' : v).replace(/'/g, '');
 
@@ -354,11 +420,19 @@ const queries = {
      from ${M.EVENT} where Show_on_Portal = true order by Event_Date_and_Time desc limit 200`,
 
   /** Registrations for one event — request #3, with contact details. */
+  /**
+   * Registrations for an event, with the guest each person is bringing.
+   *
+   * Guests live in flat Guest_* fields on the registration, not only in the
+   * subform — and those flat fields are populated, so COQL reads them fine.
+   * Guest_Type says whether it is a spouse or another guest.
+   */
   registrationsFor: eventId =>
     `select id, Name, Event, Registrant_Name, Registrant_Name1, Organization_Name,
             Lead_Registrant_Organization, Phone, Guest_Email, Registration_Status, Attended,
-            Bringing_Guest, Guest_First_Name, Guest_Last_Name, Registration_Date, Registrant,
-            Address_1_City, Address_1_State_Province
+            Bringing_Guest, Guest_First_Name, Guest_Last_Name, Guest_Organization, Guest_Phone,
+            Guest_Email, Guest_Type, Guest_Attended, Guest_City,
+            Registration_Date, Registrant, Address_1_City, Address_1_State_Province
      from ${M.REGISTRATION} where Event = '${esc(eventId)}' limit 200`,
 
   /**
