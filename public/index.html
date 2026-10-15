@@ -4023,8 +4023,12 @@ async function checkSetup(){
       </div></div>`;
     return;
   }
-  slot.innerHTML = `<div class="row-sub" style="margin-top:12px;text-align:center">
-    Zoho ${st.zohoReady ? 'connected' : 'not connected yet'}</div>`;
+  // Say WHY when it isn't connected. "Not connected yet" with no reason sent
+  // us checking the CRM when the token was simply stale.
+  slot.innerHTML = st.zohoReady
+    ? `<div class="row-sub" style="margin-top:12px;text-align:center">Zoho connected${st.zohoOrg?` · ${esc(st.zohoOrg)}`:''}</div>`
+    : `<div class="row-sub" style="margin-top:12px;text-align:center">
+         Zoho not connected${st.zohoError?` — ${esc(st.zohoError)}`:''}</div>`;
 }
 
 function openFirstAdmin(){
@@ -4844,7 +4848,11 @@ function vEventDetail() {
 
       <h3 class="sub-h">Coming · ${coming.length}</h3>
       ${coming.length ? `<div class="card" style="padding:4px 14px">${coming.map(person).join('')}</div>`
-        : (API.live && e.registrationCount
+        : regsError[e.id]
+            ? `<div class="callout rust"><strong>Couldn't load the registrations</strong>${esc(regsError[e.id])}
+               <div class="btnrow" style="margin-top:9px">
+                 <button class="btn sm" onclick="delete regsError['${e.id}'];loadRegs('${e.id}');renderContent()">Try again</button></div></div>`
+          : (API.live && e.registrationCount
             ? `<div class="empty">Loading ${e.registrationCount} registration${e.registrationCount===1?'':'s'}…</div>`
             : `<div class="empty">Nobody has registered yet.</div>`)}
 
@@ -5572,7 +5580,7 @@ function submitPlaceMember(e, memberId) {
 }
 
 /** Fetch an event's registrations in the background for the day panel. */
-let regsLoading = {};
+let regsLoading = {}, regsError = {};
 function loadRegs(eventId){
   if(regsLoading[eventId]) return;
   regsLoading[eventId] = true;
@@ -5581,26 +5589,22 @@ function loadRegs(eventId){
       S.registrations = S.registrations.filter(r=>r.eventId!==eventId)
         .concat((rows||[]).map(adapt.registration));
       save();
-      if(ui.view==='calendar') renderContent();
+      // Redraw wherever the person actually is. This only checked the
+      // calendar, so opening an event left "Loading 46 registrations…" on
+      // screen forever even though they had arrived.
+      if(ui.view === 'calendar' || ui.view === 'eventDetail') renderContent();
     })
-    .catch(()=>{})
+    .catch(e=>{
+      regsError[eventId] = e.message || 'Could not load the registrations';
+      if(ui.view === 'calendar' || ui.view === 'eventDetail') renderContent();
+    })
     .finally(()=>{ regsLoading[eventId] = false; });
 }
 
 function openEvent(id) {
   ui.eventId = id; ui.view = 'eventDetail'; closeSheet(); render();
-  // Registrations are fetched per event rather than up front — there are
-  // hundreds across the network and only one event is ever on screen.
-  if (API.live && !S.registrations.some(r => r.eventId === id)) {
-    API.registrations(id)
-      .then(rows => {
-        S.registrations = S.registrations.filter(r => r.eventId !== id)
-          .concat((rows || []).map(adapt.registration));
-        save();
-        if (ui.view === 'eventDetail' && ui.eventId === id) renderContent();
-      })
-      .catch(e => console.warn('[registrations]', e.message));
-  }
+  // The view calls loadRegs itself, which also guards against a second
+  // request while one is in flight. Fetching here as well doubled every load.
 }
 
 /* ══════════════════ RECEIPT ATTACHMENTS ══════════════════
