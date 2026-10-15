@@ -416,7 +416,8 @@ const queries = {
   portalEvents: () =>
     `select id, Name, Event_Type, Event_Date_and_Time, Event_Venue, Event_City, Event_State,
             Event_Format, Event_Status, Regional_Rep, Region, Registration_Count,
-            Attendance_Count, Registration_Deadline, Meeting_Join_Link, Show_on_Portal
+            Total_Registered_People, Attendance_Count, Registration_Deadline,
+            Meeting_Join_Link, Show_on_Portal
      from ${M.EVENT} where Show_on_Portal = true order by Event_Date_and_Time desc limit 200`,
 
   /** Registrations for one event — request #3, with contact details. */
