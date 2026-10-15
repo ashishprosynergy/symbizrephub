@@ -579,6 +579,133 @@ r.post('/cycle/start', auth.authRequired, auth.requireOffice, writesAllowed, wra
   res.json({ created, failed: records.length - created, from: startIso, perWeek });
 }));
 
+/* ═══════════ THINGS REPS ASK TO PUT INTO ZOHO ═══════════
+ * Reps can register someone for an event, cancel a registration, or add a
+ * lead. None of it reaches the CRM directly: it waits here until the office
+ * approves, which is what Keturah asked for so reps cannot corrupt the data.
+ */
+
+/** What this rep has submitted, or everything if the office is asking. */
+r.get('/pending', auth.authRequired, wrap(async (req, res) => {
+  const rows = req.user.role === 'rep'
+    ? await q.writeRequestsFor(req.user.id)
+    : await q.allWriteRequests();
+  res.json(rows);
+}));
+
+/** A rep registers someone for an event. */
+r.post('/pending/registration', auth.authRequired, wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!b.eventId) return res.status(400).json({ error: 'Which event?' });
+  if (!b.name && !b.contactId) return res.status(400).json({ error: 'A name is required' });
+
+  const event = await zoho.getRecord(M.EVENT, b.eventId).catch(() => null);
+  const eventName = event ? event.Name : 'an event';
+
+  const out = await q.addWriteRequest({
+    kind: 'registration',
+    payload: b,
+    repId: req.user.id,
+    repName: req.user.name,
+    repZohoId: req.user.zoho_owner_id,
+    summary: `Register ${b.name || 'a member'} for ${eventName}` +
+             (b.bringingGuest ? ' (bringing a guest)' : ''),
+  });
+  await audit(req.user.id, 'pending.registration', { eventId: b.eventId }, req.ip);
+  res.status(201).json({ id: out[0]?.id, status: 'pending' });
+}));
+
+/** A rep asks for a registration to be cancelled. */
+r.post('/pending/cancellation', auth.authRequired, wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!b.registrationId) return res.status(400).json({ error: 'Which registration?' });
+  const out = await q.addWriteRequest({
+    kind: 'cancellation',
+    payload: b,
+    repId: req.user.id,
+    repName: req.user.name,
+    repZohoId: req.user.zoho_owner_id,
+    summary: `Cancel ${b.name || 'a registration'}${b.eventName ? ' for ' + b.eventName : ''}` +
+             (b.reason ? ` — ${b.reason}` : ''),
+  });
+  await audit(req.user.id, 'pending.cancellation', { registrationId: b.registrationId }, req.ip);
+  res.status(201).json({ id: out[0]?.id, status: 'pending' });
+}));
+
+/** A rep adds a lead they have met. */
+r.post('/pending/lead', auth.authRequired, wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!b.lastName && !b.name) return res.status(400).json({ error: 'A name is required' });
+  const out = await q.addWriteRequest({
+    kind: 'lead',
+    payload: b,
+    repId: req.user.id,
+    repName: req.user.name,
+    repZohoId: req.user.zoho_owner_id,
+    summary: `Add lead ${[b.firstName, b.lastName || b.name].filter(Boolean).join(' ')}` +
+             (b.company ? ` of ${b.company}` : ''),
+  });
+  await audit(req.user.id, 'pending.lead', { name: b.lastName || b.name }, req.ip);
+  res.status(201).json({ id: out[0]?.id, status: 'pending' });
+}));
+
+/**
+ * The office approves, and only now does anything reach Zoho.
+ * If the Zoho write fails the item stays pending with the reason, so nothing
+ * is silently lost and the office can retry.
+ */
+r.post('/pending/:id/approve', auth.authRequired, auth.requireOffice, writesAllowed, wrap(async (req, res) => {
+  const row = await q.oneWriteRequest(parseInt(req.params.id, 10));
+  if (!row) return res.status(404).json({ error: 'No such request' });
+  if (row.status !== 'pending') return res.status(409).json({ error: `Already ${row.status}` });
+
+  const p = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
+  try {
+    let zohoId = null;
+
+    if (row.kind === 'registration') {
+      const out = await zoho.insertRecords(M.REGISTRATION, [toZoho.registration(p)]);
+      zohoId = out[0]?.details?.id;
+
+    } else if (row.kind === 'cancellation') {
+      await zoho.updateRecords(M.REGISTRATION, [{
+        id: p.registrationId,
+        Registration_Status: 'Canceled',   // their spelling, verified in the org
+      }]);
+      zohoId = p.registrationId;
+
+    } else if (row.kind === 'lead') {
+      const out = await zoho.insertRecords('Leads', [toZoho.lead(p)]);
+      zohoId = out[0]?.details?.id;
+
+    } else {
+      return res.status(400).json({ error: `Unknown request type: ${row.kind}` });
+    }
+
+    await q.markWriteRequest(row.id, 'approved', req.user.id, { zohoId });
+    await audit(req.user.id, 'pending.approved', { id: row.id, kind: row.kind, zohoId }, req.ip);
+    res.json({ ok: true, zohoId });
+
+  } catch (e) {
+    // Left pending deliberately — an approved-but-unwritten record would be
+    // worse than one still waiting.
+    await q.markWriteRequest(row.id, 'pending', req.user.id, { error: e.message });
+    res.status(502).json({ error: `Zoho refused that: ${e.message}. The request is still waiting.` });
+  }
+}));
+
+/** The office sends it back, with a reason the rep can act on. */
+r.post('/pending/:id/reject', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  const row = await q.oneWriteRequest(parseInt(req.params.id, 10));
+  if (!row) return res.status(404).json({ error: 'No such request' });
+  if (row.status !== 'pending') return res.status(409).json({ error: `Already ${row.status}` });
+  const note = (req.body?.reason || '').trim();
+  if (!note) return res.status(400).json({ error: 'Give the rep a reason' });
+  await q.markWriteRequest(row.id, 'rejected', req.user.id, { note });
+  await audit(req.user.id, 'pending.rejected', { id: row.id, kind: row.kind }, req.ip);
+  res.json({ ok: true });
+}));
+
 /* ═══════════ HOURS AND EXPENSES ═══════════
  * Mel's request. Held in our own database — Symbiz's accounting is QuickBooks
  * and no Zoho module fits. Writes stay allowed in read-only mode because this
@@ -1019,6 +1146,8 @@ r.post('/admin/users/:id/resend', auth.authRequired, auth.requireOffice, wrap(as
   if (!u) return res.status(404).json({ error: 'No such account' });
   const temp = makePassword();
   await q.setPassword(auth.hash(temp), u.id);
+  // Returned regardless of whether the email goes, so nobody is locked out
+  // by an unconfigured mail server.
   const r2 = await reminders.sendEmail(u.email, 'Your Symbiz Rep Hub login',
     welcomeEmail({ name: u.name, email: u.email, password: temp }), { userId: u.id, kind: 'welcome' });
   await audit(req.user.id, 'user.passwordReset', { id: u.id }, req.ip);
@@ -1026,10 +1155,19 @@ r.post('/admin/users/:id/resend', auth.authRequired, auth.requireOffice, wrap(as
 }));
 
 r.delete('/admin/users/:id', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
-  if (req.params.id === req.user.id) return res.status(400).json({ error: "You can't deactivate yourself" });
-  await q.deactivate(req.params.id);
-  await audit(req.user.id, 'user.deactivated', { id: req.params.id }, req.ip);
-  res.json({ ok: true });
+  if (req.params.id === req.user.id) return res.status(400).json({ error: "You can't remove your own account" });
+  const everyone = await q.everyUser();
+  const target = everyone.find(u => u.id === req.params.id);
+  if (!target) return res.status(404).json({ error: 'No such account' });
+  const admins = everyone.filter(u => u.role === 'admin' && u.active);
+  if (target.role === 'admin' && admins.length <= 1) {
+    return res.status(400).json({ error: 'That is the only director account — make someone else a director first' });
+  }
+  // Delete rather than deactivate: a deactivated row still holds the Zoho
+  // contact id, so the person could never be added back.
+  await q.hardDelete(req.params.id);
+  await audit(req.user.id, 'user.removed', { id: req.params.id, email: target.email }, req.ip);
+  res.json({ ok: true, removed: target.email });
 }));
 
 r.get('/admin/audit', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
