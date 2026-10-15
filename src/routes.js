@@ -1,5 +1,6 @@
 'use strict';
 const express = require('express');
+const crypto = require('crypto');
 const zoho = require('./lib/zoho');
 const cfg = require('./config');
 const { q, audit, setting } = require('./db');
@@ -122,7 +123,90 @@ function esc(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,
 /** Resend a login to someone who lost theirs. */
 function makePassword(){ return Math.random().toString(36).slice(2,10); }
 
+/**
+ * The email someone gets when they ask to sign in.
+ * Deliberately short — on a phone this is read in two seconds and tapped.
+ */
+function signInEmail({ name, url, minutes }) {
+  return `<!doctype html><html><body style="margin:0;background:#F2F5EC;font-family:-apple-system,Segoe UI,Arial,sans-serif;">
+  <div style="max-width:480px;margin:0 auto;padding:26px 18px;">
+    <h1 style="font-size:18px;color:#1E2A20;margin:0 0 8px;">Sign in to Rep Hub</h1>
+    <p style="color:#5A6455;font-size:14px;line-height:1.6;margin:0 0 20px;">
+      ${esc((name||'').split(' ')[0] || 'Hello')}, tap the button to sign in. No password needed.</p>
+    <a href="${url}" style="display:inline-block;background:#2E5132;color:#fff;text-decoration:none;
+       padding:13px 26px;border-radius:8px;font-weight:600;font-size:15px;">Sign me in</a>
+    <p style="color:#8A9284;font-size:12.5px;line-height:1.6;margin:20px 0 0;">
+      This link works once and expires in ${minutes} minutes.
+      If you didn't ask to sign in, you can ignore this — nobody can get in without the link.</p>
+    <p style="color:#8A9284;font-size:11.5px;margin-top:18px;word-break:break-all;">
+      Button not working? Paste this into your browser:<br>${esc(url)}</p>
+    <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network · 800-394-7970</p>
+  </div></body></html>`;
+}
+
 /* ═══════════ AUTH ═══════════ */
+/**
+ * Ask for a sign-in link.
+ *
+ * Works for any email provider, which matters here: only one of the eleven
+ * reps uses Gmail — the rest are on Yahoo, iCloud and their own business
+ * domains, so a Google-only sign-in would lock out ten of them.
+ *
+ * Always answers the same way whether or not the address exists, so this
+ * cannot be used to find out who has an account.
+ */
+r.post('/auth/request-link', wrap(async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const same = { ok: true, message: 'If that address has an account, a sign-in link is on its way.' };
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'That does not look like an email address' });
+
+  const user = await q.userByEmail(email);
+  if (!user || user.active === false) return res.json(same);
+
+  const recent = await q.recentTokenCount(user.id);
+  if ((recent?.c || 0) >= 5) {
+    return res.json({ ...same, message: 'A link was sent recently — check your inbox, including spam.' });
+  }
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const minutes = 20;
+  const expires = new Date(Date.now() + minutes * 60000).toISOString();
+  await q.addLoginToken(token, user.id, expires, req.ip);
+  await q.purgeOldTokens().catch(() => {});
+
+  const url = `${cfg.appUrl.replace(/\/$/, '')}/?token=${token}`;
+  const sent = await reminders.sendEmail(user.email, 'Your Rep Hub sign-in link',
+    signInEmail({ name: user.name, url, minutes }), { userId: user.id, kind: 'signin' });
+
+  if (sent && sent.ok === false) {
+    return res.status(503).json({
+      error: 'Email is not switched on for this site yet, so no link could be sent. Sign in with your password instead.',
+    });
+  }
+  await audit(user.id, 'auth.linkRequested', { email }, req.ip);
+  res.json(same);
+}));
+
+/** Exchange a link for a session. Single use, time limited. */
+r.post('/auth/verify-link', wrap(async (req, res) => {
+  const token = String(req.body?.token || '');
+  if (!token) return res.status(400).json({ error: 'No link token' });
+
+  const row = await q.findLoginToken(token);
+  if (!row) return res.status(401).json({ error: 'That link is not valid. Ask for a new one.' });
+  if (row.used_at) return res.status(401).json({ error: 'That link has already been used. Ask for a new one.' });
+  if (new Date(row.expires_at) < new Date()) {
+    return res.status(401).json({ error: 'That link has expired. Ask for a new one.' });
+  }
+
+  const user = await q.userById(row.user_id);
+  if (!user || user.active === false) return res.status(401).json({ error: 'That account is no longer active' });
+
+  await q.useLoginToken(token);       // burn it before issuing the session
+  await audit(user.id, 'auth.linkUsed', {}, req.ip);
+  res.json({ token: auth.issue(user), user: auth.publicUser(user) });
+}));
+
 r.post('/auth/login', wrap(async (req, res) => {
   const { email, password } = req.body || {};
   const out = await auth.login(email, password, req.ip);
@@ -804,10 +888,11 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
   }).join(',')).join('\n');
 
   const sent = await reminders.sendEmail(to, `Rep hours and expenses — ${today()}`,
-    `<p>${t.length} time entries and ${e.length} expenses approved for payment.</p>
+    `<p>${t.length} time entries and ${e.length} expenses approved for payment. ${esc(byLine)}</p>
      <p>Total: ${t.reduce((s, x) => s + Number(x.hours), 0)} hours, $${e.reduce((s, x) => s + Number(x.amount), 0).toFixed(2)}</p>
      <pre style="font:12px/1.5 monospace;background:#f5f5f0;padding:10px;border-radius:6px">${csv}</pre>`,
-    { userId: req.user.id, kind: 'accounting' });
+    { userId: req.user.id, kind: 'accounting',
+      replyTo: approverUsers.length === 1 ? approverUsers[0].email : req.user.email });
 
   if (sent && sent.ok === false) {
     // Marking them claimed when the email failed would silently lose a month
