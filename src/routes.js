@@ -193,8 +193,8 @@ r.post('/auth/request-link', wrap(async (req, res) => {
   const user = await q.userByEmail(email);
   if (!user || user.active === false) return res.json(same);
 
-  const recent = await q.recentTokenCount(user.id);
-  if ((recent?.c || 0) >= 5) {
+  const recent = await q.recentTokenCount(user.id, 'signin');
+  if ((recent?.c || 0) >= 8) {
     return res.json({ ...same, message: 'A link was sent recently — check your inbox, including spam.' });
   }
 
@@ -233,6 +233,9 @@ r.post('/auth/request-link', wrap(async (req, res) => {
  * links. A code works whatever they are holding.
  */
 async function sendResetCode(user, req) {
+  // Only the newest code should work. Leaving older ones live meant a rep
+  // with two emails open could type a valid code and be told it was wrong.
+  await q.expireOlderCodes(user.id).catch(() => {});
   const code = String(crypto.randomInt(100000, 1000000));
   const minutes = 15;
   const expires = new Date(Date.now() + minutes * 60000).toISOString();
@@ -318,8 +321,12 @@ r.post('/auth/forgot', wrap(async (req, res) => {
   const user = await q.userByEmail(email);
   if (!user || user.active === false) return res.json(same);
 
-  const recent = await q.recentTokenCount(user.id);
-  if ((recent?.c || 0) >= 5) return res.json(same);
+  // Generous, and counted only against codes. The old limit was shared with
+  // sign-in links, so a few attempts silently stopped anything being sent.
+  const recent = await q.recentTokenCount(user.id, 'otp');
+  if ((recent?.c || 0) >= 8) {
+    return res.status(429).json({ error: 'Several codes have been sent already. Use the most recent one, or wait a few minutes.' });
+  }
 
   const sent = await sendResetCode(user, req);
   if (sent && sent.ok === false) {
@@ -671,10 +678,62 @@ r.get('/events', auth.authRequired, wrap(async (req, res) => {
   res.json(rows.map(fromZoho.event));
 }));
 
-/** Registrations for one event, with contact details — request #3. */
+/**
+ * Registrations for one event, with every guest.
+ *
+ * Fetched through the search API, NOT COQL. Symbiz keep guest details in a
+ * `Guests` subform on the registration — name, type, business, email, phone,
+ * address — and COQL cannot read subforms, so it returned nothing for them.
+ * Only one registration in forty-six has the flat Guest_* fields filled; the
+ * rest are all subform. Both are read below.
+ */
 r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
-  const rows = await zoho.coql(queries.registrationsFor(req.params.id));
-  res.json(rows.map(fromZoho.registration));
+  const eventId = String(req.params.id).replace(/[^0-9]/g, '');
+  const rows = await zoho.getRecords(M.REGISTRATION, {
+    criteria: `(Event:equals:${eventId})`,
+    perPage: 200,
+  }).catch(async () => {
+    // If search is unavailable, fall back to COQL. Guests from the subform
+    // will be missing, which is worse, but the registrants still come through.
+    const fb = await zoho.coql(queries.registrationsFor(eventId)).catch(() => []);
+    return fb;
+  });
+
+  res.json((rows || []).map(z => {
+    const base = fromZoho.registration(z);
+
+    // Guests from the subform, then the flat fields as a fallback.
+    const sub = Array.isArray(z.Guests) ? z.Guests : [];
+    const guests = sub.map(g => ({
+      name: [g.Guest_First_Name, g.Guest_Last_Name].filter(Boolean).join(' '),
+      type: g.Guest_Type || 'Guest',
+      business: g.Guest_Organization || '',
+      email: g.Guest_Email || '',
+      phone: g.Guest_Phone || '',
+      city: g.Guest_City || '',
+      state: g.Guest_State || '',
+      address: [g.Guest_Street, g.Guest_City, g.Guest_State, g.Guest_Zip_Code].filter(Boolean).join(', '),
+      attended: g.Guest_Attended || '',
+      status: g.Registration_Status || '',
+      sameAsRegistrant: g.Same_As_Main_Registrant === true,
+    }));
+
+    if (!guests.length && base.bringingGuest && base.guestName) {
+      guests.push({
+        name: base.guestName, type: base.guestType || 'Guest',
+        business: base.guestBusiness || '', email: base.guestEmail || '',
+        phone: base.guestPhone || '', city: base.guestCity || '',
+        address: '', attended: base.guestAttended || '', status: '',
+      });
+    }
+    // Someone marked as bringing a guest with no detail recorded anywhere
+    if (!guests.length && base.bringingGuest) {
+      guests.push({ name: '', type: base.guestType || 'Guest', business: '',
+                    email: '', phone: '', city: '', address: '', attended: '', status: '' });
+    }
+
+    return { ...base, guests, guestCount: guests.length };
+  }));
 }));
 
 /**
