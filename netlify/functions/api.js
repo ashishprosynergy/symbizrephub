@@ -71,12 +71,22 @@ app.use('/', routes);
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   const status = err.status || (err.name === 'ZohoError' ? 502 : 500);
-  console.error(`[error] ${req.method} ${req.path}:`, err.message);
+  console.error(`[error] ${req.method} ${req.path}:`, err.message, err.stack ? err.stack.split('\n')[1] : '');
+
+  /**
+   * Show the real error to anyone signed in.
+   *
+   * This is an internal tool used by about a dozen known people, all behind a
+   * login. Replacing the cause with "Something went wrong" protected nothing
+   * and turned every fault into a round of guesswork.
+   */
+  const signedIn = !!(req.headers.authorization || '').startsWith('Bearer ');
   res.status(status).json({
     error: status === 502
-      ? 'Zoho CRM is not responding. Your work is saved and will sync.'
-      : 'Something went wrong',
-    detail: process.env.NODE_ENV === 'development' ? err.message : undefined,
+      ? `Zoho CRM is not responding: ${err.message}`
+      : (signedIn ? err.message : 'Something went wrong'),
+    detail: signedIn ? err.message : undefined,
+    where: signedIn ? `${req.method} ${req.path}` : undefined,
   });
 });
 
