@@ -68,26 +68,47 @@
 .cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
   text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
-.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:7px;
-  min-height:86px;padding:5px 5px 4px;overflow:hidden;transition:border-color .12s}
-.cal-out{background:transparent;border-color:transparent}
+.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:8px;
+  min-height:104px;padding:6px 6px 5px;overflow:hidden;transition:box-shadow .12s,border-color .12s;
+  display:flex;flex-direction:column;gap:2px}
+.cal-out{background:transparent;border-color:transparent;box-shadow:none}
 .cal-has{cursor:pointer}
-.cal-has:hover{border-color:var(--primary)}
-.cal-today{border-color:var(--primary);border-width:2px;padding:4px}
-.cal-today .cal-num{color:var(--primary);font-weight:700}
-.cal-num{font-size:12px;color:var(--ink-muted);margin-bottom:3px;text-align:right}
-.cal-chip{font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis;margin-bottom:2px;display:flex;align-items:center;gap:3px}
-.cal-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}
-.cal-more{font-size:10px;color:var(--ink-muted)}
+.cal-has:hover{border-color:var(--primary);box-shadow:0 2px 10px rgba(46,81,50,.10)}
+.cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
+.cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
+  width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
+.cal-num{font-size:12px;color:var(--ink-muted);text-align:right;flex-shrink:0}
+.cal-chip{font-size:10.5px;line-height:1.3;border-radius:4px;padding:2px 5px;
+  display:flex;align-items:baseline;gap:4px;overflow:hidden}
+.cal-chip .cal-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal-time{font-weight:700;font-size:9.5px;opacity:.75;flex-shrink:0;letter-spacing:-.02em}
+.cal-chip.k-event{background:var(--rust-soft);color:var(--rust)}
+.cal-chip.k-visit{background:var(--info-soft);color:var(--info)}
+.cal-chip.k-meeting{background:var(--primary-soft);color:var(--primary)}
+.cal-dot{width:7px;height:7px;border-radius:2px;flex-shrink:0;display:inline-block}
+.cal-more{font-size:9.5px;color:var(--ink-muted);padding-left:5px}
 .cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
 .cal-key span{display:flex;align-items:center;gap:5px}
-@media (max-width:640px){
-  .cal-cell{min-height:60px;padding:3px}
-  .cal-chip{font-size:0;margin-bottom:3px}
-  .cal-chip .cal-dot{width:7px;height:7px}
+@media (max-width:760px){
+  .cal-grid,.cal-dow{gap:3px}
+  .cal-cell{min-height:62px;padding:4px}
+  .cal-chip{padding:2px 3px;font-size:0;min-height:5px}
+  .cal-chip .cal-time,.cal-chip .cal-txt{display:none}
   .cal-more{font-size:9px}
 }
+.pw-wrap{position:relative;display:flex;align-items:center}
+.pw-wrap input{width:100%;padding-right:42px}
+.pw-eye{position:absolute;right:4px;top:50%;transform:translateY(-50%);
+  background:transparent;border:0;cursor:pointer;color:var(--ink-muted);
+  padding:7px 8px;border-radius:6px;display:flex;align-items:center;
+  transition:color .12s,background .12s}
+.pw-eye:hover{color:var(--primary);background:var(--bg)}
+.pw-eye:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.mgr-stat{background:transparent;border:1px solid transparent;border-radius:8px;
+  padding:6px 10px;min-width:72px;cursor:pointer;display:flex;flex-direction:column;
+  align-items:center;gap:1px;font:inherit;transition:background .12s,border-color .12s}
+.mgr-stat:hover{background:var(--bg);border-color:var(--line)}
+.mgr-stat.on{background:var(--primary-soft);border-color:var(--primary)}
 @media print{.viewas{display:none;}}
 
 
@@ -115,26 +136,47 @@
 .cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
   text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
-.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:7px;
-  min-height:86px;padding:5px 5px 4px;overflow:hidden;transition:border-color .12s}
-.cal-out{background:transparent;border-color:transparent}
+.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:8px;
+  min-height:104px;padding:6px 6px 5px;overflow:hidden;transition:box-shadow .12s,border-color .12s;
+  display:flex;flex-direction:column;gap:2px}
+.cal-out{background:transparent;border-color:transparent;box-shadow:none}
 .cal-has{cursor:pointer}
-.cal-has:hover{border-color:var(--primary)}
-.cal-today{border-color:var(--primary);border-width:2px;padding:4px}
-.cal-today .cal-num{color:var(--primary);font-weight:700}
-.cal-num{font-size:12px;color:var(--ink-muted);margin-bottom:3px;text-align:right}
-.cal-chip{font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis;margin-bottom:2px;display:flex;align-items:center;gap:3px}
-.cal-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}
-.cal-more{font-size:10px;color:var(--ink-muted)}
+.cal-has:hover{border-color:var(--primary);box-shadow:0 2px 10px rgba(46,81,50,.10)}
+.cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
+.cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
+  width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
+.cal-num{font-size:12px;color:var(--ink-muted);text-align:right;flex-shrink:0}
+.cal-chip{font-size:10.5px;line-height:1.3;border-radius:4px;padding:2px 5px;
+  display:flex;align-items:baseline;gap:4px;overflow:hidden}
+.cal-chip .cal-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal-time{font-weight:700;font-size:9.5px;opacity:.75;flex-shrink:0;letter-spacing:-.02em}
+.cal-chip.k-event{background:var(--rust-soft);color:var(--rust)}
+.cal-chip.k-visit{background:var(--info-soft);color:var(--info)}
+.cal-chip.k-meeting{background:var(--primary-soft);color:var(--primary)}
+.cal-dot{width:7px;height:7px;border-radius:2px;flex-shrink:0;display:inline-block}
+.cal-more{font-size:9.5px;color:var(--ink-muted);padding-left:5px}
 .cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
 .cal-key span{display:flex;align-items:center;gap:5px}
-@media (max-width:640px){
-  .cal-cell{min-height:60px;padding:3px}
-  .cal-chip{font-size:0;margin-bottom:3px}
-  .cal-chip .cal-dot{width:7px;height:7px}
+@media (max-width:760px){
+  .cal-grid,.cal-dow{gap:3px}
+  .cal-cell{min-height:62px;padding:4px}
+  .cal-chip{padding:2px 3px;font-size:0;min-height:5px}
+  .cal-chip .cal-time,.cal-chip .cal-txt{display:none}
   .cal-more{font-size:9px}
 }
+.pw-wrap{position:relative;display:flex;align-items:center}
+.pw-wrap input{width:100%;padding-right:42px}
+.pw-eye{position:absolute;right:4px;top:50%;transform:translateY(-50%);
+  background:transparent;border:0;cursor:pointer;color:var(--ink-muted);
+  padding:7px 8px;border-radius:6px;display:flex;align-items:center;
+  transition:color .12s,background .12s}
+.pw-eye:hover{color:var(--primary);background:var(--bg)}
+.pw-eye:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.mgr-stat{background:transparent;border:1px solid transparent;border-radius:8px;
+  padding:6px 10px;min-width:72px;cursor:pointer;display:flex;flex-direction:column;
+  align-items:center;gap:1px;font:inherit;transition:background .12s,border-color .12s}
+.mgr-stat:hover{background:var(--bg);border-color:var(--line)}
+.mgr-stat.on{background:var(--primary-soft);border-color:var(--primary)}
 @media print{.tourbar{display:none;}}
 
 
@@ -335,26 +377,47 @@
 .cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
   text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
-.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:7px;
-  min-height:86px;padding:5px 5px 4px;overflow:hidden;transition:border-color .12s}
-.cal-out{background:transparent;border-color:transparent}
+.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:8px;
+  min-height:104px;padding:6px 6px 5px;overflow:hidden;transition:box-shadow .12s,border-color .12s;
+  display:flex;flex-direction:column;gap:2px}
+.cal-out{background:transparent;border-color:transparent;box-shadow:none}
 .cal-has{cursor:pointer}
-.cal-has:hover{border-color:var(--primary)}
-.cal-today{border-color:var(--primary);border-width:2px;padding:4px}
-.cal-today .cal-num{color:var(--primary);font-weight:700}
-.cal-num{font-size:12px;color:var(--ink-muted);margin-bottom:3px;text-align:right}
-.cal-chip{font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis;margin-bottom:2px;display:flex;align-items:center;gap:3px}
-.cal-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}
-.cal-more{font-size:10px;color:var(--ink-muted)}
+.cal-has:hover{border-color:var(--primary);box-shadow:0 2px 10px rgba(46,81,50,.10)}
+.cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
+.cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
+  width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
+.cal-num{font-size:12px;color:var(--ink-muted);text-align:right;flex-shrink:0}
+.cal-chip{font-size:10.5px;line-height:1.3;border-radius:4px;padding:2px 5px;
+  display:flex;align-items:baseline;gap:4px;overflow:hidden}
+.cal-chip .cal-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal-time{font-weight:700;font-size:9.5px;opacity:.75;flex-shrink:0;letter-spacing:-.02em}
+.cal-chip.k-event{background:var(--rust-soft);color:var(--rust)}
+.cal-chip.k-visit{background:var(--info-soft);color:var(--info)}
+.cal-chip.k-meeting{background:var(--primary-soft);color:var(--primary)}
+.cal-dot{width:7px;height:7px;border-radius:2px;flex-shrink:0;display:inline-block}
+.cal-more{font-size:9.5px;color:var(--ink-muted);padding-left:5px}
 .cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
 .cal-key span{display:flex;align-items:center;gap:5px}
-@media (max-width:640px){
-  .cal-cell{min-height:60px;padding:3px}
-  .cal-chip{font-size:0;margin-bottom:3px}
-  .cal-chip .cal-dot{width:7px;height:7px}
+@media (max-width:760px){
+  .cal-grid,.cal-dow{gap:3px}
+  .cal-cell{min-height:62px;padding:4px}
+  .cal-chip{padding:2px 3px;font-size:0;min-height:5px}
+  .cal-chip .cal-time,.cal-chip .cal-txt{display:none}
   .cal-more{font-size:9px}
 }
+.pw-wrap{position:relative;display:flex;align-items:center}
+.pw-wrap input{width:100%;padding-right:42px}
+.pw-eye{position:absolute;right:4px;top:50%;transform:translateY(-50%);
+  background:transparent;border:0;cursor:pointer;color:var(--ink-muted);
+  padding:7px 8px;border-radius:6px;display:flex;align-items:center;
+  transition:color .12s,background .12s}
+.pw-eye:hover{color:var(--primary);background:var(--bg)}
+.pw-eye:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.mgr-stat{background:transparent;border:1px solid transparent;border-radius:8px;
+  padding:6px 10px;min-width:72px;cursor:pointer;display:flex;flex-direction:column;
+  align-items:center;gap:1px;font:inherit;transition:background .12s,border-color .12s}
+.mgr-stat:hover{background:var(--bg);border-color:var(--line)}
+.mgr-stat.on{background:var(--primary-soft);border-color:var(--primary)}
 @media print{
     .rail,.tabbar,.topbar,.banner,.btnrow,.chips,.sheet,.overlay,.toasts,.back{display:none!important;}
     .content{padding:0;max-width:none;}
@@ -409,6 +472,8 @@ const API = {
     return res.status === 204 ? null : res.json();
   },
   login(email,password){ return this.call('/auth/login',{method:'POST',body:JSON.stringify({email,password})}); },
+  requestLink(email){ return this.call('/auth/request-link',{method:'POST',body:JSON.stringify({email})}); },
+  verifyLink(token){ return this.call('/auth/verify-link',{method:'POST',body:JSON.stringify({token})}); },
   me(){ return this.call('/auth/me'); },
   rings(as){ return this.call('/rings' + (as ? '?as='+encodeURIComponent(as) : '')); },
   members(as){ return this.call('/members' + (as ? '?as='+encodeURIComponent(as) : '')); },
@@ -517,15 +582,149 @@ function lifeStageTag(stage){
   return `<span class="tag ${s.tag}" title="${esc(s.hint)}">${esc(stage)}</span>`;
 }
 
-/** Every number we hold for someone, each one tappable. */
+/**
+ * Call buttons, with a prompt when the rep comes back.
+ *
+ * A browser cannot tell whether a call connected. Tapping a tel: link hands
+ * off to the phone's dialler and nothing is reported back — no API on iOS or
+ * Android exposes this to a web page. Anyone claiming otherwise is logging
+ * button presses, which is worse than useless: it would show calls that
+ * never happened.
+ *
+ * What we CAN see is how long the rep was away from the app. That is a strong
+ * hint, not proof, so we use it to pre-fill the answer and still ask. A rep
+ * who taps and comes back in six seconds almost certainly got no answer; one
+ * who returns four minutes later probably spoke to someone.
+ */
+let callAttempt = null;
+
+/** One place that writes a call, whether logged by hand or after a dial. */
+async function logCall(entry){
+  if(API.live){
+    await API.logActivity(entry);
+    S.activities = (await API.activities(previewRepId || null)).map(adapt.activity);
+    save(); render();
+    return;
+  }
+  S.activities.push({
+    id: 'a_' + (S.ids.act++), repId: ui.me, ...entry,
+    who: (member(entry.memberId) || {}).name || '',
+    nextDue: nextDueCheck(entry.type, entry.outcome, 'Quarterly', 'Annual'),
+  });
+  save(); queueWrite('activity'); render();
+}
+
 function callButtons(m){
   const nums = [
     ['Phone', m.phone], ['Mobile', m.mobile], ['Other', m.phone2],
   ].filter(([,v]) => v);
   if(!nums.length) return '<div class="row-sub">No phone number in Zoho</div>';
   return `<div class="btnrow">${nums.map(([label,v]) =>
-    `<a class="btn primary" href="tel:${esc(String(v).replace(/[^0-9+ext.]/gi,''))}">Call ${label.toLowerCase()} · ${esc(v)}</a>`
+    `<a class="btn primary" href="tel:${esc(String(v).replace(/[^0-9+ext.]/gi,''))}"
+        onclick="noteCallStarted('${esc(m.id)}','${esc(m.name)}','${esc(v)}')">Call ${label.toLowerCase()} · ${esc(v)}</a>`
   ).join('')}</div>`;
+}
+
+function noteCallStarted(memberId, name, number){
+  callAttempt = { memberId, name, number, at: Date.now(), ring: ui.ringId || null };
+}
+
+/** Fired when the rep returns to the app after the dialler took over. */
+function onReturnFromCall(){
+  if(!callAttempt) return;
+  const away = Math.round((Date.now() - callAttempt.at) / 1000);
+  const a = callAttempt;
+  callAttempt = null;
+
+  // Under twenty seconds is not a conversation — a ring-out or a misdial.
+  const likelyNoAnswer = away < 20;
+  const mins = Math.floor(away / 60), secs = away % 60;
+  const spent = mins ? `${mins} minute${mins===1?'':'s'}${secs>20?` ${secs} seconds`:''}` : `${away} seconds`;
+
+  openModal(`<h3>How did the call go?</h3>
+    <p class="lead">${esc(a.name)} · ${esc(a.number)}</p>
+    <div class="callout" style="padding:9px 13px;font-size:12.5px">
+      You were away from the app for <strong>${spent}</strong>.
+      That's a guess at the call length, not a measurement — the phone doesn't
+      tell the app anything, so please confirm what actually happened.</div>
+    <form onsubmit="submitCallOutcome(event,'${esc(a.memberId)}',${away})">
+      <div class="field"><label>What happened?</label>
+        <select name="outcome">
+          ${['Connected','No answer','Left voicemail','Rescheduled'].map(o =>
+            `<option ${((likelyNoAnswer && o==='No answer') || (!likelyNoAnswer && o==='Connected'))?'selected':''}>${o}</option>`).join('')}
+        </select></div>
+      <div class="field"><label>Anything worth noting</label>
+        <textarea name="notes" rows="2" placeholder="What you talked about"></textarea></div>
+      <div id="callErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
+      <div class="m-actions">
+        <button type="button" class="btn" onclick="closeModal()">Don't log it</button>
+        <button type="submit" class="btn primary">Log the call</button></div></form>`);
+}
+
+async function submitCallOutcome(ev, memberId, awaySeconds){
+  ev.preventDefault();
+  const f = ev.target.elements, err = document.getElementById('callErr');
+  const outcome = f.namedItem('outcome').value;
+  const notes = f.namedItem('notes').value;
+  const m = member(memberId);
+  try{
+    await logCall({
+      memberId,
+      ringId: m ? m.ringId : null,
+      type: m && m.isFacilitator ? 'Facilitator Call' : 'Member Call',
+      date: TODAY_S,
+      outcome,
+      // Recorded as what it is: time away from the app, not a verified duration.
+      notes: [notes, `(away from the app ${awaySeconds}s)`].filter(Boolean).join(' '),
+    });
+    closeModal();
+    toast(outcome === 'Connected' ? 'Call logged' : `Logged as ${outcome.toLowerCase()}`);
+  }catch(e){
+    err.style.display = 'block';
+    err.textContent = e.message || 'Could not log that';
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible') setTimeout(onReturnFromCall, 350);
+});
+
+/**
+ * A password box with a show/hide eye.
+ *
+ * Reps type these on phones where a mistyped character is invisible and the
+ * only feedback is "wrong password". Being able to look is the difference
+ * between getting in and calling the office.
+ */
+function passwordField(label, name, opts){
+  const o = opts || {};
+  const id = 'pw_' + name + '_' + Math.random().toString(36).slice(2,7);
+  return `<div class="field"><label>${esc(label)}</label>
+    <div class="pw-wrap">
+      <input id="${id}" name="${esc(name)}" type="password"
+             ${o.required===false?'':'required'}
+             ${o.minlength?`minlength="${o.minlength}"`:''}
+             ${o.autocomplete?`autocomplete="${esc(o.autocomplete)}"`:''}
+             ${o.placeholder?`placeholder="${esc(o.placeholder)}"`:''}>
+      <button type="button" class="pw-eye" aria-label="Show password"
+              onclick="togglePassword('${id}', this)">${EYE_SHOW}</button>
+    </div>
+    ${o.hint?`<div class="hint">${esc(o.hint)}</div>`:''}</div>`;
+}
+const EYE_SHOW = '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.8 10S4.9 4.6 10 4.6 18.2 10 18.2 10 15.1 15.4 10 15.4 1.8 10 1.8 10Z"/><circle cx="10" cy="10" r="2.6"/></svg>';
+const EYE_HIDE = '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.8 10S4.9 4.6 10 4.6c1.2 0 2.3.3 3.2.7M18.2 10s-1.4 2.4-3.9 3.9M10 15.4c-5.1 0-8.2-5.4-8.2-5.4"/><path d="M3 3l14 14"/></svg>';
+
+function togglePassword(id, btn){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const showing = el.type === 'text';
+  el.type = showing ? 'password' : 'text';
+  btn.innerHTML = showing ? EYE_SHOW : EYE_HIDE;
+  btn.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+  // Keep the cursor where it was rather than jumping to the start
+  const pos = el.value.length;
+  el.focus();
+  try{ el.setSelectionRange(pos, pos); }catch(e){}
 }
 
 const EXPENSE_CATEGORIES = ['Mileage','Meals','Lodging','Event supplies','Printing','Other'];
@@ -2445,6 +2644,51 @@ function repScorecard(){
   }).sort((a,b)=> b.overdue-a.overdue || b.rings-a.rings);
 }
 
+/** Open or close one of the numbers on a rep's card. */
+function toggleMgr(repId, key){
+  const k = repId + key;
+  ui.mgrOpen = (ui.mgrOpen === k) ? null : k;
+  renderContent();
+}
+
+/** What sits behind a number on the manager screen. */
+function mgrDetail(repId, key){
+  const rings = S.rings.filter(r=>r.repId===repId);
+  const ringIds = new Set(rings.map(r=>r.id));
+  const line = (title, sub, go) => `<div class="row clicky" onclick="${go||''}">
+    <div class="row-main"><div class="row-title">${esc(title)}</div>
+      <div class="row-sub">${esc(sub||'')}</div></div></div>`;
+
+  if(key==='unvisited'){
+    const list = rings.filter(r=>!r.lastRepVisit);
+    return list.length ? list.map(r=>line(r.name, `${r.facName||'no facilitator'} · never visited`, `openRing('${r.id}')`)).join('')
+      : `<div class="empty">Every ring has been visited.</div>`;
+  }
+  const acts = S.activities.filter(a=>a.repId===repId || ringIds.has(a.ringId));
+  if(key==='overdue'){
+    const list = acts.filter(a=>a.nextDue && days(a.nextDue)<0).sort((a,b)=>a.nextDue.localeCompare(b.nextDue));
+    return list.length ? list.map(a=>line(a.who||a.ringName||a.type,
+      `${a.type} · ${Math.abs(days(a.nextDue))} days overdue`, a.ringId?`openRing('${a.ringId}')`:'')).join('')
+      : `<div class="empty">Nothing overdue.</div>`;
+  }
+  if(key==='soon'){
+    const list = acts.filter(a=>a.nextDue && days(a.nextDue)>=0 && days(a.nextDue)<=14)
+      .sort((a,b)=>a.nextDue.localeCompare(b.nextDue));
+    return list.length ? list.map(a=>line(a.who||a.ringName||a.type,
+      `${a.type} · due ${fmt(a.nextDue)}`, a.ringId?`openRing('${a.ringId}')`:'')).join('')
+      : `<div class="empty">Nothing due in the next fortnight.</div>`;
+  }
+  if(key==='logged'){
+    const list = acts.filter(a=>a.date && days(a.date)>=-30 && a.outcome)
+      .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    return list.length ? list.map(a=>line(a.who||a.ringName||a.type,
+      `${a.type} · ${a.outcome} · ${fmt(a.date)}`, a.ringId?`openRing('${a.ringId}')`:'')).join('')
+      : `<div class="callout rust" style="margin:0"><strong>Nothing logged in 30 days</strong>
+         Either they aren't using the app, or the calls aren't happening.</div>`;
+  }
+  return '';
+}
+
 function vManager(){
   const cards = repScorecard();
   if(!cards.length) return `<div class="section-head"><div><h2>Rep manager</h2>
@@ -2471,7 +2715,7 @@ function vManager(){
     <div class="stats">
       <div class="stat"><div class="n">${cards.length}</div><div class="l">Reps</div></div>
       <div class="stat"><div class="n">${totalRings}</div><div class="l">Rings covered</div></div>
-      <div class="stat click" onclick="ui.mgrFilter='behind';renderContent()">
+      <div class="stat click" onclick="setView('reports');ui.report='rep-coverage';renderContent()">
         <div class="n" style="color:${totalOverdue?'var(--rust)':'var(--ink)'}">${totalOverdue}</div>
         <div class="l">Calls overdue</div></div>
       <div class="stat"><div class="n">${Math.round(avg*10)/10}</div><div class="l">Rings per rep</div></div>
@@ -2493,20 +2737,23 @@ function vManager(){
           <div class="row-sub">${c.rings} ring${c.rings===1?'':'s'} · ${c.members} member${c.members===1?'':'s'}</div>
           ${bar(c.rings, maxRings, c.rings>avg*1.5?'bad':'')}
         </div>
-        <div style="display:flex;gap:14px;text-align:center;flex-wrap:wrap">
-          <div><div style="font-size:19px;font-weight:700;color:${c.overdue?'var(--rust)':'var(--ink-muted)'}">${c.overdue}</div>
-            <div class="row-sub">overdue</div></div>
-          <div><div style="font-size:19px;font-weight:700">${c.soon}</div>
-            <div class="row-sub">due soon</div></div>
-          <div><div style="font-size:19px;font-weight:700;color:${c.logged?'var(--primary)':'var(--ink-muted)'}">${c.logged}</div>
-            <div class="row-sub">logged 30d</div></div>
-          <div><div style="font-size:19px;font-weight:700;color:${c.neverVisited?'var(--rust)':'var(--ink-muted)'}">${c.neverVisited}</div>
-            <div class="row-sub">never visited</div></div>
+        <div style="display:flex;gap:6px;text-align:center;flex-wrap:wrap">
+          ${[['overdue', c.overdue, 'overdue', c.overdue?'var(--rust)':'var(--ink-muted)'],
+             ['soon', c.soon, 'due soon', 'var(--ink)'],
+             ['logged', c.logged, 'logged 30d', c.logged?'var(--primary)':'var(--rust)'],
+             ['unvisited', c.neverVisited, 'never visited', c.neverVisited?'var(--rust)':'var(--ink-muted)']]
+            .map(([key,val,label,colour])=>`<button class="mgr-stat${ui.mgrOpen===c.id+key?' on':''}"
+              onclick="toggleMgr('${esc(c.id)}','${key}')">
+              <span style="font-size:19px;font-weight:700;color:${colour}">${val}</span>
+              <span class="row-sub">${label}</span></button>`).join('')}
         </div>
       </div>
+      ${ui.mgrOpen && ui.mgrOpen.startsWith(c.id) ? `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+        ${mgrDetail(c.id, ui.mgrOpen.slice(c.id.length))}</div>` : ''}
       <div class="btnrow" style="margin-top:10px">
         <button class="btn sm" onclick="previewAsRep('${esc(c.id)}','${esc(c.name)}')">See their screen</button>
-        ${c.noRhythm?`<span class="tag soon">${c.noRhythm} ring${c.noRhythm===1?'':'s'} with no meeting rhythm</span>`:''}
+        <button class="btn sm" onclick="ui.calRep='${esc(c.id)}';setView('calendar')">Their calendar</button>
+        ${c.noRhythm?`<button class="btn sm" onclick="ui.ringType=null;setView('allrings')">${c.noRhythm} ring${c.noRhythm===1?'':'s'} with no rhythm</button>`:''}
       </div>
     </div>`).join('')}
 
@@ -2915,26 +3162,100 @@ function openPreviewPicker(){
 
 /** Local mode only: look at the app as a different person. */
 
+/**
+ * Sign in by email link, with a password as the fallback.
+ *
+ * A link works whatever email someone uses. Only one of the eleven reps is on
+ * Gmail — the rest are on Yahoo, iCloud and their own business domains — so a
+ * "sign in with Google" button would have served one person and shut out ten.
+ */
 function loginScreen(){
+  const sentTo = ui.linkSentTo;
   return `<div class="login"><div class="login-box">
     <div class="login-brand">
       <svg class="ring-mark" width="30" height="30" viewBox="0 0 26 26"><circle cx="13" cy="13" r="11" stroke-width="1.4"/><circle cx="13" cy="13" r="7.2" stroke-width="1.4"/><circle cx="13" cy="13" r="3.4" stroke-width="1.4"/></svg>
       <span class="wordmark">Rep Hub</span></div>
     <p class="tag">Symbiz Network</p>
-    <div class="card">
-      <form onsubmit="doLogin(event)">
-        <div class="field"><label>Email</label><input name="email" type="email" required autocomplete="username" placeholder="you@symbiz.org"></div>
-        <div class="field"><label>Password</label><input name="password" type="password" required autocomplete="current-password"></div>
-        <div id="loginErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
-        <button class="btn primary" type="submit" id="loginBtn" style="width:100%;justify-content:center">Sign in</button>
-      </form>
-    </div>
+
+    ${sentTo ? `<div class="card" style="text-align:center">
+        <div style="font-size:30px;margin-bottom:6px">✉</div>
+        <h3 style="margin:0 0 6px">Check your email</h3>
+        <p class="lead" style="margin:0 0 4px">A sign-in link is on its way to <strong>${esc(sentTo)}</strong>.</p>
+        <p class="row-sub">It works once and expires in 20 minutes. Look in spam if it hasn't arrived.</p>
+        <div class="btnrow" style="margin-top:14px;justify-content:center">
+          <button class="btn" onclick="ui.linkSentTo=null;render()">Use a different address</button>
+        </div></div>`
+      : `<div class="card">
+        <form onsubmit="doRequestLink(event)">
+          <div class="field"><label>Email</label>
+            <input name="email" type="email" required autocomplete="username"
+                   placeholder="you@yourbusiness.com" value="${esc(ui.loginEmail||'')}"></div>
+          <div id="loginErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
+          <button class="btn primary" type="submit" id="loginBtn" style="width:100%;justify-content:center">
+            Email me a sign-in link</button>
+        </form>
+        <div style="text-align:center;margin-top:12px">
+          <button class="btn sm" onclick="ui.usePassword=!ui.usePassword;render()">
+            ${ui.usePassword ? 'Use a link instead' : 'I have a password'}</button>
+        </div>
+        ${ui.usePassword ? `<form onsubmit="doLogin(event)" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+          <div class="field"><label>Email</label>
+            <input name="email" type="email" required autocomplete="username" value="${esc(ui.loginEmail||'')}"></div>
+          ${passwordField('Password','password',{autocomplete:'current-password'})}
+          <div id="pwErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
+          <button class="btn" type="submit" style="width:100%;justify-content:center">Sign in</button>
+        </form>` : ''}
+      </div>`}
+
+    ${ui.linkError?`<div class="callout rust" style="margin-top:12px;text-align:left">
+      <strong>That link didn't work</strong>${esc(ui.linkError)}</div>`:''}
     <div id="setupNote"></div>
-    <p class="tag" style="margin-top:16px;font-size:12.5px">Trouble signing in? Call 540-212-9403.</p>
-    <p class="tag" style="margin-top:18px;font-size:11.5px;opacity:.75">Managed by Prosynergy Bookkeeping</p>
+    <p class="tag" style="margin-top:16px;font-size:12.5px">Trouble signing in? Call the office on 800-394-7970.</p>
   </div></div>`;
 }
 
+async function doRequestLink(e){
+  e.preventDefault();
+  const email = e.target.elements.namedItem('email').value.trim();
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('loginErr');
+  ui.loginEmail = email;
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try{
+    await API.requestLink(email);
+    ui.linkSentTo = email;
+    render();
+  }catch(ex){
+    err.style.display = 'block';
+    err.textContent = ex.message || 'Could not send that';
+    // If email isn't switched on, the password form is the way in
+    if(/not switched on|not configured/i.test(ex.message||'')) ui.usePassword = true;
+    btn.disabled = false; btn.textContent = 'Email me a sign-in link';
+    if(ui.usePassword) render();
+  }
+}
+
+/** A link was tapped: ?token=… in the address. */
+async function trySignInLink(){
+  const m = location.search.match(/[?&]token=([a-f0-9]{32,})/i);
+  if(!m) return false;
+  const token = m[1];
+  history.replaceState({}, '', location.pathname);   // don't leave it in the bar
+  try{
+    const out = await API.verifyLink(token);
+    API.setToken(out.token);
+    signInAs(out.user);
+    await refreshMode();
+    await loadFromServer();
+    render();
+    toast(`Welcome back, ${out.user.name.split(' ')[0]}`);
+    return true;
+  }catch(e){
+    ui.linkError = e.message || 'That link did not work';
+    render();
+    return false;
+  }
+}
 
 /** Read the server's state: is the database up, is Zoho connected, are writes on. */
 async function refreshMode(){
@@ -2989,7 +3310,7 @@ function openFirstAdmin(){
     <form onsubmit="submitFirstAdmin(event)">
       <div class="field"><label>Full name</label><input name="name" required></div>
       <div class="field"><label>Email</label><input name="email" type="email" required></div>
-      <div class="field"><label>Password</label><input name="password" type="password" required minlength="8" placeholder="At least 8 characters"></div>
+      ${passwordField('Password','password',{minlength:8, placeholder:'At least 8 characters', autocomplete:'new-password'})}
       <div id="setupErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
       <button type="submit" class="btn primary">Create account</button></div></form>`);
@@ -3491,6 +3812,10 @@ const money = n => '$' + Number(n || 0).toFixed(2);
  * Previously this returned everything whenever the app was live, which made
  * the rep picker do nothing at all.
  */
+/**
+ * Events for one rep. Events with no Regional Rep in Zoho are network-wide
+ * and show for everyone unless the office asks for only that rep's.
+ */
 const myEvents = id => S.events.filter(e => !id || !e.repId || e.repId === id);
 const myVisits = id => S.visits.filter(v => !id || v.repId === id);
 const eventRegs = eid => S.registrations.filter(r => r.eventId === eid);
@@ -3525,18 +3850,22 @@ function calendarItems(repId) {
   const out = [];
   const mine = r => !repId || r.repId === repId;
   myEvents(repId).forEach(e => out.push({
-    kind: 'event', date: e.date, time: e.time, title: e.title,
-    sub: `${e.type} · ${e.location}`, id: e.id, regs: eventRegs(e.id).length
+    kind: 'event', date: e.date, time: e.time, title: e.title, repId: e.repId || null,
+    sub: `${e.type} · ${e.location}`, id: e.id, regs: e.registrationCount || eventRegs(e.id).length,
+    go: `openEvent('${e.id}')`
   }));
   myVisits(repId).filter(v => v.status === 'Scheduled').forEach(v => {
     const g = ring(v.ringId);
-    out.push({ kind: 'visit', date: v.date, time: v.time, title: `Visit — ${g ? g.name : ''}`, sub: v.location, id: v.id });
+    out.push({ kind: 'visit', date: v.date, time: v.time, title: `Visit — ${g ? g.name : ''}`,
+               sub: v.location, id: v.id, repId: v.repId || (g ? g.repId : null),
+               go: g ? `openRing('${g.id}')` : '' });
   });
   S.rings.filter(r => r.status === 'active' && mine(r) && r.meetDay).forEach(r => {
     const d = nextRecurring(r.meetDay);
     if (d) out.push({
-      kind: 'meeting', date: d, time: r.meetTime,
-      title: `${r.name} meets`, sub: `${r.meetDay} · ${r.meetPlace || 'place to be set'}`, id: r.id
+      kind: 'meeting', date: d, time: r.meetTime, repId: r.repId,
+      title: `${r.name} meets`, sub: `${r.meetingRhythm || ''} · ${r.meetPlace || 'place to be set'}`.replace(/^ · /,''),
+      id: r.id, go: `openRing('${r.id}')`
     });
   });
   return out.sort((a, b) => a.date.localeCompare(b.date) || String(a.time).localeCompare(String(b.time)));
@@ -3550,7 +3879,22 @@ function calendarItems(repId) {
  */
 function vCalendar() {
   const repId = isRep() ? ui.me : (ui.calRep || null);
-  const items = calendarItems(repId).filter(i => !ui.calFilter || ui.calFilter === 'all' || i.kind === ui.calFilter);
+  let items = calendarItems(repId).filter(i => !ui.calFilter || ui.calFilter === 'all' || i.kind === ui.calFilter);
+
+  /**
+   * Picking a rep used to look like it did nothing. Most events carry no
+   * Regional Rep in Zoho — they are network-wide — so they showed for
+   * everybody either way. Now you can hide them and see only what belongs
+   * to that rep, and the count says plainly what is being hidden.
+   */
+  let networkHidden = 0;
+  if(repId && ui.calOnlyTheirs){
+    const before = items.length;
+    items = items.filter(i => i.repId === repId);
+    networkHidden = before - items.length;
+  } else if(repId){
+    networkHidden = items.filter(i => i.kind === 'event' && !i.repId).length;
+  }
 
   if(!ui.calMonth){
     const t = new Date();
@@ -3581,8 +3925,9 @@ function vCalendar() {
     cells.push(`<div class="cal-cell${isToday?' cal-today':''}${list.length?' cal-has':''}"
       ${list.length?`onclick="ui.calDay='${iso}';renderContent()"`:''}>
       <div class="cal-num">${d}</div>
-      ${list.slice(0,3).map(i=>`<div class="cal-chip" title="${esc(i.title)}">
-        <span class="cal-dot" style="background:${dot(i.kind)}"></span>${esc(i.title)}</div>`).join('')}
+      ${list.slice(0,3).map(i=>`<div class="cal-chip k-${i.kind}" title="${esc(i.title)}${i.time?' · '+esc(i.time):''}">
+        ${i.time?`<span class="cal-time">${esc(String(i.time).replace(':00',''))}</span>`:''}
+        <span class="cal-txt">${esc(i.title)}</span></div>`).join('')}
       ${list.length>3?`<div class="cal-more">+${list.length-3} more</div>`:''}
     </div>`);
   }
@@ -3592,7 +3937,7 @@ function vCalendar() {
 
   return `<div class="section-head"><div><h2>Calendar</h2>
     <div class="sub">Local events, ring visits, and when each of your groups meets.</div></div>
-    ${isOffice()?`<select class="sel" onchange="ui.calRep=this.value||null;renderContent()">
+    ${isOffice()?`<select class="sel" onchange="ui.calRep=this.value||null;ui.calDay=null;renderContent()">
       <option value="">All reps</option>
       ${PEOPLE.filter(p=>p.role==='rep').map(p=>`<option value="${p.id}" ${ui.calRep===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
     </select>`:''}</div>
@@ -3610,6 +3955,16 @@ function vCalendar() {
       <button class="btn sm" onclick="window.print()">Print</button>
     </div>
 
+    ${repId && networkHidden ? `<div class="callout" style="padding:9px 13px;font-size:12.5px">
+      ${ui.calOnlyTheirs
+        ? `<strong>${networkHidden} network-wide event${networkHidden===1?'':'s'} hidden</strong>
+           Summits and info meetings carry no rep in Zoho, so they are not tied to anyone.
+           <button class="btn sm" style="margin-left:8px" onclick="ui.calOnlyTheirs=false;renderContent()">Show them</button>`
+        : `<strong>Includes ${networkHidden} network-wide event${networkHidden===1?'':'s'}</strong>
+           Summits and info meetings show for every rep because Zoho holds no rep against them.
+           <button class="btn sm" style="margin-left:8px" onclick="ui.calOnlyTheirs=true;renderContent()">Only this rep's</button>`}
+    </div>` : ''}
+
     <div class="cal-dow">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div>${d}</div>`).join('')}</div>
     <div class="cal-grid">${cells.join('')}</div>
 
@@ -3620,10 +3975,40 @@ function vCalendar() {
     </div>
 
     ${ui.calDay ? `<h3 class="sub-h">${fmt(ui.calDay)}</h3>
-      ${dayList.length ? dayList.map(i=>`<div class="row clicky" onclick="${i.go||''}">
-        <div class="row-main"><div class="row-title">${esc(i.title)}</div>
-          <div class="row-sub">${esc(i.sub||'')}</div></div>
-        <span class="tag ${i.kind==='event'?'info':'later'}">${i.kind==='event'?'Local event':i.kind==='visit'?'Visit':'Meeting'}</span></div>`).join('')
+      ${dayList.length ? dayList.map(i=>{
+        // For an event, show who is coming right here — Keturah shouldn't
+        // have to open a second screen to see the head count and guests.
+        const coming = i.kind==='event' ? attendeeList(i.id) : [];
+        const guests = coming.filter(a=>a.guestOf);
+        if(i.kind==='event' && API.live && !S.registrations.some(r=>r.eventId===i.id)) loadRegs(i.id);
+        return `<div class="card" style="margin-bottom:10px;padding:13px 15px">
+          <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+            <div style="flex:1;min-width:180px">
+              <div class="row-title clicky" onclick="${i.go||''}">${esc(i.title)}</div>
+              <div class="row-sub">${i.time?esc(i.time)+' · ':''}${esc(i.sub||'')}</div>
+            </div>
+            <span class="tag ${i.kind==='event'?'info':i.kind==='visit'?'soon':'later'}">
+              ${i.kind==='event'?'Local event':i.kind==='visit'?'Ring visit':'Group meeting'}</span>
+          </div>
+          ${i.kind==='event' ? (coming.length ? `
+            <div class="row-sub" style="margin-top:9px;font-weight:600">
+              ${coming.length} coming — ${coming.length-guests.length} registered${guests.length?`, ${guests.length} guest${guests.length===1?'':'s'}`:''}</div>
+            <div style="margin-top:6px">${coming.map(a=>`<div class="kv" style="padding:5px 0">
+              <span>${a.name?esc(a.name):'<span style="color:var(--ink-muted)">guest name not in Zoho</span>'}
+                ${a.guestOf?`<span class="tag later">${esc(a.kind)}</span>`:''}</span>
+              <span class="row-sub">${a.guestOf?`${esc(a.kind.toLowerCase())} of ${esc(a.guestOf)}`:esc(a.business||'')}${a.phone?' · '+esc(a.phone):''}</span>
+            </div>`).join('')}</div>
+            <div class="btnrow" style="margin-top:9px">
+              <button class="btn sm" onclick="openEvent('${i.id}')">Full details</button>
+              <button class="btn sm" onclick="printSignInSheet('${i.id}')">Sign-in sheet</button>
+            </div>`
+            : `<div class="row-sub" style="margin-top:8px">${i.regs?'Loading who is coming…':'Nobody registered yet.'}</div>
+               <div class="btnrow" style="margin-top:9px">
+                 <button class="btn sm" onclick="openEvent('${i.id}')">Full details</button>
+                 <button class="btn sm" onclick="printSignInSheet('${i.id}')">Blank sign-in sheet</button>
+               </div>`) : ''}
+        </div>`;
+      }).join('')
         : `<div class="empty">Nothing on this day.</div>`}` : ''}
 
     ${!items.length ? emptyState('events and meetings', 'Nothing scheduled yet.') : ''}`;
@@ -3919,10 +4304,39 @@ function vTimesheet() {
           <button class="btn sm primary" onclick="sendToAccounting()">Send now</button>
           <button class="btn sm" onclick="previewAccounting()">Preview what goes</button>
         </div></div>`; })() : ''}
-    <h3 class="sub-h">Hours</h3>
-    ${time.map(t => row(t, false)).join('') || emptyState('hours', 'No hours logged yet. Use Log hours or start a timer.')}
-    <h3 class="sub-h">Expenses</h3>
-    ${exp.map(x => row(x, true)).join('') || emptyState('expenses', 'No expenses logged yet.')}`;
+    ${(() => {
+      /**
+       * Split by state. Approved and reimbursed items used to sit in the same
+       * list as things still waiting, so the office had to read every row to
+       * find the ones needing a decision.
+       */
+      const tab = ui.tsTab || 'waiting';
+      const bucket = (list, which) => list.filter(x =>
+        which === 'waiting'   ? x.status === 'Submitted' :
+        which === 'approved'  ? x.status === 'Approved'  :
+                                x.status === 'Reimbursed');
+
+      const counts = {
+        waiting:   bucket(time,'waiting').length   + bucket(exp,'waiting').length,
+        approved:  bucket(time,'approved').length  + bucket(exp,'approved').length,
+        reimbursed:bucket(time,'reimbursed').length+ bucket(exp,'reimbursed').length,
+      };
+      const t2 = bucket(time, tab), e2 = bucket(exp, tab);
+      const label = { waiting:'Waiting on approval', approved:'Approved', reimbursed:'Sent to accounting' };
+      const blank = {
+        waiting:'Nothing waiting. Everything submitted has been dealt with.',
+        approved:'Nothing approved yet.',
+        reimbursed:'Nothing has been sent to accounting yet.',
+      };
+
+      return `<div class="chips">${['waiting','approved','reimbursed'].map(k =>
+        `<button class="chip ${tab===k?'on':''}" onclick="ui.tsTab='${k}';renderContent()">
+          ${label[k]}${counts[k]?` · ${counts[k]}`:''}</button>`).join('')}</div>
+
+        ${t2.length ? `<h3 class="sub-h">Hours</h3>${t2.map(x => row(x,false)).join('')}` : ''}
+        ${e2.length ? `<h3 class="sub-h">Expenses</h3>${e2.map(x => row(x,true)).join('')}` : ''}
+        ${!t2.length && !e2.length ? `<div class="empty">${blank[tab]}</div>` : ''}`;
+    })()}`;
 }
 
 /* ══════════════════ VISIT SCHEDULE ══════════════════ */
@@ -4343,6 +4757,22 @@ function submitPlaceMember(e, memberId) {
   toast(`${m.name} placed in ${g.name}`); render();
 }
 
+/** Fetch an event's registrations in the background for the day panel. */
+let regsLoading = {};
+function loadRegs(eventId){
+  if(regsLoading[eventId]) return;
+  regsLoading[eventId] = true;
+  API.registrations(eventId)
+    .then(rows=>{
+      S.registrations = S.registrations.filter(r=>r.eventId!==eventId)
+        .concat((rows||[]).map(adapt.registration));
+      save();
+      if(ui.view==='calendar') renderContent();
+    })
+    .catch(()=>{})
+    .finally(()=>{ regsLoading[eventId] = false; });
+}
+
 function openEvent(id) {
   ui.eventId = id; ui.view = 'eventDetail'; closeSheet(); render();
   // Registrations are fetched per event rather than up front — there are
@@ -4588,26 +5018,47 @@ function openPrintable(title, bodyHTML) {
 .cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
   text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
-.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:7px;
-  min-height:86px;padding:5px 5px 4px;overflow:hidden;transition:border-color .12s}
-.cal-out{background:transparent;border-color:transparent}
+.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:8px;
+  min-height:104px;padding:6px 6px 5px;overflow:hidden;transition:box-shadow .12s,border-color .12s;
+  display:flex;flex-direction:column;gap:2px}
+.cal-out{background:transparent;border-color:transparent;box-shadow:none}
 .cal-has{cursor:pointer}
-.cal-has:hover{border-color:var(--primary)}
-.cal-today{border-color:var(--primary);border-width:2px;padding:4px}
-.cal-today .cal-num{color:var(--primary);font-weight:700}
-.cal-num{font-size:12px;color:var(--ink-muted);margin-bottom:3px;text-align:right}
-.cal-chip{font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis;margin-bottom:2px;display:flex;align-items:center;gap:3px}
-.cal-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}
-.cal-more{font-size:10px;color:var(--ink-muted)}
+.cal-has:hover{border-color:var(--primary);box-shadow:0 2px 10px rgba(46,81,50,.10)}
+.cal-today{border-color:var(--primary);border-width:2px;padding:5px;background:var(--primary-soft)}
+.cal-today .cal-num{background:var(--primary);color:#fff;border-radius:50%;
+  width:21px;height:21px;line-height:21px;text-align:center;font-weight:700;margin-left:auto}
+.cal-num{font-size:12px;color:var(--ink-muted);text-align:right;flex-shrink:0}
+.cal-chip{font-size:10.5px;line-height:1.3;border-radius:4px;padding:2px 5px;
+  display:flex;align-items:baseline;gap:4px;overflow:hidden}
+.cal-chip .cal-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal-time{font-weight:700;font-size:9.5px;opacity:.75;flex-shrink:0;letter-spacing:-.02em}
+.cal-chip.k-event{background:var(--rust-soft);color:var(--rust)}
+.cal-chip.k-visit{background:var(--info-soft);color:var(--info)}
+.cal-chip.k-meeting{background:var(--primary-soft);color:var(--primary)}
+.cal-dot{width:7px;height:7px;border-radius:2px;flex-shrink:0;display:inline-block}
+.cal-more{font-size:9.5px;color:var(--ink-muted);padding-left:5px}
 .cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
 .cal-key span{display:flex;align-items:center;gap:5px}
-@media (max-width:640px){
-  .cal-cell{min-height:60px;padding:3px}
-  .cal-chip{font-size:0;margin-bottom:3px}
-  .cal-chip .cal-dot{width:7px;height:7px}
+@media (max-width:760px){
+  .cal-grid,.cal-dow{gap:3px}
+  .cal-cell{min-height:62px;padding:4px}
+  .cal-chip{padding:2px 3px;font-size:0;min-height:5px}
+  .cal-chip .cal-time,.cal-chip .cal-txt{display:none}
   .cal-more{font-size:9px}
 }
+.pw-wrap{position:relative;display:flex;align-items:center}
+.pw-wrap input{width:100%;padding-right:42px}
+.pw-eye{position:absolute;right:4px;top:50%;transform:translateY(-50%);
+  background:transparent;border:0;cursor:pointer;color:var(--ink-muted);
+  padding:7px 8px;border-radius:6px;display:flex;align-items:center;
+  transition:color .12s,background .12s}
+.pw-eye:hover{color:var(--primary);background:var(--bg)}
+.pw-eye:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.mgr-stat{background:transparent;border:1px solid transparent;border-radius:8px;
+  padding:6px 10px;min-width:72px;cursor:pointer;display:flex;flex-direction:column;
+  align-items:center;gap:1px;font:inherit;transition:background .12s,border-color .12s}
+.mgr-stat:hover{background:var(--bg);border-color:var(--line)}
+.mgr-stat.on{background:var(--primary-soft);border-color:var(--primary)}
 @media print{.noprint{display:none;}}
   </style></head><body><div class="wrap">
     <div class="noprint" style="font-family:system-ui;background:#F2F5EC;border:1px solid #DCE0CE;border-radius:8px;padding:11px 14px;margin-bottom:16px;font-size:13px;">
@@ -4847,8 +5298,13 @@ const CHECKS = [
   { group: 'Requested features', name: '9. Approved items can be sent to accounting', run: () => {
       const p = accountingPayload();
       return typeof p.hours === 'number' && typeof p.amount === 'number' && !!S.settings.accountingEmail; } },
-  { group: 'Requested features', name: '9. Expenses carry a receipt, and missing ones are flagged', run: () =>
-      vTimesheet().includes('no receipt') || S.expenses.every(x => x.receipt) },
+  { group: 'Requested features', name: '9. Expenses carry a receipt, and missing ones are flagged', run: () => {
+      // Hours & expenses is tabbed now, so only one state renders at a time.
+      // Check the row builder itself rather than whichever tab happens to be open.
+      const src = vTimesheet.toString();
+      const flags = /no receipt/.test(src) && /viewReceipt/.test(src);
+      const allHave = S.expenses.every(x => x.receipt || x.hasReceipt);
+      return flags || allHave; } },
   { group: 'Requested features', name: '10. Rings carry a meeting day, time and place', run: () => {
       const active = S.rings.filter(r => r.status === 'active');
       if (!active.length) return true;                       // nothing to carry yet
@@ -5032,8 +5488,9 @@ function signInAs(user){
   }
 }
 
-/* Restore a server session if one exists */
+/* A tapped sign-in link takes priority over any stored session */
 (async () => {
+  if(await trySignInLink()) return;
   if(!API.token) return;
   try{
     const out = await API.me();
