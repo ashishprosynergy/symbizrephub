@@ -215,6 +215,58 @@ r.post('/auth/request-link', wrap(async (req, res) => {
  * inbox can set the password — nobody can set someone else's by knowing
  * their email.
  */
+/**
+ * A six-digit code, emailed.
+ *
+ * Preferred over a link for resets: reps often read email on a different
+ * device from the one they are signing in on, and some mail clients mangle
+ * links. A code works whatever they are holding.
+ */
+async function sendResetCode(user, req) {
+  const code = String(crypto.randomInt(100000, 1000000));
+  const minutes = 15;
+  const expires = new Date(Date.now() + minutes * 60000).toISOString();
+  // Stored as the code itself, scoped to this user and single use. It is
+  // short-lived and rate limited, which is what makes six digits safe enough.
+  await q.addLoginToken(`otp:${user.id}:${code}`, user.id, expires, req.ip, 'otp');
+  return reminders.sendEmail(user.email, `Your Rep Hub code: ${code}`,
+    `<!doctype html><html><body style="margin:0;background:#F2F5EC;font-family:-apple-system,Segoe UI,Arial,sans-serif;">
+    <div style="max-width:440px;margin:0 auto;padding:26px 18px;text-align:center;">
+      <h1 style="font-size:18px;color:#1E2A20;margin:0 0 6px;">Your password reset code</h1>
+      <p style="color:#5A6455;font-size:14px;margin:0 0 18px;">
+        ${esc((user.name||'').split(' ')[0] || 'Hello')}, type this into Rep Hub to choose a new password.</p>
+      <div style="font-family:ui-monospace,Menlo,monospace;font-size:34px;font-weight:700;
+        letter-spacing:.18em;color:#2E5132;background:#fff;border-radius:10px;padding:16px 10px;">${code}</div>
+      <p style="color:#8A9284;font-size:12.5px;margin:18px 0 0;">
+        It expires in ${minutes} minutes and works once.
+        If you didn't ask for this, ignore it — your password has not changed.</p>
+      <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network</p>
+    </div></body></html>`,
+    { userId: user.id, kind: 'otp' });
+}
+
+/** Check a code and hand back a short-lived token to set the password with. */
+r.post('/auth/verify-code', wrap(async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const code = String(req.body?.code || '').replace(/\D/g, '');
+  if (code.length !== 6) return res.status(400).json({ error: 'The code is six digits' });
+
+  const user = await q.userByEmail(email);
+  if (!user || user.active === false) return res.status(401).json({ error: 'That code is not right. Check it and try again.' });
+
+  const row = await q.findLoginToken(`otp:${user.id}:${code}`);
+  if (!row || row.purpose !== 'otp') return res.status(401).json({ error: 'That code is not right. Check it and try again.' });
+  if (row.used_at) return res.status(401).json({ error: 'That code has already been used. Ask for a new one.' });
+  if (new Date(row.expires_at) < new Date()) return res.status(401).json({ error: 'That code has expired. Ask for a new one.' });
+
+  await q.useLoginToken(row.token);
+  // Swap the code for a token the set-password step accepts
+  const token = crypto.randomBytes(32).toString('hex');
+  await q.addLoginToken(token, user.id, new Date(Date.now() + 15 * 60000).toISOString(), req.ip, 'setpassword');
+  await audit(user.id, 'auth.codeVerified', {}, req.ip);
+  res.json({ token, name: user.name, email: user.email });
+}));
+
 async function sendPasswordLink(user, req, { invite } = {}) {
   const token = crypto.randomBytes(32).toString('hex');
   const hours = invite ? 72 : 2;
@@ -250,7 +302,7 @@ function passwordLinkEmail({ name, url, invite, hours }) {
 /** "I've forgotten my password." Same answer whether or not the account exists. */
 r.post('/auth/forgot', wrap(async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
-  const same = { ok: true, message: 'If that address has an account, a reset link is on its way.' };
+  const same = { ok: true, message: 'If that address has an account, a code is on its way.' };
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'That does not look like an email address' });
 
   const user = await q.userByEmail(email);
@@ -259,9 +311,9 @@ r.post('/auth/forgot', wrap(async (req, res) => {
   const recent = await q.recentTokenCount(user.id);
   if ((recent?.c || 0) >= 5) return res.json(same);
 
-  const sent = await sendPasswordLink(user, req);
+  const sent = await sendResetCode(user, req);
   if (sent && sent.ok === false) {
-    return res.status(503).json({ error: 'Email is not switched on for this site, so no link could be sent. Ask the office to reset it for you.' });
+    return res.status(503).json({ error: 'Email is not switched on for this site, so no code could be sent. Ask the office to reset it for you.' });
   }
   await audit(user.id, 'auth.forgotRequested', {}, req.ip);
   res.json(same);
