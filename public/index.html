@@ -62,7 +62,33 @@
   .viewas span{white-space:nowrap;font-weight:600;letter-spacing:.02em;}
   .viewas .sel{max-width:230px;}
   @media (max-width:760px){ .viewas span{display:none;} .viewas .sel{max-width:150px;font-size:12.5px;} }
-  @media print{.viewas{display:none;}}
+  /* ── month calendar ── */
+.cal-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px;flex-wrap:wrap}
+.cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+.cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
+  text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:7px;
+  min-height:86px;padding:5px 5px 4px;overflow:hidden;transition:border-color .12s}
+.cal-out{background:transparent;border-color:transparent}
+.cal-has{cursor:pointer}
+.cal-has:hover{border-color:var(--primary)}
+.cal-today{border-color:var(--primary);border-width:2px;padding:4px}
+.cal-today .cal-num{color:var(--primary);font-weight:700}
+.cal-num{font-size:12px;color:var(--ink-muted);margin-bottom:3px;text-align:right}
+.cal-chip{font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;margin-bottom:2px;display:flex;align-items:center;gap:3px}
+.cal-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}
+.cal-more{font-size:10px;color:var(--ink-muted)}
+.cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
+.cal-key span{display:flex;align-items:center;gap:5px}
+@media (max-width:640px){
+  .cal-cell{min-height:60px;padding:3px}
+  .cal-chip{font-size:0;margin-bottom:3px}
+  .cal-chip .cal-dot{width:7px;height:7px}
+  .cal-more{font-size:9px}
+}
+@media print{.viewas{display:none;}}
 
 
   /* Guided walkthrough bar */
@@ -83,7 +109,33 @@
     .tour-text{order:3;width:100%;font-size:13px;}
     .tour-btns{margin-left:auto;}
   }
-  @media print{.tourbar{display:none;}}
+  /* ── month calendar ── */
+.cal-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px;flex-wrap:wrap}
+.cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+.cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
+  text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:7px;
+  min-height:86px;padding:5px 5px 4px;overflow:hidden;transition:border-color .12s}
+.cal-out{background:transparent;border-color:transparent}
+.cal-has{cursor:pointer}
+.cal-has:hover{border-color:var(--primary)}
+.cal-today{border-color:var(--primary);border-width:2px;padding:4px}
+.cal-today .cal-num{color:var(--primary);font-weight:700}
+.cal-num{font-size:12px;color:var(--ink-muted);margin-bottom:3px;text-align:right}
+.cal-chip{font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;margin-bottom:2px;display:flex;align-items:center;gap:3px}
+.cal-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}
+.cal-more{font-size:10px;color:var(--ink-muted)}
+.cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
+.cal-key span{display:flex;align-items:center;gap:5px}
+@media (max-width:640px){
+  .cal-cell{min-height:60px;padding:3px}
+  .cal-chip{font-size:0;margin-bottom:3px}
+  .cal-chip .cal-dot{width:7px;height:7px}
+  .cal-more{font-size:9px}
+}
+@media print{.tourbar{display:none;}}
 
 
   /* ── Tablet (Mel's question): keep the sidebar, widen touch targets ── */
@@ -277,7 +329,33 @@
   .lane-card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:7px;}
   .lane-card .t{font-size:13.5px;font-weight:600;} .lane-card .s{font-size:12px;color:var(--ink-muted);margin-top:2px;}
 
-  @media print{
+  /* ── month calendar ── */
+.cal-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px;flex-wrap:wrap}
+.cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+.cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
+  text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:7px;
+  min-height:86px;padding:5px 5px 4px;overflow:hidden;transition:border-color .12s}
+.cal-out{background:transparent;border-color:transparent}
+.cal-has{cursor:pointer}
+.cal-has:hover{border-color:var(--primary)}
+.cal-today{border-color:var(--primary);border-width:2px;padding:4px}
+.cal-today .cal-num{color:var(--primary);font-weight:700}
+.cal-num{font-size:12px;color:var(--ink-muted);margin-bottom:3px;text-align:right}
+.cal-chip{font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;margin-bottom:2px;display:flex;align-items:center;gap:3px}
+.cal-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}
+.cal-more{font-size:10px;color:var(--ink-muted)}
+.cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
+.cal-key span{display:flex;align-items:center;gap:5px}
+@media (max-width:640px){
+  .cal-cell{min-height:60px;padding:3px}
+  .cal-chip{font-size:0;margin-bottom:3px}
+  .cal-chip .cal-dot{width:7px;height:7px}
+  .cal-more{font-size:9px}
+}
+@media print{
     .rail,.tabbar,.topbar,.banner,.btnrow,.chips,.sheet,.overlay,.toasts,.back{display:none!important;}
     .content{padding:0;max-width:none;}
     .print-head{display:block!important;border:none;padding:0 0 10px;}
@@ -2343,6 +2421,99 @@ function pendingRows(list, canDecide){
     </div></div>`).join('');
 }
 
+/* ══════════════════ THE REP MANAGER'S VIEW ══════════════════
+ * Built for Mel. The office Overview answers "how is the network doing";
+ * this answers "how are my reps doing" — who is behind, who is carrying too
+ * much, and which groups nobody has been to see.
+ */
+function repScorecard(){
+  const reps = [...new Set(S.rings.map(r=>r.repId).filter(Boolean))];
+  return reps.map(id=>{
+    const rings = S.rings.filter(r=>r.repId===id);
+    const name = (rings[0] && rings[0].repName) || pname(id);
+    const due = S.activities.filter(a=>a.repId===id && a.nextDue);
+    const overdue = due.filter(a=>days(a.nextDue)<0);
+    const soon = due.filter(a=>days(a.nextDue)>=0 && days(a.nextDue)<=14);
+    const logged = S.activities.filter(a=>a.repId===id && a.date && days(a.date)>=-30 && a.outcome);
+    const members = rings.reduce((n,r)=>n+(r.serverMemberCount||ringMembers(r.id).length),0);
+    const neverVisited = rings.filter(r=>!r.lastRepVisit).length;
+    const noRhythm = rings.filter(r=>r.status==='active' && !r.meetingRhythm).length;
+    const hrs = S.timeEntries.filter(t=>t.loginId===id||t.repId===id)
+      .reduce((n,t)=>n+Number(t.hours||0),0);
+    return { id, name, rings:rings.length, members, overdue:overdue.length,
+             soon:soon.length, logged:logged.length, neverVisited, noRhythm, hrs };
+  }).sort((a,b)=> b.overdue-a.overdue || b.rings-a.rings);
+}
+
+function vManager(){
+  const cards = repScorecard();
+  if(!cards.length) return `<div class="section-head"><div><h2>Rep manager</h2>
+    <div class="sub">How each rep is doing.</div></div></div>
+    ${emptyState('reps', 'No rings are assigned to anyone yet.')}`;
+
+  const totalRings = cards.reduce((n,c)=>n+c.rings,0);
+  const avg = totalRings / cards.length;
+  const heavy = cards.filter(c=>c.rings > avg*1.5);
+  const behind = cards.filter(c=>c.overdue>0);
+  const silent = cards.filter(c=>c.logged===0);
+  const totalOverdue = cards.reduce((n,c)=>n+c.overdue,0);
+
+  const bar = (val, max, cls) => {
+    const pct = max ? Math.round((val/max)*100) : 0;
+    return `<div class="bar ${cls||''}" style="height:6px;margin:5px 0 0"><span style="width:${pct}%"></span></div>`;
+  };
+  const maxRings = Math.max(...cards.map(c=>c.rings));
+
+  return `<div class="section-head"><div><h2>Rep manager</h2>
+    <div class="sub">How each rep is doing — load, calls due, and groups nobody has visited.</div></div>
+    <button class="btn" onclick="ui.report='rep-coverage';exportReport()">Export CSV</button></div>
+
+    <div class="stats">
+      <div class="stat"><div class="n">${cards.length}</div><div class="l">Reps</div></div>
+      <div class="stat"><div class="n">${totalRings}</div><div class="l">Rings covered</div></div>
+      <div class="stat click" onclick="ui.mgrFilter='behind';renderContent()">
+        <div class="n" style="color:${totalOverdue?'var(--rust)':'var(--ink)'}">${totalOverdue}</div>
+        <div class="l">Calls overdue</div></div>
+      <div class="stat"><div class="n">${Math.round(avg*10)/10}</div><div class="l">Rings per rep</div></div>
+    </div>
+
+    ${heavy.length?`<div class="callout rust"><strong>${heavy.length===1?'One rep is':'Some reps are'} carrying well above average</strong>
+      ${heavy.map(c=>`${esc(c.name)} has ${c.rings} rings against an average of ${Math.round(avg)}`).join('; ')}.
+      <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="setView('coverage')">Look at coverage</button></div></div>`:''}
+
+    ${silent.length?`<div class="callout"><strong>${silent.length} rep${silent.length===1?' has':'s have'} logged nothing in 30 days</strong>
+      ${silent.slice(0,5).map(c=>esc(c.name)).join(', ')}${silent.length>5?` and ${silent.length-5} more`:''}.
+      Either they aren't using the app yet, or they're not making the calls.</div>`:''}
+
+    <h3 class="sub-h">Each rep</h3>
+    ${cards.map(c=>`<div class="card" style="margin-bottom:10px;padding:14px 16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:160px">
+          <div class="row-title">${esc(c.name)}</div>
+          <div class="row-sub">${c.rings} ring${c.rings===1?'':'s'} · ${c.members} member${c.members===1?'':'s'}</div>
+          ${bar(c.rings, maxRings, c.rings>avg*1.5?'bad':'')}
+        </div>
+        <div style="display:flex;gap:14px;text-align:center;flex-wrap:wrap">
+          <div><div style="font-size:19px;font-weight:700;color:${c.overdue?'var(--rust)':'var(--ink-muted)'}">${c.overdue}</div>
+            <div class="row-sub">overdue</div></div>
+          <div><div style="font-size:19px;font-weight:700">${c.soon}</div>
+            <div class="row-sub">due soon</div></div>
+          <div><div style="font-size:19px;font-weight:700;color:${c.logged?'var(--primary)':'var(--ink-muted)'}">${c.logged}</div>
+            <div class="row-sub">logged 30d</div></div>
+          <div><div style="font-size:19px;font-weight:700;color:${c.neverVisited?'var(--rust)':'var(--ink-muted)'}">${c.neverVisited}</div>
+            <div class="row-sub">never visited</div></div>
+        </div>
+      </div>
+      <div class="btnrow" style="margin-top:10px">
+        <button class="btn sm" onclick="previewAsRep('${esc(c.id)}','${esc(c.name)}')">See their screen</button>
+        ${c.noRhythm?`<span class="tag soon">${c.noRhythm} ring${c.noRhythm===1?'':'s'} with no meeting rhythm</span>`:''}
+      </div>
+    </div>`).join('')}
+
+    ${behind.length?'':`<div class="callout ok"><strong>Nobody is behind</strong>Every scheduled call is still within its window.</div>`}
+  `;
+}
+
 /* ══════════════════ MODALS ══════════════════ */
 function openModal(h){ document.getElementById('modalBody').innerHTML=h; document.getElementById('overlay').classList.add('open'); }
 function closeModal(){ document.getElementById('overlay').classList.remove('open'); document.getElementById('modalBody').innerHTML=''; }
@@ -2657,6 +2828,7 @@ function navItems(){
   ];
   const base = [
     ['dash','Overview','◉'],
+    ['manager','Rep manager','⚑'],
     ['approvals','Approvals','⬡'],
     ['members','Members','☰'],
     ['allrings','Rings','◎'],
@@ -2675,7 +2847,7 @@ function navGroups(){
     ['Admin', [['timesheet','Hours & expenses'],['resources','Web Toolbox'],['callsheet','Call sheet']]],
   ];
   const office = [
-    ['', [['dash','Overview'],['approvals','Approvals'],['calendar','Calendar']]],
+    ['', [['dash','Overview'],['manager','Rep manager'],['approvals','Approvals'],['calendar','Calendar']]],
     ['Records', [['members','Members'],['allrings','Rings'],['visits','Visits'],['unaffiliated','No ring yet']]],
     ['Reporting', [['reports','Reports'],['coverage','Coverage'],['insights','Retention'],['timesheet','Hours & expenses']]],
   ];
@@ -2697,16 +2869,22 @@ function openRing(id){ ui.ringId=id; ui.view='ringDetail'; closeSheet(); render(
 function openMember(id){ ui.memberId=id; ui.view='memberDetail'; closeSheet(); render(); }
 function openFac(id){ ui.facId=id; ui.view='facDetail'; closeSheet(); render(); }
 function login(id){ ui.me=id; ui.view=PEOPLE.find(p=>p.id===id).role==='rep'?'today':'dash'; render(); }
-function logout(){ API.setToken(null); ui.me=null; previewRepId=null; render(); }
+function logout(){ API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
 
 /**
  * Office/director only: look at the app exactly as one rep sees it.
  * Useful before rollout — and the only honest way to check a rep's screen
  * without logging in as them.
  */
+let officeIdBeforePreview = null;
 async function previewAsRep(id, name){
   previewRepId = id || null;
   if(name && !PEOPLE.some(p=>p.id===id)) PEOPLE.push({id, name, role:'rep', region:''});
+  // Every screen filters on ui.me, so the preview has to swap that too —
+  // setting previewRepId alone left the rep looking at the office's scope,
+  // which is why their rings and people came up empty.
+  if(officeIdBeforePreview === null) officeIdBeforePreview = ui.me;
+  ui.me = id;
   ui.view = 'today'; ui.ringId=null; ui.memberId=null; ui.eventId=null; ui.q='';
   ui.calRep = null;
   closeSheet(); closeModal(); render();
@@ -2715,6 +2893,7 @@ async function previewAsRep(id, name){
 }
 async function endPreview(){
   previewRepId = null;
+  if(officeIdBeforePreview !== null){ ui.me = officeIdBeforePreview; officeIdBeforePreview = null; }
   ui.view = 'team';
   render();
   await loadFromServer();
@@ -3233,7 +3412,7 @@ function renderContentInner(el){
     el.innerHTML=v==='rings'?vMyRings():v==='people'?vPeople():v==='requests'?vRequests():v==='progress'?vMyProgress():vToday();
     return;
   }
-  el.innerHTML=v==='approvals'?vApprovals():v==='coverage'?vCoverage():v==='reports'?vReports()
+  el.innerHTML=v==='manager'?vManager():v==='approvals'?vApprovals():v==='coverage'?vCoverage():v==='reports'?vReports()
     :v==='members'?vMembersAll():v==='allrings'?vAllRings():v==='insights'?vInsights()
     :v==='team'?(API.live && (serverUsers===null||zohoReps===null) ? (setTimeout(loadUsers,0), vTeam()) : vTeam()):v==='reminders'?vReminders():v==='settings'?vSettings():vOfficeDash();
 }
@@ -3364,61 +3543,90 @@ function calendarItems(repId) {
 }
 
 /* ══════════════════ CALENDAR ══════════════════ */
+/**
+ * Month grid. The list was fine for "what's next" but useless for planning —
+ * you could not see that two summits fell in the same week. Grid by default,
+ * list still a tap away.
+ */
 function vCalendar() {
   const repId = isRep() ? ui.me : (ui.calRep || null);
   const items = calendarItems(repId).filter(i => !ui.calFilter || ui.calFilter === 'all' || i.kind === ui.calFilter);
-  const upcoming = items.filter(i => days(i.date) >= -1);
 
-  const byMonth = {};
-  upcoming.forEach(i => {
-    const k = i.date.slice(0, 7);
-    (byMonth[k] = byMonth[k] || []).push(i);
-  });
+  if(!ui.calMonth){
+    const t = new Date();
+    ui.calMonth = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}`;
+  }
+  const [yy, mm] = ui.calMonth.split('-').map(Number);
+  const first = new Date(Date.UTC(yy, mm-1, 1));
+  const daysInMonth = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
+  const startDow = first.getUTCDay();                 // 0 = Sunday
+  const monthName = first.toLocaleDateString('en-US', { month:'long', year:'numeric', timeZone:'UTC' });
 
-  const icon = k => k === 'event' ? '◆' : k === 'visit' ? '◉' : '○';
-  const label = k => k === 'event' ? 'Local event' : k === 'visit' ? 'Ring visit' : 'Group meeting';
+  const byDay = {};
+  items.forEach(i => { (byDay[i.date] = byDay[i.date] || []).push(i); });
 
-  const body = Object.keys(byMonth).sort().map(mk => {
-    const [y, m] = mk.split('-');
-    return `<h3 class="sub-h">${MONTHS[parseInt(m, 10) - 1]} ${y}</h3>` + byMonth[mk].map(i => `
-      <div class="row ${i.kind === 'event' ? 'clicky' : ''}" ${i.kind === 'event' ? `onclick="openEvent('${i.id}')"` : ''}>
-        <div style="display:flex;gap:11px;align-items:flex-start;flex:1;min-width:0">
-          <div style="text-align:center;min-width:42px">
-            <div style="font-family:'Fraunces',serif;font-size:19px;line-height:1">${parseInt(i.date.slice(8), 10)}</div>
-            <div class="row-sub" style="margin:0;font-size:11px">${new Date(i.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })}</div>
-          </div>
-          <div class="row-main">
-            <div class="row-title">${esc(i.title)}</div>
-            <div class="row-sub">${i.time ? esc(i.time) + ' · ' : ''}${esc(i.sub)}</div>
-          </div>
-        </div>
-        <div style="text-align:right">
-          <span class="tag ${i.kind === 'event' ? 'info' : i.kind === 'visit' ? 'ok' : 'later'}">${icon(i.kind)} ${label(i.kind)}</span>
-          ${i.regs ? `<div class="row-sub" style="margin-top:3px">${i.regs} registered</div>` : ''}
-        </div>
-      </div>`).join('');
-  }).join('') || emptyState('events and meetings', 'Nothing scheduled ahead.');
+  const shiftMonth = n => {
+    const d = new Date(Date.UTC(yy, mm-1+n, 1));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`;
+  };
+  const dot = k => k==='event' ? 'var(--rust)' : k==='visit' ? 'var(--info)' : 'var(--primary)';
+  const todayIso = TODAY_S;
 
-  return `<div class="section-head">
-      <div><h2>Calendar</h2><div class="sub">Local events, ring visits, and when each of your groups meets.</div></div>
-      ${isOffice() ? `<select class="sel" onchange="ui.calRep=this.value||null;renderContent()">
-        <option value="">All reps</option>
-        ${PEOPLE.filter(p => p.role === 'rep').map(p => `<option value="${p.id}" ${p.id === ui.calRep ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-      </select>` : ''}
+  const cells = [];
+  for(let i=0;i<startDow;i++) cells.push('<div class="cal-cell cal-out"></div>');
+  for(let d=1; d<=daysInMonth; d++){
+    const iso = `${yy}-${String(mm).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const list = byDay[iso] || [];
+    const isToday = iso === todayIso;
+    cells.push(`<div class="cal-cell${isToday?' cal-today':''}${list.length?' cal-has':''}"
+      ${list.length?`onclick="ui.calDay='${iso}';renderContent()"`:''}>
+      <div class="cal-num">${d}</div>
+      ${list.slice(0,3).map(i=>`<div class="cal-chip" title="${esc(i.title)}">
+        <span class="cal-dot" style="background:${dot(i.kind)}"></span>${esc(i.title)}</div>`).join('')}
+      ${list.length>3?`<div class="cal-more">+${list.length-3} more</div>`:''}
+    </div>`);
+  }
+  while(cells.length % 7) cells.push('<div class="cal-cell cal-out"></div>');
+
+  const dayList = ui.calDay ? (byDay[ui.calDay] || []) : [];
+
+  return `<div class="section-head"><div><h2>Calendar</h2>
+    <div class="sub">Local events, ring visits, and when each of your groups meets.</div></div>
+    ${isOffice()?`<select class="sel" onchange="ui.calRep=this.value||null;renderContent()">
+      <option value="">All reps</option>
+      ${PEOPLE.filter(p=>p.role==='rep').map(p=>`<option value="${p.id}" ${ui.calRep===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
+    </select>`:''}</div>
+
+    <div class="chips">${[['all','Everything'],['event','Local events'],['visit','Ring visits'],['meeting','Group meetings']]
+      .map(([k,l])=>`<button class="chip ${((ui.calFilter||'all')===k)?'on':''}" onclick="ui.calFilter='${k}';renderContent()">${l}</button>`).join('')}</div>
+
+    <div class="cal-head">
+      <button class="btn sm" onclick="ui.calMonth='${shiftMonth(-1)}';ui.calDay=null;renderContent()">‹</button>
+      <strong>${monthName}</strong>
+      <button class="btn sm" onclick="ui.calMonth='${shiftMonth(1)}';ui.calDay=null;renderContent()">›</button>
+      <button class="btn sm" onclick="ui.calMonth=null;ui.calDay=null;renderContent()">Today</button>
+      <span style="flex:1"></span>
+      ${isOffice()&&API.live?`<button class="btn sm primary" onclick="openEventForm()">Add an event</button>`:''}
+      <button class="btn sm" onclick="window.print()">Print</button>
     </div>
-    <div class="chips">
-      ${[['all', 'Everything'], ['event', 'Local events'], ['visit', 'Ring visits'], ['meeting', 'Group meetings']].map(([k, l]) =>
-        `<button class="chip ${(ui.calFilter || 'all') === k ? 'on' : ''}" onclick="ui.calFilter='${k}';renderContent()">${l}</button>`).join('')}
+
+    <div class="cal-dow">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div>${d}</div>`).join('')}</div>
+    <div class="cal-grid">${cells.join('')}</div>
+
+    <div class="cal-key">
+      <span><span class="cal-dot" style="background:var(--rust)"></span>Local event</span>
+      <span><span class="cal-dot" style="background:var(--info)"></span>Ring visit</span>
+      <span><span class="cal-dot" style="background:var(--primary)"></span>Group meeting</span>
     </div>
-    ${isOffice() && ui.calRep ? `<div class="callout info" style="font-size:12.5px">
-      Showing ${esc(pname(ui.calRep) || 'this rep')}'s visits and group meetings. Summits and info meetings
-      have no rep set in Zoho, so they appear for everyone.</div>` : ''}
-    <div class="btnrow" style="margin-bottom:14px">
-      ${isRep() ? `<button class="btn primary" onclick="openVisit()">Schedule a ring visit</button>` : ''}
-      ${isOffice() ? `<button class="btn primary" onclick="openEventForm()">Add an event</button>` : ''}
-      <button class="btn" onclick="window.print()">Print</button>
-    </div>
-    ${body}`;
+
+    ${ui.calDay ? `<h3 class="sub-h">${fmt(ui.calDay)}</h3>
+      ${dayList.length ? dayList.map(i=>`<div class="row clicky" onclick="${i.go||''}">
+        <div class="row-main"><div class="row-title">${esc(i.title)}</div>
+          <div class="row-sub">${esc(i.sub||'')}</div></div>
+        <span class="tag ${i.kind==='event'?'info':'later'}">${i.kind==='event'?'Local event':i.kind==='visit'?'Visit':'Meeting'}</span></div>`).join('')
+        : `<div class="empty">Nothing on this day.</div>`}` : ''}
+
+    ${!items.length ? emptyState('events and meetings', 'Nothing scheduled yet.') : ''}`;
 }
 
 function vEventDetail() {
@@ -4374,7 +4582,33 @@ function openPrintable(title, bodyHTML) {
     .rcpt{page-break-before:always;}
     .rcpt img{max-width:100%;max-height:230mm;border:1px solid #ccc;}
     .rcpt h2{font-size:13px;margin:0 0 8px;}
-    @media print{.noprint{display:none;}}
+    /* ── month calendar ── */
+.cal-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px;flex-wrap:wrap}
+.cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+.cal-dow div{font-size:11px;font-weight:600;color:var(--ink-muted);text-align:center;
+  text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-cell{background:var(--card);border:1px solid var(--line);border-radius:7px;
+  min-height:86px;padding:5px 5px 4px;overflow:hidden;transition:border-color .12s}
+.cal-out{background:transparent;border-color:transparent}
+.cal-has{cursor:pointer}
+.cal-has:hover{border-color:var(--primary)}
+.cal-today{border-color:var(--primary);border-width:2px;padding:4px}
+.cal-today .cal-num{color:var(--primary);font-weight:700}
+.cal-num{font-size:12px;color:var(--ink-muted);margin-bottom:3px;text-align:right}
+.cal-chip{font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;margin-bottom:2px;display:flex;align-items:center;gap:3px}
+.cal-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}
+.cal-more{font-size:10px;color:var(--ink-muted)}
+.cal-key{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--ink-muted)}
+.cal-key span{display:flex;align-items:center;gap:5px}
+@media (max-width:640px){
+  .cal-cell{min-height:60px;padding:3px}
+  .cal-chip{font-size:0;margin-bottom:3px}
+  .cal-chip .cal-dot{width:7px;height:7px}
+  .cal-more{font-size:9px}
+}
+@media print{.noprint{display:none;}}
   </style></head><body><div class="wrap">
     <div class="noprint" style="font-family:system-ui;background:#F2F5EC;border:1px solid #DCE0CE;border-radius:8px;padding:11px 14px;margin-bottom:16px;font-size:13px;">
       Use your browser's Print dialog and choose <strong>Save as PDF</strong> as the destination.
