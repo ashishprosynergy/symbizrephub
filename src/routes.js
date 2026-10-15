@@ -207,6 +207,97 @@ r.post('/auth/request-link', wrap(async (req, res) => {
   res.json(same);
 }));
 
+/**
+ * Choose or reset a password.
+ *
+ * Used two ways: the invitation a new rep gets, and "I've forgotten mine".
+ * Both send a link to the address on file, so only the person who owns that
+ * inbox can set the password — nobody can set someone else's by knowing
+ * their email.
+ */
+async function sendPasswordLink(user, req, { invite } = {}) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const hours = invite ? 72 : 2;
+  const expires = new Date(Date.now() + hours * 3600000).toISOString();
+  await q.addLoginToken(token, user.id, expires, req.ip, 'setpassword');
+  const url = `${siteUrl(req)}/?setup=${token}`;
+  return reminders.sendEmail(user.email,
+    invite ? 'Set up your Rep Hub password' : 'Reset your Rep Hub password',
+    passwordLinkEmail({ name: user.name, url, invite, hours }),
+    { userId: user.id, kind: invite ? 'invite' : 'reset' });
+}
+
+function passwordLinkEmail({ name, url, invite, hours }) {
+  return `<!doctype html><html><body style="margin:0;background:#F2F5EC;font-family:-apple-system,Segoe UI,Arial,sans-serif;">
+  <div style="max-width:480px;margin:0 auto;padding:26px 18px;">
+    <h1 style="font-size:18px;color:#1E2A20;margin:0 0 8px;">
+      ${invite ? 'Welcome to Rep Hub' : 'Reset your password'}</h1>
+    <p style="color:#5A6455;font-size:14px;line-height:1.6;margin:0 0 20px;">
+      ${esc((name||'').split(' ')[0] || 'Hello')}, ${invite
+        ? 'your account is ready. Choose a password and you are in.'
+        : 'tap below to choose a new password.'}</p>
+    <a href="${url}" style="display:inline-block;background:#2E5132;color:#fff;text-decoration:none;
+       padding:13px 26px;border-radius:8px;font-weight:600;font-size:15px;">
+      ${invite ? 'Choose my password' : 'Set a new password'}</a>
+    <p style="color:#8A9284;font-size:12.5px;line-height:1.6;margin:20px 0 0;">
+      This link works once and expires in ${hours} hour${hours===1?'':'s'}.
+      ${invite ? '' : "If you didn't ask for this, ignore it — your password has not changed."}</p>
+    <p style="color:#8A9284;font-size:11.5px;margin-top:18px;word-break:break-all;">${esc(url)}</p>
+    <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network · 800-394-7970</p>
+  </div></body></html>`;
+}
+
+/** "I've forgotten my password." Same answer whether or not the account exists. */
+r.post('/auth/forgot', wrap(async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const same = { ok: true, message: 'If that address has an account, a reset link is on its way.' };
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'That does not look like an email address' });
+
+  const user = await q.userByEmail(email);
+  if (!user || user.active === false) return res.json(same);
+
+  const recent = await q.recentTokenCount(user.id);
+  if ((recent?.c || 0) >= 5) return res.json(same);
+
+  const sent = await sendPasswordLink(user, req);
+  if (sent && sent.ok === false) {
+    return res.status(503).json({ error: 'Email is not switched on for this site, so no link could be sent. Ask the office to reset it for you.' });
+  }
+  await audit(user.id, 'auth.forgotRequested', {}, req.ip);
+  res.json(same);
+}));
+
+/** Check a setup link before showing the form, so a dead link fails early. */
+r.post('/auth/check-setup', wrap(async (req, res) => {
+  const row = await q.findLoginToken(String(req.body?.token || ''));
+  if (!row || row.purpose !== 'setpassword') return res.status(401).json({ error: 'That link is not valid. Ask for a new one.' });
+  if (row.used_at) return res.status(401).json({ error: 'That link has already been used. Ask for a new one.' });
+  if (new Date(row.expires_at) < new Date()) return res.status(401).json({ error: 'That link has expired. Ask for a new one.' });
+  const user = await q.userById(row.user_id);
+  if (!user || user.active === false) return res.status(401).json({ error: 'That account is no longer active' });
+  res.json({ ok: true, name: user.name, email: user.email });
+}));
+
+/** Set the password and sign them straight in. */
+r.post('/auth/set-password', wrap(async (req, res) => {
+  const token = String(req.body?.token || '');
+  const password = String(req.body?.password || '');
+  if (password.length < 8) return res.status(400).json({ error: 'Use at least 8 characters' });
+
+  const row = await q.findLoginToken(token);
+  if (!row || row.purpose !== 'setpassword') return res.status(401).json({ error: 'That link is not valid' });
+  if (row.used_at) return res.status(401).json({ error: 'That link has already been used' });
+  if (new Date(row.expires_at) < new Date()) return res.status(401).json({ error: 'That link has expired' });
+
+  const user = await q.userById(row.user_id);
+  if (!user || user.active === false) return res.status(401).json({ error: 'That account is no longer active' });
+
+  await q.setPassword(auth.hash(password), user.id);
+  await q.useLoginToken(token);
+  await audit(user.id, 'auth.passwordSet', {}, req.ip);
+  res.json({ token: auth.issue(user), user: auth.publicUser(user) });
+}));
+
 /** Exchange a link for a session. Single use, time limited. */
 r.post('/auth/verify-link', wrap(async (req, res) => {
   const token = String(req.body?.token || '');
@@ -954,6 +1045,12 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
     return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
   }).join(',')).join('\n');
 
+  // Name who approved what, and reply to them. Sending from their own mailbox
+  // would mean holding their password, which nobody should give an app.
+  const approverIds = [...new Set([...t, ...e].map(x => x.approved_by).filter(Boolean))];
+  const approverUsers = (await q.allUsers()).filter(u => approverIds.includes(u.id));
+  const byLine = approverUsers.length ? `Approved by ${approverUsers.map(u => u.name).join(', ')}.` : '';
+
   const sent = await reminders.sendEmail(to, `Rep hours and expenses — ${today()}`,
     `<p>${t.length} time entries and ${e.length} expenses approved for payment. ${esc(byLine)}</p>
      <p>Total: ${t.reduce((s, x) => s + Number(x.hours), 0)} hours, $${e.reduce((s, x) => s + Number(x.amount), 0).toFixed(2)}</p>
@@ -1237,13 +1334,14 @@ r.post('/admin/users/from-zoho', auth.authRequired, auth.requireAdmin, wrap(asyn
   await audit(req.user.id, 'user.createdFromZoho', { id, contactId, email }, req.ip);
 
   // Send them their login rather than making the office copy it into an email
+  // Invite them to choose their own password rather than mailing one out.
+  // A password in an inbox stays there forever; a link expires.
   let emailed = false;
   if (req.body?.sendEmail !== false) {
-    const r = await reminders.sendEmail(email, 'Your Symbiz Rep Hub login',
-      welcomeEmail({ name, email, password: temp }), { userId: id, kind: 'welcome' });
-    emailed = !!(r && r.ok === true);
+    const sent = await sendPasswordLink({ id, name, email }, req, { invite: true });
+    emailed = !!(sent && sent.ok === true);
   }
-  res.status(201).json({ id, tempPassword: temp, emailed });
+  res.status(201).json({ id, tempPassword: emailed ? undefined : temp, emailed, invited: emailed });
 }));
 
 /**
@@ -1367,14 +1465,17 @@ r.post('/admin/users/:id/resend', auth.authRequired, auth.requireOffice, wrap(as
   const users = await q.allUsers();
   const u = users.find(x => x.id === req.params.id);
   if (!u) return res.status(404).json({ error: 'No such account' });
+  // Prefer sending a link so they choose their own. Only fall back to a
+  // generated password when email cannot go out, so nobody is locked out.
+  const sent = await sendPasswordLink(u, req, { invite: false });
+  if (sent && sent.ok === true) {
+    await audit(req.user.id, 'user.resetLinkSent', { id: u.id }, req.ip);
+    return res.json({ emailed: true, sentTo: u.email });
+  }
   const temp = makePassword();
   await q.setPassword(auth.hash(temp), u.id);
-  // Returned regardless of whether the email goes, so nobody is locked out
-  // by an unconfigured mail server.
-  const r2 = await reminders.sendEmail(u.email, 'Your Symbiz Rep Hub login',
-    welcomeEmail({ name: u.name, email: u.email, password: temp }), { userId: u.id, kind: 'welcome' });
   await audit(req.user.id, 'user.passwordReset', { id: u.id }, req.ip);
-  res.json({ tempPassword: temp, emailed: !!(r2 && r2.ok) });
+  res.json({ tempPassword: temp, emailed: false });
 }));
 
 r.delete('/admin/users/:id', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
