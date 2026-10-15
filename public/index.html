@@ -3823,7 +3823,9 @@ function loginScreen(){
         <button class="btn sm" onclick="resendCode()">Send another</button>
         <button class="btn sm" onclick="ui.codeFor=null;ui.authMode='signin';render()">Back</button>
       </div>
-      <p class="row-sub" style="margin-top:10px;text-align:center">It expires in 15 minutes. Check spam if it hasn't arrived.</p>
+      <p class="row-sub" style="margin-top:10px;text-align:center">
+        It expires in 15 minutes. If you asked for more than one, use the newest —
+        older codes stop working.</p>
     </div>`);
   }
 
@@ -3936,8 +3938,16 @@ async function doVerifyCode(e){
 }
 
 async function resendCode(){
-  try{ await API.forgot(ui.codeFor); toast('Another code is on its way'); }
-  catch(e){ toast(e.message || 'Could not send another'); }
+  const btn = event && event.target;
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+  try{
+    await API.forgot(ui.codeFor);
+    toast('A new code is on its way — the old one no longer works');
+  }catch(e){
+    toast(e.message || 'Could not send another');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = 'Send another'; }
+  }
 }
 
 /** The one-time sign-in link, from whatever is in the email box. */
@@ -4242,7 +4252,9 @@ const adapt = {
                : /cancel/i.test(r.status || '') ? 'Cancelled'
                : r.status === 'Tentative' ? 'Maybe' : 'No',
       attended: r.attended || '',
-      guests: r.bringingGuest ? 1 : 0,
+      // Full guest records from Zoho's subform, not just a count
+      guestList: Array.isArray(r.guests) ? r.guests : [],
+      guests: Array.isArray(r.guests) ? r.guests.length : (r.bringingGuest ? 1 : 0),
       guestName: r.guestName || '',
       guestType: r.guestType || '',
       guestBusiness: r.guestBusiness || '',
@@ -4821,7 +4833,8 @@ function vEventDetail() {
             ${a.guestOf?`<span class="pill pill-neutral">${esc(a.kind)}</span>`:''}
             ${a.attended==='Yes'?`<span class="pill pill-green">came</span>`:''}</div>
           <div class="att-sub">${a.guestOf
-            ? `${esc(a.kind.toLowerCase())} of ${esc(a.guestOf)}${a.business?' · '+esc(a.business):''}`
+            ? [`${esc(a.kind.toLowerCase())} of ${esc(a.guestOf)}`, a.business?esc(a.business):'',
+               a.email?esc(a.email):'', a.address?esc(a.address):''].filter(Boolean).join(' · ')
             : [a.business, a.email].filter(Boolean).map(esc).join(' · ') || '—'}</div>
         </div>
         <div class="att-actions">
@@ -4874,10 +4887,10 @@ function vEventDetail() {
 /** The attendee list as a spreadsheet, for anyone who wants it elsewhere. */
 function exportAttendees(eventId){
   const e = S.events.find(x=>x.id===eventId);
-  const rows = [['Name','Type','Guest of','Business','Phone','Email','Attended']];
+  const rows = [['Name','Type','Guest of','Business','Phone','Email','Address','Attended']];
   attendeeList(eventId).forEach(a=>rows.push([
     a.name||'(name not in Zoho)', a.guestOf?a.kind:'Registered', a.guestOf||'',
-    a.business||'', a.phone||'', a.email||'', a.attended||'',
+    a.business||'', a.phone||'', a.email||'', a.address||'', a.attended||'',
   ]));
   downloadCSV(`${(e?e.title:'event').replace(/[^a-z0-9]+/gi,'-').toLowerCase()}-attendees.csv`, rows);
 }
@@ -4904,16 +4917,18 @@ function attendeeList(eventId){
       phone: r.phone || '', email: r.email || '',
       kind: 'Registered', attending: r.attending, attended: r.attended,
     });
-    if(r.guests){
+    // Each guest is a person in their own right, from the Guests subform.
+    (r.guestList && r.guestList.length ? r.guestList : []).forEach((g, i) => {
       out.push({
-        key: r.id + '_g',
-        name: r.guestName || '',               // blank when Zoho has no name yet
-        business: r.guestBusiness || '',
-        phone: r.guestPhone || '', email: r.guestEmail || '',
-        kind: r.guestType || 'Guest',          // Spouse | Other Guest
-        guestOf: r.name, attended: r.guestAttended,
+        key: `${r.id}_g${i}`,
+        name: g.name || '',                    // blank when Zoho holds no name
+        business: g.business || '',
+        phone: g.phone || '', email: g.email || '',
+        address: g.address || '',
+        kind: g.type || 'Guest',               // Spouse | Other Guest
+        guestOf: r.name, attended: g.attended || '',
       });
-    }
+    });
   });
   return out;
 }
@@ -6263,7 +6278,7 @@ const CHECKS = [
       // guests they bring — Keturah asked for both.
       const src = attendeeList.toString() + vEventDetail.toString();
       const hasContact = /phone/i.test(src) && /email/i.test(src) && /tel:/.test(src);
-      const hasGuests = /guestOf/.test(src) && /guestName/.test(attendeeList.toString());
+      const hasGuests = /guestOf/.test(src) && /guestList/.test(attendeeList.toString());
       const loaded = S.registrations || [];
       const shapeOk = loaded.length === 0 || loaded.every(r => 'name' in r && 'phone' in r);
       return hasContact && hasGuests && shapeOk; },
