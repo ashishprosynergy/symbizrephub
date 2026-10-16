@@ -21,6 +21,7 @@ process.env.READ_ONLY = 'false';   // write tests below need writes enabled
 const FAKE_ZOHO_PORT = 19877;
 process.env.ZOHO_API_DOMAIN = `http://127.0.0.1:${FAKE_ZOHO_PORT}`;
 process.env.ZOHO_ACCOUNTS_DOMAIN = `http://127.0.0.1:${FAKE_ZOHO_PORT}`;
+process.env.RECAPTCHA_VERIFY_URL = `http://127.0.0.1:${FAKE_ZOHO_PORT}/recaptcha/siteverify`;
 
 /* ─── in-memory Postgres ─── */
 const { newDb } = require('pg-mem');
@@ -50,6 +51,11 @@ const fakeZoho = http.createServer((req, res) => {
     zohoCalls.push({ method: req.method, path: url.pathname });
     const json = d => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(d)); };
 
+    // fake Google reCAPTCHA: "good" passes
+    if (url.pathname === '/recaptcha/siteverify') {
+      const resp = new URLSearchParams(body).get('response');
+      return json(resp === 'good' ? { success: true } : { success: false, 'error-codes': ['invalid-input-response'] });
+    }
     if (url.pathname === '/oauth/v2/token') {
       if (url.searchParams.get('grant_type') === 'authorization_code') {
         return url.searchParams.get('code') === '1000.good.code'
@@ -1079,9 +1085,56 @@ describe('owner, permissions and 2-step sign-in', () => {
     assert.equal(json(locked).locked, true);
   });
 
-  test('2-step accounts cannot sign in with a link alone', async () => {
+  test('emailed links only set up an account; they never sign anyone in', async () => {
     const res = await invoke('POST', '/auth/request-link', { body: { email: 'admin@test.org' } });
-    assert.equal(res.statusCode, 400);
+    assert.equal(res.statusCode, 200, res.body);
+    assert.ok(!json(res).token, 'no session from asking for a link');
+    assert.ok(mails.some(m => m.to === 'admin@test.org' && /password/i.test(m.subject)), 'a set-up-your-password email');
+    const old = await invoke('POST', '/auth/verify-link', { body: { token: 'a'.repeat(64) } });
+    assert.equal(old.statusCode, 410);
+
+    // Setting the password does not sign in either
+    const row = (await db.query("SELECT token FROM login_tokens WHERE purpose='setpassword' AND user_id='adm1' AND used_at IS NULL ORDER BY created_at DESC"))[0];
+    const set = await invoke('POST', '/auth/set-password', { body: { token: row.token, password: 'correct-horse' } });
+    assert.equal(set.statusCode, 200);
+    assert.ok(!json(set).token, 'password saved, but they still sign in normally');
+  });
+
+  test('the owner can switch any screen off for a role, and approvals are enforced', async () => {
+    const { elevation } = json(await invoke('POST', '/auth/elevate', { token: ownerToken, body: { password: 'correct-horse' } }));
+    const h = { 'x-elevation': elevation };
+    const a = json(await invoke('GET', '/admin/access', { token: ownerToken, headers: h }));
+    assert.equal(a.caps.calendar.group, 'screens');
+    assert.equal(a.perms.staff.approvals, true, 'screens are on by default');
+    await invoke('PUT', '/admin/access', { token: ownerToken, headers: h,
+      body: { perms: { ...a.perms, staff: { ...a.perms.staff, approvals: false, reminders: false } } } });
+    assert.equal((await invoke('POST', '/pending/999/approve', { token: officeToken })).statusCode, 403);
+    assert.equal((await invoke('POST', '/reminders/run', { token: officeToken, body: { kind: 'weekly' } })).statusCode, 403);
+    const me = json(await invoke('GET', '/auth/me', { token: officeToken })).user;
+    assert.equal(me.perms.calendar, true); assert.equal(me.perms.approvals, false);
+  });
+
+  test("Google's robot check, once the owner adds keys", async () => {
+    const { elevation } = json(await invoke('POST', '/auth/elevate', { token: ownerToken, body: { password: 'correct-horse' } }));
+    const h = { 'x-elevation': elevation };
+    const bad = await invoke('PUT', '/admin/access', { token: ownerToken, headers: h, body: { captcha: { siteKey: 'nope', secret: 'x' } } });
+    assert.equal(bad.statusCode, 400);
+    const site = '6Lc' + 'a'.repeat(37), secret = '6Lc' + 'b'.repeat(37);
+    const ok = json(await invoke('PUT', '/admin/access', { token: ownerToken, headers: h, body: { captcha: { siteKey: site, secret } } }));
+    assert.equal(ok.captcha.siteKey, site); assert.equal(ok.captcha.secretSet, true);
+    assert.equal(json(await invoke('GET', '/auth/captcha')).siteKey, site);
+    try {
+      const none = await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse' } });
+      assert.equal(none.statusCode, 400); assert.equal(json(none).captcha, true);
+      const robot = await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse', captcha: 'bad' } });
+      assert.equal(robot.statusCode, 400);
+      const human = await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse', captcha: 'good' } });
+      assert.equal(human.statusCode, 200, human.body);
+      assert.equal((await invoke('POST', '/auth/forgot', { body: { email: 'rep@test.org' } })).statusCode, 400, 'forgot needs it too');
+    } finally {
+      await invoke('PUT', '/admin/access', { token: ownerToken, headers: h, body: { captcha: { siteKey: '', secret: '' } } });
+    }
+    assert.equal(json(await invoke('GET', '/auth/captcha')).siteKey, null, 'switched off again');
   });
 });
 

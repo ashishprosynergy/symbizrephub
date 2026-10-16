@@ -234,42 +234,33 @@ async function findOrCreateAccount(email) {
 const NO_ACCOUNT = 'There is no Rep Hub account for that email, and it is not a rep\'s email in Symbiz\'s records. ' +
   'Check it is the address the office has for you, or ask Keturah or Mel to add you.';
 
+/**
+ * An emailed link now only SETS UP an account: it opens "choose your
+ * password", and the person then signs in like anyone else (with the code,
+ * if their role uses 2-step). A link that signed straight in gave full access
+ * to whoever held the inbox.
+ */
 r.post('/auth/request-link', wrap(async (req, res) => {
+  if (!(await humanCheck(req, res))) return;
   const email = String(req.body?.email || '').trim().toLowerCase();
-  const same = { ok: true, message: 'If that address has an account, a sign-in link is on its way.' };
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'That does not look like an email address' });
 
   const user = await findOrCreateAccount(email);
   if (!user) return res.status(404).json({ error: NO_ACCOUNT, noAccount: true });
-  // A link proves only the inbox. Accounts with 2-step sign-in need the password too.
-  if (await access.needsTwoStep(user)) {
-    return res.status(400).json({ error: 'This account signs in with a password and an emailed code. Use your password instead.' });
-  }
 
-  const recent = await q.recentTokenCount(user.id, 'signin');
+  const recent = await q.recentTokenCount(user.id, 'setpassword');
   if ((recent?.c || 0) >= 8) {
-    return res.json({ ...same, message: 'A link was sent recently — check your inbox, including spam.' });
+    return res.json({ ok: true, message: 'A link was sent recently — check your inbox, including spam.' });
   }
-
-  const token = crypto.randomBytes(32).toString('hex');
-  const minutes = 20;
-  const expires = new Date(Date.now() + minutes * 60000).toISOString();
-  await q.addLoginToken(token, user.id, expires, req.ip);
   await q.purgeOldTokens().catch(() => {});
-
-  const url = `${siteUrl(req)}/?token=${token}`;
-  const sent = await reminders.sendEmail(user.email, 'Your Rep Hub sign-in link',
-    signInEmail({ name: user.name, url, minutes }), { userId: user.id, kind: 'signin' });
-
+  const sent = await sendPasswordLink(user, req, { invite: !user.last_login_at });
   if (sent && sent.ok === false) {
-    return res.status(503).json({
-      error: sent.skipped
-        ? 'Email is not switched on for this site yet, so no link could be sent. Sign in with your password instead.'
-        : 'The email could not be sent just now. Try again in a minute, or sign in with your password.',
-    });
+    return res.status(503).json({ error: sent.skipped
+      ? 'Email is not switched on for this site yet, so no link could be sent.'
+      : 'The email could not be sent just now. Try again in a minute.' });
   }
-  await audit(user.id, 'auth.linkRequested', { email }, req.ip);
-  res.json(same);
+  await audit(user.id, 'auth.setupLinkRequested', { email }, req.ip);
+  res.json({ ok: true, message: 'We have emailed a link to set up your account.' });
 }));
 
 /**
@@ -321,6 +312,41 @@ async function sendCode(user, req, purpose = 'otp') {
     </div></body></html>`,
     { userId: user.id, kind: purpose });
 }
+
+/* ── "I'm not a robot" (Google reCAPTCHA v2) on the sign-in screens ──
+   Off until the owner pastes keys into Access & security. Fails OPEN when
+   the keys are wrong or Google can't be reached, and says so in the
+   activity log: a typo in a key must never lock every director out. */
+async function captchaKeys() {
+  return { site: await setting('captcha_site_key', ''), secret: await setting('captcha_secret', '') };
+}
+async function humanCheck(req, res) {
+  const { secret } = await captchaKeys();
+  if (!secret) return true;
+  const token = String(req.body?.captcha || '');
+  if (!token) { res.status(400).json({ error: 'Tick "I\'m not a robot" first.', captcha: true }); return false; }
+  try {
+    const r2 = await fetch(process.env.RECAPTCHA_VERIFY_URL || 'https://www.google.com/recaptcha/api/siteverify', {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ secret, response: token, remoteip: req.ip || '' }), signal: AbortSignal.timeout(5000) });
+    const out = await r2.json();
+    if (out.success) return true;
+    const codes = out['error-codes'] || [];
+    if (codes.some(c => /secret/.test(c))) {
+      await audit(null, 'captcha.misconfigured', { codes }, req.ip);
+      return true;
+    }
+    res.status(400).json({ error: 'The robot check did not pass. Tick the box again.', captcha: true });
+    return false;
+  } catch (e) {
+    console.error('[captcha] could not check with Google:', e.message);
+    return true;
+  }
+}
+r.get('/auth/captcha', wrap(async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=60');
+  res.json({ siteKey: (await captchaKeys()).site || null });
+}));
 
 /** "Chrome on Windows", from a user-agent string, for emails and the device list. */
 function deviceLabel(ua) {
@@ -380,6 +406,7 @@ async function zohoRepFor(email) {
 }
 
 r.post('/auth/signup', wrap(async (req, res) => {
+  if (!(await humanCheck(req, res))) return;
   const name = String(req.body?.name || '').trim();
   const email = String(req.body?.email || '').trim().toLowerCase();
   const password = String(req.body?.password || '');
@@ -506,6 +533,7 @@ function passwordLinkEmail({ name, url, invite, hours }) {
 
 /** "I've forgotten my password." Same answer whether or not the account exists. */
 r.post('/auth/forgot', wrap(async (req, res) => {
+  if (!(await humanCheck(req, res))) return;
   const email = String(req.body?.email || '').trim().toLowerCase();
   const same = { ok: true, message: 'If that address has an account, a code is on its way.' };
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'That does not look like an email address' });
@@ -543,7 +571,7 @@ r.post('/auth/check-setup', wrap(async (req, res) => {
   res.json({ ok: true, name: user.name, email: user.email });
 }));
 
-/** Set the password and sign them straight in. */
+/** Set the password. It does not sign them in: they do that next, the normal way. */
 r.post('/auth/set-password', wrap(async (req, res) => {
   const token = String(req.body?.token || '');
   const password = String(req.body?.password || '');
@@ -564,31 +592,17 @@ r.post('/auth/set-password', wrap(async (req, res) => {
   await audit(user.id, 'auth.passwordSet', {}, req.ip);
   // A new password signs out every remembered device
   await q.forgetDevicesFor(user.id).catch(() => {});
-  res.json({ token: auth.issue(user), user: await auth.withAccess(user) });
+  res.json({ ok: true, email: user.email, name: user.name });
 }));
 
-/** Exchange a link for a session. Single use, time limited. */
+/** Old one-tap sign-in links, still sitting in inboxes. They no longer sign anyone in. */
 r.post('/auth/verify-link', wrap(async (req, res) => {
-  const token = String(req.body?.token || '');
-  if (!token) return res.status(400).json({ error: 'No link token' });
-
-  const row = await q.findLoginToken(token);
-  if (!row) return res.status(401).json({ error: 'That link is not valid. Ask for a new one.' });
-  if (row.used_at) return res.status(401).json({ error: 'That link has already been used. Ask for a new one.' });
-  if (new Date(row.expires_at) < new Date()) {
-    return res.status(401).json({ error: 'That link has expired. Ask for a new one.' });
-  }
-
-  const user = await q.userById(row.user_id);
-  if (!user || user.active === false) return res.status(401).json({ error: 'That account is no longer active' });
-
-  await q.useLoginToken(token);       // burn it before issuing the session
-  if (user.email_verified === false) await q.markVerified(user.id);   // the link came from their inbox
-  await audit(user.id, 'auth.linkUsed', {}, req.ip);
-  res.json({ token: auth.issue(user), user: await auth.withAccess(user) });
+  res.status(410).json({ error: 'Sign-in links are no longer used. Sign in with your email and password, ' +
+    'or use "Forgotten your password?" to set one.' });
 }));
 
 r.post('/auth/login', wrap(async (req, res) => {
+  if (!(await humanCheck(req, res))) return;
   const { email, password, device } = req.body || {};
   const out = await auth.login(email, password, req.ip, device);
   if (!out) return res.status(401).json({ error: 'Email or password is incorrect' });
@@ -787,6 +801,8 @@ r.patch('/rings/:id', auth.authRequired, writesAllowed, wrap(async (req, res) =>
     if (b.status && b.status !== 'pending') return res.status(403).json({ error: 'Only the office can approve a ring' });
     b.status = 'pending';
     b.rejectionReason = '';
+  } else if (b.status && b.status !== current.status && current.status === 'pending' && !req.user.perms.approvals) {
+    return res.status(403).json({ error: 'Your account cannot approve rings. Ask the owner.' });
   }
   const merged = { ...current, ...b };
   await zoho.updateRecords(M.RING, [{ id: req.params.id, ...toZoho.ring(merged) }]);
@@ -1330,7 +1346,7 @@ r.post('/pending/lead', auth.authRequired, wrap(async (req, res) => {
  * If the Zoho write fails the item stays pending with the reason, so nothing
  * is silently lost and the office can retry.
  */
-r.post('/pending/:id/approve', auth.authRequired, auth.requireOffice, writesAllowed, wrap(async (req, res) => {
+r.post('/pending/:id/approve', auth.authRequired, auth.requireOffice, access.requirePerm('approvals'), writesAllowed, wrap(async (req, res) => {
   const row = await q.oneWriteRequest(parseInt(req.params.id, 10));
   if (!row) return res.status(404).json({ error: 'No such request' });
   if (row.status !== 'pending') return res.status(409).json({ error: `Already ${row.status}` });
@@ -1371,7 +1387,7 @@ r.post('/pending/:id/approve', auth.authRequired, auth.requireOffice, writesAllo
 }));
 
 /** The office sends it back, with a reason the rep can act on. */
-r.post('/pending/:id/reject', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.post('/pending/:id/reject', auth.authRequired, auth.requireOffice, access.requirePerm('approvals'), wrap(async (req, res) => {
   const row = await q.oneWriteRequest(parseInt(req.params.id, 10));
   if (!row) return res.status(404).json({ error: 'No such request' });
   if (row.status !== 'pending') return res.status(409).json({ error: `Already ${row.status}` });
@@ -2307,8 +2323,10 @@ async function accessPayload() {
   const a = await access.load();
   const people = (await q.allUsers()).filter(u => u.role !== 'rep')
     .map(u => ({ id: u.id, name: u.name, email: u.email, role: u.role, owner: u.id === a.ownerId }));
-  return { caps: Object.fromEntries(Object.entries(access.CAPS).map(([k, c]) => [k, { label: c.label, detail: c.detail }])),
-    perms: a.perms, twoStep: a.twoStep, people, ownerId: a.ownerId };
+  const ck = await captchaKeys();
+  return { caps: Object.fromEntries(Object.entries(access.CAPS).map(([k, c]) => [k, { label: c.label, detail: c.detail, group: c.group }])),
+    perms: a.perms, twoStep: a.twoStep, people, ownerId: a.ownerId,
+    captcha: { siteKey: ck.site || '', secretSet: !!ck.secret } };
 }
 
 r.get('/admin/access', auth.authRequired, access.requireOwner, auth.requireElevated, wrap(async (req, res) => {
@@ -2319,7 +2337,21 @@ r.put('/admin/access', auth.authRequired, access.requireOwner, auth.requireEleva
   const b = req.body || {};
   if (b.perms) await access.savePermissions(b.perms);
   if (b.twoStep) await access.saveTwoStep(b.twoStep);
-  await audit(req.user.id, 'access.changed', { perms: b.perms || undefined, twoStep: b.twoStep || undefined }, req.ip);
+  if (b.captcha) {
+    // reCAPTCHA keys are 40 characters of letters, digits, - and _. Blank both to switch it off.
+    const site = String(b.captcha.siteKey || '').trim(), secret = String(b.captcha.secret || '').trim();
+    const ok = s => /^[A-Za-z0-9_-]{20,80}$/.test(s);
+    if (!site && !secret) { await q.setSetting('captcha_site_key', ''); await q.setSetting('captcha_secret', ''); }
+    else {
+      if (!ok(site)) return res.status(400).json({ error: 'That site key does not look right — copy it again from Google.' });
+      if (secret && !ok(secret)) return res.status(400).json({ error: 'That secret key does not look right — copy it again from Google.' });
+      if (!secret && !(await captchaKeys()).secret) return res.status(400).json({ error: 'Paste the secret key as well.' });
+      await q.setSetting('captcha_site_key', site);
+      if (secret) await q.setSetting('captcha_secret', secret);
+    }
+  }
+  await audit(req.user.id, 'access.changed', { perms: b.perms || undefined, twoStep: b.twoStep || undefined,
+    captcha: b.captcha ? (b.captcha.siteKey ? 'on' : 'off') : undefined }, req.ip);
   res.json(await accessPayload());
 }));
 
@@ -2380,7 +2412,7 @@ r.post('/admin/books-disconnect', auth.authRequired, auth.requireAdmin, access.r
 }));
 
 /* ═══════════ REMINDERS (manual trigger / preview) ═══════════ */
-r.post('/reminders/run', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.post('/reminders/run', auth.authRequired, auth.requireOffice, access.requirePerm('reminders'), wrap(async (req, res) => {
   const kind = req.body?.kind || 'weekly';
   const dryRun = req.body?.dryRun !== false;   // default to preview, not blast
   const fn = kind === 'nudge' ? reminders.runOverdueNudge

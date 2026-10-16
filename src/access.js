@@ -11,20 +11,32 @@
  */
 const { q, setting } = require('./db');
 
+/* Screens first (on by default, as before), then the sensitive areas. */
+const screen = (label, detail) => ({ group: 'screens', label, detail, defaults: { admin: true, staff: true } });
 const CAPS = {
-  accounting: { label: 'Hours, expenses and accounting',
+  manager:      screen('Rep manager', 'How each rep is doing: who is behind, workloads, rings never visited.'),
+  approvals:    screen('Approvals', 'Approve or send back new rings and the requests reps send in.'),
+  calendar:     screen('Calendar', 'Events, ring visits and group meetings for every rep.'),
+  members:      screen('Members', 'The member and facilitator lists.'),
+  rings:        screen('Rings', 'Every Growth Ring and its health.'),
+  visits:       screen('Visits', 'Ring visits booked and done.'),
+  unaffiliated: screen('No ring yet', 'Members who are not in a Growth Ring.'),
+  reports:      screen('Reports, coverage and retention', 'The reports, the coverage map and retention.'),
+  team:         screen('Reps screen', 'Who covers what, and seeing a rep\'s own view.'),
+  reminders:    screen('Reminders', 'The reminder emails reps get, and sending them now.'),
+  accounting: { group: 'sensitive', label: 'Hours, expenses and accounting',
     detail: 'Approve hours and expenses, send them to accounting and give the final approval.',
     defaults: { admin: false, staff: false } },
-  books: { label: 'Zoho Books and accounting settings',
+  books: { group: 'sensitive', label: 'Zoho Books and accounting settings',
     detail: 'Connect Zoho Books, choose the expense accounts, the accounting email and the monthly send day.',
     defaults: { admin: false, staff: false } },
-  users: { label: 'Rep accounts',
+  users: { group: 'sensitive', label: 'Rep accounts',
     detail: 'Add and remove rep and office accounts and reset their passwords. Making someone a director is always owner-only.',
     defaults: { admin: true, staff: false } },
-  settings: { label: 'App settings',
+  settings: { group: 'sensitive', label: 'App settings',
     detail: 'Call cadence, reminders, announcements and forms.',
     defaults: { admin: true, staff: true } },
-  system: { label: 'System check and activity log',
+  system: { group: 'sensitive', label: 'System check and activity log',
     detail: 'Email and Zoho diagnostics and the record of who did what.',
     defaults: { admin: false, staff: false } },
 };
@@ -32,9 +44,11 @@ const ROLES = ['admin', 'staff'];
 
 // What office accounts could do before ownership existed (see the routes'
 // old requireOffice / requireAdmin checks). Used until an owner is claimed.
+const SCREENS = Object.keys(CAPS).filter(k => CAPS[k].group === 'screens');
+const allScreens = Object.fromEntries(SCREENS.map(k => [k, true]));
 const LEGACY = {
-  admin: { accounting: true, books: true, users: true, settings: true, system: true },
-  staff: { accounting: true, books: true, users: false, settings: true, system: false },
+  admin: { ...allScreens, accounting: true, books: true, users: true, settings: true, system: true },
+  staff: { ...allScreens, accounting: true, books: true, users: false, settings: true, system: false },
 };
 
 const TWO_STEP_DEFAULTS = { admin: true, staff: true, rep: false };

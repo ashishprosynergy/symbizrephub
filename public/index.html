@@ -275,6 +275,20 @@
   .rp-check{flex:none;color:var(--primary);font-weight:700;}
   .rp-empty{padding:12px;text-align:center;color:var(--ink-muted);font-size:13px;}
   .rp-item[hidden],.rp-empty[hidden],.rp-pop[hidden]{display:none;}
+  /* Steadiness on phones.
+     - With a menu or form open, the page behind no longer scrolls along with
+       it (that dragged the browser's address bar in and out: the up-and-down).
+     - Sheets size to the visible screen (dvh), not the tallest it could be.
+     - Taps act at once: no double-tap-to-zoom wait, no grey flash. */
+  html.modal-open, html.modal-open body{overflow:hidden;}
+  .overlay{overscroll-behavior:contain;}
+  .modal,.sheet{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
+  @supports (height:100dvh){ .modal{max-height:88dvh;} }
+  button,a,.clicky,.chip,.seg,.num,.kpi,.menu-tile,.quick,.rp-item,label{touch-action:manipulation;}
+  *{-webkit-tap-highlight-color:transparent;}
+  .captcha-slot{min-height:78px;margin:2px 0 12px;display:flex;justify-content:center;}
+  .perm-all{background:var(--surface-2);border-radius:8px;padding-left:10px;padding-right:0;}
+
   /* 2-step code screen and the owner's lock screen */
   .ts-mark{width:48px;height:48px;border-radius:50%;margin:2px auto 10px;display:grid;place-items:center;
     background:var(--primary-soft);color:var(--primary);}
@@ -982,7 +996,7 @@ const API = {
       throw err; }
     return res.status === 204 ? null : res.json();
   },
-  login(email,password){ return this.call('/auth/login',{method:'POST',body:JSON.stringify({email,password,device:deviceToken()})}); },
+  login(email,password){ return this.call('/auth/login',{method:'POST',body:JSON.stringify({email,password,device:deviceToken(),captcha:captchaToken()})}); },
   loginCode(challenge,code,trust){ return this.call('/auth/login/code',{method:'POST',body:JSON.stringify({challenge,code,trust})}); },
   loginResend(challenge){ return this.call('/auth/login/resend',{method:'POST',body:JSON.stringify({challenge})}); },
   elevate(password){ return this.call('/auth/elevate',{method:'POST',body:JSON.stringify({password})}); },
@@ -991,11 +1005,11 @@ const API = {
   owner(path, opts){ return this.call(path, { ...(opts||{}), headers: { 'X-Elevation': elevation.token || '' } }); },
   devices(){ return this.call('/auth/devices',{headers:{'X-Device':deviceToken()}}); },
   forgetDevice(id){ return this.call('/auth/devices/'+id,{method:'DELETE'}); },
-  requestLink(email){ return this.call('/auth/request-link',{method:'POST',body:JSON.stringify({email})}); },
+  requestLink(email){ return this.call('/auth/request-link',{method:'POST',body:JSON.stringify({email,captcha:captchaToken()})}); },
   verifyLink(token){ return this.call('/auth/verify-link',{method:'POST',body:JSON.stringify({token})}); },
-  forgot(email){ return this.call('/auth/forgot',{method:'POST',body:JSON.stringify({email})}); },
+  forgot(email){ return this.call('/auth/forgot',{method:'POST',body:JSON.stringify({email,captcha:captchaToken()})}); },
   verifyCode(email,code){ return this.call('/auth/verify-code',{method:'POST',body:JSON.stringify({email,code})}); },
-  signup(name,email,password){ return this.call('/auth/signup',{method:'POST',body:JSON.stringify({name,email,password})}); },
+  signup(name,email,password){ return this.call('/auth/signup',{method:'POST',body:JSON.stringify({name,email,password,captcha:captchaToken()})}); },
   verifyEmail(email,code){ return this.call('/auth/verify-email',{method:'POST',body:JSON.stringify({email,code})}); },
   resendVerification(email){ return this.call('/auth/resend-verification',{method:'POST',body:JSON.stringify({email})}); },
   changePassword(current,next){ return this.call('/auth/password',{method:'POST',body:JSON.stringify({current,next})}); },
@@ -1488,12 +1502,25 @@ const isAdmin = () => me().role==='admin';
 const isOwner = () => !!me().owner;
 /* What this person may do, as the server decided (see src/access.js).
    Reps: nothing office-side. Without a server (demo), the office can do all. */
+const SCREEN_CAPS = ['manager','approvals','calendar','members','rings','visits','unaffiliated','reports','team','reminders'];
 function can(cap){
   const m = me();
   if(!m || m.role === 'rep') return false;
   if(m.owner) return true;
-  if(!m.perms) return !API.live || cap === 'settings';
+  if(!m.perms) return !API.live || cap === 'settings' || SCREEN_CAPS.includes(cap);
+  // A sign-in saved before a screen switch existed: screens default to on
+  if(!(cap in m.perms)) return SCREEN_CAPS.includes(cap);
   return !!m.perms[cap];
+}
+/* Which switch each office screen sits behind (Overview is always there) */
+const VIEW_CAP = { manager:'manager', approvals:'approvals', calendar:'calendar', members:'members', allrings:'rings',
+  visits:'visits', unaffiliated:'unaffiliated', reports:'reports', coverage:'reports', insights:'reports', team:'team',
+  reminders:'reminders', timesheet:'accounting', checks:'system' };
+function canView(v){
+  if(!isOffice()) return true;
+  if(v === 'settings') return can('settings') || can('books');
+  if(v === 'access') return API.live && (isOwner() || isAdmin());
+  return !VIEW_CAP[v] || can(VIEW_CAP[v]);
 }
 var elevation = { token: null, until: 0 };   // owner's password re-typed, for Access & security
 const isOffice = () => me().role==='staff' || me().role==='admin';
@@ -3568,19 +3595,47 @@ function vAccess(){
     <div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <span><strong style="display:inline">You're the owner.</strong> You can do everything. Unlocked for about ${left} more minute${left===1?'':'s'}.</span></div>
 
-    <h3 class="sub-h">What each role can do</h3>
-    <div class="card perm-card">
-      <div class="perm-row perm-head"><span></span><span>Directors</span><span>Office staff</span></div>
-      ${Object.entries(a.caps).map(([k, c]) => `<div class="perm-row">
-        <div><div class="perm-t">${esc(c.label)}</div><div class="perm-d">${esc(c.detail)}</div></div>
-        <span>${sw(a.perms.admin[k], `setPerm('admin','${k}',this.checked)`, roleName.admin + ': ' + c.label)}</span>
-        <span>${sw(a.perms.staff[k], `setPerm('staff','${k}',this.checked)`, roleName.staff + ': ' + c.label)}</span></div>`).join('')}
-      <div class="perm-row perm-fixed"><div><div class="perm-t">Reps, rings, members, calendar and approvals</div>
-        <div class="perm-d">Every office account has these. Reps only ever see their own rings.</div></div>
-        <span class="tag ok">Always</span><span class="tag ok">Always</span></div>
-      <div class="perm-row perm-fixed"><div><div class="perm-t">Access &amp; security</div>
-        <div class="perm-d">This screen. Yours alone.</div></div>
-        <span class="tag later">Owner only</span><span class="tag later">Owner only</span></div>
+    ${[['screens','Screens they can open','Switch a screen off and it disappears from their menu.'],
+       ['sensitive','Sensitive areas','Money, accounts and settings. Off unless you switch them on.']].map(([g, title, sub]) => {
+      const rows = Object.entries(a.caps).filter(([, c]) => (c.group || 'sensitive') === g);
+      const allOn = role => rows.every(([k]) => a.perms[role][k]);
+      return `<h3 class="sub-h">${title}</h3><div class="row-sub" style="margin:-4px 0 8px">${sub}</div>
+      <div class="card perm-card">
+        <div class="perm-row perm-head"><span></span><span>Directors</span><span>Office staff</span></div>
+        ${g === 'screens' ? `<div class="perm-row perm-all"><div><div class="perm-t">All screens</div></div>
+          <span>${sw(allOn('admin'), `setPermGroup('admin','${g}',this.checked)`, 'Directors: all screens')}</span>
+          <span>${sw(allOn('staff'), `setPermGroup('staff','${g}',this.checked)`, 'Office staff: all screens')}</span></div>` : ''}
+        ${rows.map(([k, c]) => `<div class="perm-row">
+          <div><div class="perm-t">${esc(c.label)}</div><div class="perm-d">${esc(c.detail)}</div></div>
+          <span>${sw(a.perms.admin[k], `setPerm('admin','${k}',this.checked)`, roleName.admin + ': ' + c.label)}</span>
+          <span>${sw(a.perms.staff[k], `setPerm('staff','${k}',this.checked)`, roleName.staff + ': ' + c.label)}</span></div>`).join('')}
+        ${g === 'screens' ? `<div class="perm-row perm-fixed"><div><div class="perm-t">Overview</div>
+          <div class="perm-d">Their home screen. Reps only ever see their own rings and people.</div></div>
+          <span class="tag ok">Always</span><span class="tag ok">Always</span></div>`
+        : `<div class="perm-row perm-fixed"><div><div class="perm-t">Access &amp; security</div>
+          <div class="perm-d">This screen. Yours alone.</div></div>
+          <span class="tag later">Owner only</span><span class="tag later">Owner only</span></div>`}
+      </div>`; }).join('')}
+
+    <h3 class="sub-h">"I'm not a robot" check on sign-in</h3>
+    <div class="card">
+      ${a.captcha && a.captcha.siteKey ? `<div class="callout ok" style="margin:0 0 10px"><strong>On</strong>
+          Google's "I'm not a robot" box shows on sign in, create account and forgotten password.</div>`
+        : `<div class="row-sub" style="margin-bottom:10px;line-height:1.6">Off. To switch it on, get two free keys from Google (2 minutes):</div>
+        <ol class="books-steps">
+          <li>Open <a href="https://www.google.com/recaptcha/admin/create" target="_blank" rel="noopener">google.com/recaptcha/admin/create</a>.</li>
+          <li>Label: <strong>Rep Hub</strong>. Type: <strong>Challenge (v2) → "I'm not a robot" Checkbox</strong>.</li>
+          <li>Domains: <code>${esc(location.hostname)}</code> <button class="btn sm" type="button" onclick="copyText('${esc(location.hostname)}',this)">Copy</button></li>
+          <li>Submit, then paste the <strong>site key</strong> and <strong>secret key</strong> here.</li></ol>`}
+      <div class="two">
+        <div class="field"><label>Site key</label><input id="capSite" value="${esc((a.captcha && a.captcha.siteKey) || '')}" placeholder="6Lc…" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label>Secret key</label><input id="capSecret" type="password" placeholder="${a.captcha && a.captcha.secretSet ? 'Saved — leave blank to keep it' : '6Lc…'}" autocomplete="off" spellcheck="false"></div>
+      </div>
+      <div class="btnrow">
+        <button class="btn primary sm" onclick="saveCaptcha()">${a.captcha && a.captcha.siteKey ? 'Update keys' : 'Switch it on'}</button>
+        ${a.captcha && a.captcha.siteKey ? `<button class="btn sm" onclick="saveCaptcha(true)">Switch it off</button>` : ''}
+      </div>
+      <div class="hint" style="margin-top:8px">If the keys are ever wrong or Google can't be reached, sign-in still works — nobody gets locked out.</div>
     </div>
 
     <h3 class="sub-h">2-Step Verification at sign-in</h3>
@@ -3613,8 +3668,11 @@ function vAccess(){
 
 function myAccessSummary(){
   const p = me().perms || {};
-  const labels = { accounting:'Hours, expenses and accounting', books:'Zoho Books and accounting settings', users:'Rep accounts',
+  const labels = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', rings:'Rings',
+    visits:'Visits', unaffiliated:'No ring yet', reports:'Reports, coverage and retention', team:'Reps screen', reminders:'Reminders',
+    accounting:'Hours, expenses and accounting', books:'Zoho Books and accounting settings', users:'Rep accounts',
     settings:'App settings', system:'System check and activity log' };
+  Object.keys(labels).forEach(k => { if(!(k in p)) p[k] = SCREEN_CAPS.includes(k); });
   return `<h3 class="sub-h">What your account can do</h3><div class="card">
     ${Object.entries(labels).map(([k,l]) => `<div class="kv"><span class="k">${l}</span>
       <span class="tag ${p[k]?'ok':'later'}">${p[k]?'Yes':'No'}</span></div>`).join('')}</div>`;
@@ -3660,6 +3718,20 @@ function setPerm(role, cap, on){
   const perms = JSON.parse(JSON.stringify(accessData.perms));
   perms[role][cap] = on;
   saveAccess({ perms }, `${role==='admin'?'Directors':'Office staff'}: ${accessData.caps[cap].label} ${on?'on':'off'}`);
+}
+function setPermGroup(role, group, on){
+  const perms = JSON.parse(JSON.stringify(accessData.perms));
+  Object.entries(accessData.caps).forEach(([k, c]) => { if((c.group || 'sensitive') === group) perms[role][k] = on; });
+  saveAccess({ perms }, `${role==='admin'?'Directors':'Office staff'}: every screen ${on?'on':'off'}`);
+}
+async function saveCaptcha(off){
+  const siteKey = off ? '' : (document.getElementById('capSite').value || '').trim();
+  const secret = off ? '' : (document.getElementById('capSecret').value || '').trim();
+  if(!off && !siteKey){ toast('Paste the site key first'); return; }
+  if(off && !confirm('Switch off the "I\'m not a robot" check?')) return;
+  await saveAccess({ captcha: { siteKey, secret } }, off ? 'Robot check switched off' : 'Robot check is on for sign-in');
+  captchaSiteKey = off ? null : siteKey;
+  try{ off ? localStorage.removeItem('rephub_captcha') : localStorage.setItem('rephub_captcha', siteKey); }catch(e){}
 }
 function setTwoStep(k, on){
   saveAccess({ twoStep: { ...accessData.twoStep, [k]: on } }, `2-step sign-in ${on?'on':'off'} for ${k==='admin'?'directors':k==='staff'?'office staff':'reps'}`);
@@ -4343,8 +4415,10 @@ async function runMailTest(){
 }
 
 /* ══════════════════ MODALS ══════════════════ */
-function openModal(h){ document.getElementById('modalBody').innerHTML=h; document.getElementById('overlay').classList.add('open'); }
-function closeModal(){ document.getElementById('overlay').classList.remove('open'); document.getElementById('modalBody').innerHTML=''; }
+function openModal(h){ document.getElementById('modalBody').innerHTML=h; document.getElementById('overlay').classList.add('open');
+  document.documentElement.classList.add('modal-open'); }   // the page behind stays still
+function closeModal(){ document.getElementById('overlay').classList.remove('open'); document.getElementById('modalBody').innerHTML='';
+  document.documentElement.classList.remove('modal-open'); }
 function fv(f,n){ const el=f.elements.namedItem(n); return el?el.value:''; }
 
 let logOutcome='Connected', logType='Member Call';
@@ -4705,15 +4779,12 @@ function navGroups(){
   const office = [
     ['', [['dash','Overview'],['manager','Rep manager'],['approvals','Approvals'],['calendar','Calendar']]],
     ['Records', [['members','Members'],['allrings','Rings'],['visits','Visits'],['unaffiliated','No ring yet']]],
-    ['Reporting', [['reports','Reports'],['coverage','Coverage'],['insights','Retention'],
-      ...(can('accounting') ? [['timesheet','Hours & expenses']] : [])]],
+    ['Reporting', [['reports','Reports'],['coverage','Coverage'],['insights','Retention'],['timesheet','Hours & expenses']]],
+    ['Setup', [['team','Reps'],['reminders','Reminders'],['settings','Settings'],
+      ...(isAdmin() ? [['checks','System check']] : []), ['access','Access & security']]],
   ];
-  const admin = [['team','Reps'],['reminders','Reminders']];
-  if(can('settings') || can('books')) admin.push(['settings','Settings']);
-  if(isAdmin() && can('system')) admin.push(['checks','System check']);
-  if(API.live && (isOwner() || isAdmin())) admin.push(['access','Access & security']);
-  office.push(['Setup', admin]);
-  return office;
+  // Only what the owner has switched on for this person
+  return office.map(([g, items]) => [g, items.filter(([id]) => canView(id))]).filter(([, items]) => items.length);
 }
 
 function badgeFor(id){
@@ -4812,6 +4883,41 @@ function supportFoot(){
   return `${icon('phone',14)} Need help? <strong>${esc(c.name)}</strong> · <a href="${telHref(c.phone)}">${esc(c.phone)}</a>`;
 }
 
+/* ── Google reCAPTCHA ("I'm not a robot") on the sign-in screens ──
+   Shown only once the owner has added keys. The last key seen is kept, so the
+   box has its space from the first paint instead of pushing the form down. */
+var captchaSiteKey = (() => { try{ return localStorage.getItem('rephub_captcha') || null; }catch(e){ return null; } })();
+var captchaWidget = null;
+function loadCaptchaConfig(){
+  fetch('/api/auth/captcha').then(r => r.ok ? r.json() : null).then(v => {
+    if(!v) return;
+    const key = v.siteKey || null, changed = key !== captchaSiteKey;
+    captchaSiteKey = key;
+    try{ key ? localStorage.setItem('rephub_captcha', key) : localStorage.removeItem('rephub_captcha'); }catch(e){}
+    if(changed && !ui.me) render();
+  }).catch(() => {});
+}
+function captchaSlot(){ return captchaSiteKey ? `<div class="captcha-slot" id="captchaSlot"></div>` : ''; }
+function mountCaptcha(){
+  const slot = document.getElementById('captchaSlot');
+  captchaWidget = null;
+  if(!slot || !captchaSiteKey) return;
+  const dark = matchMedia && matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light';
+  const go = () => { const s = document.getElementById('captchaSlot'); if(!s || s.dataset.done) return;
+    try{ captchaWidget = grecaptcha.render(s, { sitekey: captchaSiteKey, theme: dark ? 'dark' : 'light' }); s.dataset.done = '1'; }catch(e){} };
+  if(window.grecaptcha && grecaptcha.render) return go();
+  window.__onCaptcha = go;
+  if(!document.getElementById('gcaptcha')){
+    const s = document.createElement('script');
+    s.id = 'gcaptcha'; s.async = true; s.defer = true;
+    s.src = 'https://www.google.com/recaptcha/api.js?onload=__onCaptcha&render=explicit';
+    document.head.appendChild(s);
+  }
+}
+function captchaToken(){ try{ return captchaWidget !== null ? grecaptcha.getResponse(captchaWidget) : ''; }catch(e){ return ''; } }
+/* A token works once, so every attempt that fails needs a fresh tick */
+function resetCaptcha(){ try{ if(captchaWidget !== null) grecaptcha.reset(captchaWidget); }catch(e){} }
+
 /* Netlify adds its own badge to the page; find it and let CSS keep it off the tab bar */
 function tameInjected(){
   const ours = '.tabbar,.toasts,.overlay,.sheet,.loading-pill,.tourbar,#app';
@@ -4867,13 +4973,11 @@ async function submitSetPassword(e){
   if(pw !== again) return show("Those two don't match");
   try{
     const out = await API.setPassword(setupToken, pw);
-    API.setToken(out.token);
+    // The link only sets the password; signing in is the normal way, next
     setupToken = null; setupFor = null;
-    signInAs(out.user);
-    await refreshMode();
-    await loadFromServer();
+    ui.loginEmail = out.email || ui.loginEmail; ui.authMode = 'signin'; ui.linkSentTo = null; ui.codeFor = null;
     render();
-    toast('Password saved');
+    toast('Password saved — now sign in with it');
   }catch(ex){ show(ex.message || 'Could not save that'); }
 }
 
@@ -4968,6 +5072,7 @@ function loginScreen(){
                  placeholder="you@yourbusiness.com" value="${esc(ui.loginEmail||'')}"></div>
         ${passwordField('Choose a password','password',{minlength:8, autocomplete:'new-password', placeholder:'At least 8 characters'})}
         ${passwordField('Type it again','confirm',{minlength:8, autocomplete:'new-password'})}
+        ${captchaSlot()}
         <div id="loginErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
         <button class="btn primary" type="submit" id="loginBtn" style="width:100%;justify-content:center">Create account</button>
       </form>
@@ -4997,7 +5102,7 @@ function loginScreen(){
   }
 
   if(sentTo){
-    const what = ui.resetSent ? 'a link to choose your password' : 'a sign-in link';
+    const what = 'a link to set up your account and choose a password';
     const howLong = ui.resetSent ? '2 hours' : '20 minutes';
     return shell(`<div class="card" style="text-align:center">
       <div style="font-size:30px;margin-bottom:6px">✉</div>
@@ -5020,6 +5125,7 @@ function loginScreen(){
         <div class="field"><label>Email</label>
           <input name="email" type="email" required autocomplete="username"
                  placeholder="you@yourbusiness.com" value="${esc(ui.loginEmail||'')}"></div>
+        ${captchaSlot()}
         <div id="loginErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
         <button class="btn primary" type="submit" id="loginBtn" style="width:100%;justify-content:center">
           Send me a code</button>
@@ -5038,6 +5144,7 @@ function loginScreen(){
           <input name="email" type="email" required autocomplete="username"
                  placeholder="you@yourbusiness.com" value="${esc(ui.loginEmail||'')}"></div>
         ${passwordField('Password','password',{autocomplete:'current-password'})}
+        ${captchaSlot()}
         <div id="pwErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
         <button class="btn primary" type="submit" style="width:100%;justify-content:center">Sign in</button>
       </form>
@@ -5046,8 +5153,8 @@ function loginScreen(){
         <button class="btn sm" onclick="ui.authMode='forgot';render()">Forgotten your password?</button>
       </div>
       <div style="text-align:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
-        <button class="btn sm" onclick="doLinkFromForm()">Email me a sign-in link instead</button>
-        <div class="row-sub" style="margin-top:5px">No password needed — we send a one-time link.</div>
+        <button class="btn sm" onclick="doLinkFromForm()">Invited? Email me a link to set up my account</button>
+        <div class="row-sub" style="margin-top:5px">The link lets you choose a password. You then sign in as normal.</div>
       </div></div>`);
 }
 
@@ -5079,6 +5186,7 @@ async function doForgotForm(e){
     ui.codeFor = email; ui.authMode = 'signin';
     render();
   }catch(ex){
+    resetCaptcha();
     err.style.display='block';
     err.textContent = ex.message || 'Could not send that';
     btn.disabled=false; btn.textContent='Send me a code';
@@ -5176,7 +5284,7 @@ async function doSignup(e){
     await API.signup(name, email, pw);
     ui.verifyFor = email; ui.authMode = 'signin';
     render();
-  }catch(ex){ show(ex.message || 'Could not create the account'); }
+  }catch(ex){ resetCaptcha(); show(ex.message || 'Could not create the account'); }
 }
 
 async function doVerifyEmail(e){
@@ -5241,6 +5349,7 @@ async function doLinkFromForm(){
     ui.linkSentTo = email; ui.resetSent = false;
     render();
   }catch(ex){
+    resetCaptcha();
     const err = document.getElementById('pwErr');
     if(err){ err.style.display='block'; err.textContent = ex.message; }
     else toast(ex.message);
@@ -5284,12 +5393,18 @@ async function refreshMode(){
  * On the login screen, say plainly what is and isn't configured yet, and
  * offer to create the first account when the database is ready but empty.
  */
+/* Asked once per visit, not on every switch between sign in, sign up and
+   forgot: it pings Zoho, which is slow, and the answer used to push the
+   form about each time. Only a real problem is shown. */
+var setupStatusAsk = null;
 async function checkSetup(){
   const slot = document.getElementById('setupNote');
   if(!slot) return;
   let st;
-  try{ st = await API.setupStatus(); }
+  if(!setupStatusAsk) setupStatusAsk = API.setupStatus();
+  try{ st = await setupStatusAsk; }
   catch(e){
+    setupStatusAsk = null;   // ask again next time
     slot.innerHTML = `<div class="callout info" style="margin:14px 0 0;font-size:12.5px">
       <strong>The server isn't responding</strong>
       Sign-in needs the API. If this is a new deployment, check the environment variables.</div>`;
@@ -5315,8 +5430,7 @@ async function checkSetup(){
   }
   // Say WHY when it isn't connected. "Not connected yet" with no reason sent
   // us checking the CRM when the token was simply stale.
-  slot.innerHTML = st.zohoReady
-    ? `<div class="row-sub" style="margin-top:12px;text-align:center">Zoho connected${st.zohoOrg?` · ${esc(st.zohoOrg)}`:''}</div>`
+  slot.innerHTML = st.zohoReady ? ''
     : `<div class="row-sub" style="margin-top:12px;text-align:center">
          Zoho not connected${st.zohoError?` — ${esc(st.zohoError)}`:''}</div>`;
 }
@@ -5378,6 +5492,7 @@ async function doLogin(e){
     if(out.device) saveDevice(out.device);
     await finishSignIn(out);
   }catch(ex){
+    resetCaptcha();
     const m = String(ex.message || '');
     // Signed up but never confirmed: a fresh code has just been sent
     if(ex.data && ex.data.needsVerification){
@@ -5852,8 +5967,13 @@ function renderContentSafe(el){
       </div>`;
   }
 }
+const VIEW_TITLE = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', allrings:'Rings',
+  visits:'Visits', unaffiliated:'No ring yet', reports:'Reports', coverage:'Coverage', insights:'Retention', team:'Reps',
+  reminders:'Reminders', timesheet:'Hours and expenses', checks:'System check', settings:'Settings', access:'Access & security' };
 function renderContentInner(el){
   const v=ui.view;
+  // A screen switched off by the owner can't be reached by a stale tab or link either
+  if(!canView(v)){ el.innerHTML = noAccess(VIEW_TITLE[v] || 'This screen'); return; }
   if(v==='ringDetail'){ el.innerHTML=vRingDetail(); return; }
   if(v==='memberDetail'){ el.innerHTML=vMemberDetail(); return; }
   if(v==='facDetail'){ el.innerHTML=vFacDetail(); return; }
@@ -5912,7 +6032,9 @@ function tabbarHTML(){
   // eleven with no way to reach Settings, Reps or Reports on a phone.
   const main = isRep()
     ? [['today','Today'],['rings','Rings'],['calendar','Calendar'],['timesheet','Hours']]
-    : [['dash','Overview'],['approvals','Approvals'],['calendar','Calendar'],['members','Members']];
+    // The first four screens this person can open, Overview first
+    : [['dash','Overview'],['approvals','Approvals'],['calendar','Calendar'],['members','Members'],['manager','Reps'],
+       ['allrings','Rings'],['reports','Reports']].filter(([id]) => canView(id)).slice(0, 4);
   const inMain = main.some(([id]) => id === ui.view);
   const tab = ([id,label]) => { const b = badgeFor(id);
     return `<button class="${ui.view===id?'active':''}" onclick="setView('${id}')">${b?`<span class="pill">${b}</span>`:''}${icon(id,21)}<span>${label}</span></button>`; };
@@ -5925,7 +6047,7 @@ function tabbarHTML(){
 function render(){
   const app=document.getElementById('app');
   if(setupToken){ shellFor=null; app.innerHTML=setupScreen(); return; }
-  if(!ui.me){ shellFor=null; app.innerHTML=loginScreen(); checkSetup(); return; }
+  if(!ui.me){ shellFor=null; app.innerHTML=loginScreen(); checkSetup(); mountCaptcha(); return; }
   // Remember the screen, so a refresh comes back to it
   try{ sessionStorage.setItem('rephub_screen', JSON.stringify({view:ui.view, ringId:ui.ringId, memberId:ui.memberId, facId:ui.facId, eventId:ui.eventId})); }catch(e){}
 
@@ -5994,6 +6116,7 @@ function fillShell(){
 // "This screen could not load" until the data arrived.
 queueMicrotask(render);
 loadSupport();
+loadCaptchaConfig();
 
 /* ══════════════════ NEW: helpers for calendar + money ══════════════════ */
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
