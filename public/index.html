@@ -4957,11 +4957,22 @@ function renderContent(){
   const el=document.getElementById('content'); if(!el) return;
   keepPlace(() => renderContentSafe(el));
 }
+var renderRetry = null;
 function renderContentSafe(el){
-  try { renderContentInner(el); }
+  try { renderContentInner(el); renderRetry = null; }
   catch(e){
-    // Never leave a blank screen. Say what happened and offer a way out.
     console.error('[render]', e);
+    // A hiccup while data is still arriving should not flash an error
+    // screen: keep what is showing and try once more on the next frame.
+    const key = screenKey();
+    if(renderRetry !== key){
+      renderRetry = key;
+      requestAnimationFrame(() => { if(screenKey() === key) renderContent(); });
+      if(!el.innerHTML.trim()) el.innerHTML = `<div class="empty">Loading…</div>`;
+      return;
+    }
+    renderRetry = null;
+    // Never leave a blank screen. Say what happened and offer a way out.
     el.innerHTML = `<div class="section-head"><div><h2>This screen could not load</h2>
       <div class="sub">Something in the saved data on this device didn't match what the app expected.</div></div></div>
       <div class="callout rust"><strong>${esc(e.message||'Unknown error')}</strong>
@@ -5098,7 +5109,11 @@ function fillShell(){
     if(s && s.view) Object.assign(ui, s);
   }catch(e){}
 })();
-render();
+// Drawn once the whole script has run (still before the first paint). Drawing
+// here and now reached for helpers defined further down — the calendar's,
+// the money formatter — and a refresh on those screens showed
+// "This screen could not load" until the data arrived.
+queueMicrotask(render);
 
 /* ══════════════════ NEW: helpers for calendar + money ══════════════════ */
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
