@@ -118,6 +118,16 @@
   .leader-row .bar{margin-top:4px;height:5px;}
   .leader-n{font-size:14px;min-width:22px;text-align:right;}
 
+  /* Rings with no visit on record */
+  .nv-search{width:100%;font:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;
+    background:var(--surface-2);color:var(--ink);margin-bottom:6px;}
+  .nv-search:focus{outline:none;border-color:var(--primary);}
+  .nv-list{max-height:52vh;overflow-y:auto;overscroll-behavior:contain;margin:0 -4px;padding:0 4px;}
+  .nv-head{display:flex;align-items:center;gap:9px;padding:12px 0 4px;position:sticky;top:0;background:var(--surface);z-index:1;}
+  .nv-head strong{flex:1;font-size:14px;}
+  .nv-row{padding:9px 0 9px 37px;}
+  .nv-row[hidden],.nv-grp[hidden]{display:none;}
+  .inline-link{color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;}
   .maplink{display:inline-flex;align-items:center;gap:3px;color:var(--info);text-decoration:none;font-weight:500;}
   .maplink:hover{text-decoration:underline;}
   .maplink .ico{flex:none;}
@@ -4135,7 +4145,7 @@ function vManager(){
           <div class="sub">${todayLong()} · here's how your ${cards.length} rep${cards.length===1?' is':'s are'} doing</div></div>
         <div class="mgr-hero-line">${groups.behind.length
           ? `<strong style="color:var(--rust)">${groups.behind.length} behind</strong> on calls · `
-          : `<strong style="color:var(--primary)">Nobody is behind</strong> · `}${totalLogged} call${totalLogged===1?'':'s'} logged in 30 days${unvisited?` · ${unvisited} ring${unvisited===1?'':'s'} never visited`:''}</div>
+          : `<strong style="color:var(--primary)">Nobody is behind</strong> · `}${totalLogged} call${totalLogged===1?'':'s'} logged in 30 days${unvisited?` · <a href="#" class="inline-link" onclick="event.preventDefault();openNeverVisited()">${unvisited} ring${unvisited===1?'':'s'} never visited</a>`:''}</div>
         <div class="btnrow" style="margin-top:12px">
           <button class="btn sm" onclick="ui.report='rep-coverage';exportReport()">Export CSV</button>
           <button class="btn sm" onclick="setView('coverage')">Coverage map</button></div>
@@ -4153,7 +4163,7 @@ function vManager(){
       ${kpi(totalMembers,'members','users','neutral',"setView('members')")}
       ${kpi(totalOverdue,'calls overdue','phone',totalOverdue?'rust':'neutral',"ui.mgrFilter='behind';renderContent()")}
       ${kpi(totalLogged,'logged in 30d','check',totalLogged?'green':'rust',"ui.mgrSort='active';renderContent()")}
-      ${kpi(unvisited,'never visited','pin',unvisited?'amber':'neutral',"ui.report='missing-detail';setView('reports')")}
+      ${kpi(unvisited,'never visited','pin',unvisited?'amber':'neutral','openNeverVisited()')}
     </div>
 
     <div class="dash-pair">${trendCard('Calls and meetings logged · whole team', teamWeeks)}
@@ -4354,7 +4364,7 @@ function repScorecard(){
     const soon = due.filter(a=>days(a.nextDue)>=0 && days(a.nextDue)<=14);
     const logged = S.activities.filter(a=>a.repId===id && a.date && days(a.date)>=-30 && a.outcome);
     const members = rings.reduce((n,r)=>n+(r.serverMemberCount||ringMembers(r.id).length),0);
-    const neverVisited = rings.filter(r=>!r.lastRepVisit).length;
+    const neverVisited = rings.filter(r=>!lastVisitOf(r)).length;
     const noRhythm = rings.filter(r=>r.status==='active' && !r.meetingRhythm).length;
     const hrs = S.timeEntries.filter(t=>t.loginId===id||t.repId===id)
       .reduce((n,t)=>n+Number(t.hours||0),0);
@@ -4372,6 +4382,50 @@ function toggleMgr(repId, key){
 }
 
 /** What sits behind a number on the manager screen. */
+/**
+ * When a ring last had a rep visit: the "Last Rep Visit" date on the ring in
+ * Zoho, or a visit marked done in Rep Hub, whichever is later. Phone calls
+ * to the facilitator are not visits.
+ */
+function lastVisitOf(r){
+  const done = (S.visits || []).filter(v => v.ringId === r.id && v.status === 'Completed' && v.date && v.date <= TODAY_S)
+    .map(v => v.date).sort().pop();
+  return [r.lastRepVisit, done].filter(Boolean).sort().pop() || null;
+}
+
+/** Every ring with no visit on record, grouped by rep, with the way to fix it. */
+function openNeverVisited(){
+  const list = S.rings.filter(r => r.status === 'active' && !lastVisitOf(r));
+  const byRep = {};
+  list.forEach(r => { const k = r.repName || pname(r.repId) || 'No rep'; (byRep[k] = byRep[k] || []).push(r); });
+  const reps = Object.keys(byRep).sort((a, b) => byRep[b].length - byRep[a].length || a.localeCompare(b));
+  openModal(`<h3>${list.length} ring${list.length===1?'':'s'} with no visit on record</h3>
+    <p class="lead">Counted from the <strong>Last Rep Visit</strong> date on each ring in Zoho, and from visits marked
+      done in Rep Hub. ${list.length === S.rings.filter(r=>r.status==='active').length
+        ? 'That date is empty on every ring in Zoho, and no visit has been marked done in Rep Hub yet — so every ring shows here. Facilitator phone calls are not counted as visits.'
+        : 'Facilitator phone calls are not counted as visits.'}</p>
+    <input class="nv-search" placeholder="Find a ring or rep…" oninput="filterNeverVisited(this.value)">
+    <div class="nv-list">${reps.map(rep => `<div class="nv-grp" data-q="${esc(rep.toLowerCase())}">
+      <div class="nv-head"><span class="rp-av">${esc(repInitials(rep))}</span><strong>${esc(splitRepName(rep).name)}</strong>
+        <span class="tag later">${byRep[rep].length}</span></div>
+      ${byRep[rep].sort((a,b)=>String(a.name).localeCompare(String(b.name), undefined, {numeric:true})).map(r => `<div class="row clicky nv-row" data-q="${esc((r.name + ' ' + rep + ' ' + (r.facName||'')).toLowerCase())}"
+        onclick="closeModal();openRing('${r.id}')">
+        <div class="row-main"><div class="row-title">${esc(r.name)}</div>
+          <div class="row-sub">${esc(r.facName || 'no facilitator')}${r.meetPlace ? ' · ' + esc(r.meetPlace) : ''}</div></div>
+        <span class="row-sub">Open ›</span></div>`).join('')}</div>`).join('')}</div>
+    <div class="m-actions">
+      <button class="btn" onclick="ui.report='rep-coverage';closeModal();exportReport()">Export CSV</button>
+      <button class="btn primary" onclick="closeModal()">Close</button></div>`);
+}
+function filterNeverVisited(q){
+  q = q.trim().toLowerCase();
+  document.querySelectorAll('.nv-grp').forEach(g => {
+    let n = 0;
+    g.querySelectorAll('.nv-row').forEach(r => { const hit = !q || r.dataset.q.includes(q) || g.dataset.q.includes(q); r.hidden = !hit; if(hit) n++; });
+    g.hidden = !n;
+  });
+}
+
 function mgrDetail(repId, key){
   const rings = S.rings.filter(r=>r.repId===repId);
   const ringIds = new Set(rings.map(r=>r.id));
@@ -4380,7 +4434,7 @@ function mgrDetail(repId, key){
       <div class="row-sub">${esc(sub||'')}</div></div></div>`;
 
   if(key==='unvisited'){
-    const list = rings.filter(r=>!r.lastRepVisit);
+    const list = rings.filter(r=>!lastVisitOf(r));
     return list.length ? list.map(r=>line(r.name, `${r.facName||'no facilitator'} · never visited`, `openRing('${r.id}')`)).join('')
       : `<div class="empty">Every ring has been visited.</div>`;
   }
