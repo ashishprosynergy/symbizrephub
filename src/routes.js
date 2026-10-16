@@ -2867,7 +2867,7 @@ async function snapshot(fresh) {
   snapCache = { at: Date.now(), data };
   return data;
 }
-const dropSnapshot = () => { snapCache = null; };
+const dropSnapshot = () => { snapCache = null; repEmailCache = null; };   // moving rings changes who the reps are
 
 r.get('/manager/snapshot', ...mgrGuard, wrap(async (req, res) => {
   const snap = await snapshot(!!req.headers['x-fresh'] || req.query.fresh === '1');
@@ -2957,7 +2957,14 @@ r.post('/rings/:id/reassign', ...mgrGuard, writesAllowed, wrap(async (req, res) 
 }));
 
 /* Message reps: one email, reps in BCC, replies go to the sender */
-async function repEmails() {
+let repEmailCache = null;           // { at, list } — addresses rarely change; Zoho is slow to ask
+async function repEmails(fresh) {
+  if (!fresh && repEmailCache && Date.now() - repEmailCache.at < 10 * 60 * 1000) return repEmailCache.list;
+  const list = await repEmailsFromZoho();
+  repEmailCache = { at: Date.now(), list };
+  return list;
+}
+async function repEmailsFromZoho() {
   const rings = (await zoho.coql(queries.repsOnRings())).map(fromZoho.ring);
   const ids = [...new Set(rings.map(x => x.repZohoId).filter(Boolean))];
   const names = new Map(rings.map(x => [x.repZohoId, x.repName]));

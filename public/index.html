@@ -157,6 +157,7 @@
   .chk-title{font-size:14px;}
   .chk-row.done .chk-title{text-decoration:line-through;color:var(--ink-faint);}
   .chk-late{color:var(--rust);font-weight:600;}
+  .sort-val{font-size:11.5px;color:var(--ink-muted);font-weight:600;white-space:nowrap}
   .map-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--ink-muted);margin:2px 0 8px;}
   .map-legend .lg{display:inline-flex;align-items:center;gap:5px}
   .map-legend b{color:var(--ink)}
@@ -4383,13 +4384,28 @@ function vManager(){
   const filter = ui.mgrFilter || 'all';
   const q = (ui.mgrQ || '').trim().toLowerCase();
   const sort = ui.mgrSort || 'status';
-  const order = { behind:0, quiet:1, loaded:2, ok:3 };
+  // How long since a rep last used Rep Hub, in days (never = very long)
+  const quietDays = c => { const m = mgrRep(c.id); const d = m && m.lastLogin ? m.lastLogin.slice(0,10) : null; return d ? -days(d) : 9999; };
+  // "Needs attention": overdue calls weigh most, then nothing logged, rings
+  // never visited, not signing in, and calls coming due
+  const attention = c => c.overdue * 3 + (c.logged ? 0 : 4) + (c.rings ? c.neverVisited / c.rings * 4 : 0)
+    + (quietDays(c) >= 14 ? 3 : 0) + c.soon * 0.5;
+  const SORTS = {
+    status:    ['Needs attention first', 'overdue calls, nothing logged, rings not visited and not signing in, combined', (a,b) => attention(b) - attention(a)],
+    overdue:   ['Most overdue calls', 'calls past their due date', (a,b) => b.overdue - a.overdue || b.soon - a.soon],
+    unvisited: ['Most rings not visited', 'rings with no rep visit on record', (a,b) => b.neverVisited - a.neverVisited],
+    login:     ['Longest since signed in', 'days since they last opened Rep Hub', (a,b) => quietDays(b) - quietDays(a)],
+    active:    ['Most active', 'calls and meetings logged in 30 days', (a,b) => b.logged - a.logged],
+    load:      ['Most rings', 'rings they look after', (a,b) => b.rings - a.rings],
+    name:      ['A–Z', '', (a,b) => a.name.localeCompare(b.name)],
+  };
+  const sortBy = SORTS[sort] || SORTS.status;
   const shown = (filter === 'all' ? cards : (groups[filter] || cards))
     .filter(c => !q || c.name.toLowerCase().includes(q))
-    .slice().sort((a,b) => sort === 'name' ? a.name.localeCompare(b.name)
-      : sort === 'load' ? b.rings - a.rings
-      : sort === 'active' ? b.logged - a.logged
-      : (order[stateOf(a).k] - order[stateOf(b).k]) || b.overdue - a.overdue || b.rings - a.rings);
+    .slice().sort((a,b) => sortBy[2](a,b) || b.rings - a.rings || a.name.localeCompare(b.name));
+  const sortValue = c => sort === 'overdue' ? `${c.overdue} overdue` : sort === 'unvisited' ? `${c.neverVisited} not visited`
+    : sort === 'login' ? (quietDays(c) === 9999 ? 'never signed in' : `${quietDays(c)} days ago`) : sort === 'active' ? `${c.logged} logged`
+    : sort === 'load' ? `${c.rings} rings` : sort === 'status' ? `score ${Math.round(attention(c))}` : '';
 
   const seg = (k,label,n,tone) => `<button class="seg seg-${tone} ${filter===k?'on':''}"
     onclick="ui.mgrFilter='${k}';ui.mgrOpen=null;renderContent()">
@@ -4460,10 +4476,10 @@ function vManager(){
       <div class="mgr-search">
         <input id="mgrQ" placeholder="Find a rep…" value="${esc(ui.mgrQ||'')}" oninput="ui.mgrQ=this.value;mgrRefilter()">
         <select class="sel" onchange="ui.mgrSort=this.value;renderContent()" aria-label="Sort reps">
-          ${[['status','Needs attention first'],['active','Most active'],['load','Most rings'],['name','A–Z']]
-            .map(([k,l])=>`<option value="${k}" ${sort===k?'selected':''}>${l}</option>`).join('')}</select>
+          ${Object.entries(SORTS).map(([k,v])=>`<option value="${k}" ${sort===k?'selected':''}>${v[0]}</option>`).join('')}</select>
       </div>
     </div>
+    ${sortBy[1] ? `<div class="row-sub" style="margin:-4px 0 10px">Sorted by <strong>${esc(sortBy[0].toLowerCase())}</strong>: ${esc(sortBy[1])}.</div>` : ''}
 
     <div class="mgr-grid">
     ${shown.map(c=>{
@@ -4478,7 +4494,9 @@ function vManager(){
               ${esc(splitRepName(c.name).name)}${splitRepName(c.name).num?`<span class="rp-num">#${esc(splitRepName(c.name).num)}</span>`:''}</div>
             <div class="row-sub">${c.rings} ring${c.rings===1?'':'s'} · ${c.members} member${c.members===1?'':'s'}</div>
           </div>
-          <span class="pill pill-${st.tone}">${st.label}</span>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="pill pill-${st.tone}">${st.label}</span>
+            ${sortValue(c) ? `<span class="sort-val">${esc(sortValue(c))}</span>` : ''}</div>
         </div>
         <div class="mgr-spark" title="Calls logged, last 8 weeks: ${c.weeks.join(', ')}">
           ${sparkline(c.weeks)}<span>${c.weeks.reduce((s,x)=>s+x,0)} in 8 wks</span></div>
@@ -4554,6 +4572,7 @@ function goalBars(c, g){
 function mgrAttention(){
   if(!API.live) return '';
   loadMgr();
+  if(!repMailP) setTimeout(() => loadRepMail().catch(() => {}), 800);
   if(!mgrData) return `<div class="card attn"><div class="trend-t">Needs your attention</div>${skeleton(2)}</div>`;
   if(mgrData.error) return `<div class="callout rust"><strong>Could not load the warnings</strong>${esc(mgrData.error)}</div>`;
   const w = mgrData.warnings || [];
@@ -4714,26 +4733,48 @@ async function moveRings(e, fromId){
 }
 
 /* ── Message reps ── */
-var repMail = null;
+var repMail = null, repMailP = null;
+/* The reps' email addresses, fetched once and kept; asked for early so the
+   window opens with them already there */
+function loadRepMail(force){
+  if(!API.live || !can('manager')) return Promise.resolve(null);
+  if(repMailP && !force) return repMailP;
+  repMailP = API.call('/messages/reps').then(v => { repMail = v; return v; }).catch(e => { repMailP = null; throw e; });
+  return repMailP;
+}
 async function openMessageReps(preselect){
-  openModal(`<h3>Message reps</h3><p class="lead">Loading the reps' email addresses…</p>`);
-  try{ repMail = await API.call('/messages/reps'); }
-  catch(e){ openModal(`<h3>Message reps</h3><p class="lead">${esc(e.message)}</p><div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`); return; }
   const pre = new Set(preselect || []);
-  const reps = repMail.reps.slice().sort((a,b) => a.name.localeCompare(b.name));
+  // The rep list is already known from the rings, so the window opens at once
+  const known = repMail ? repMail.reps : [...new Map(S.rings.filter(r => r.repId).map(r => [r.repId, { id: r.repId, name: r.repName || pname(r.repId), email: null }])).values()];
+  drawMessageReps(known, repMail ? repMail.history : null, pre);
+  if(!repMail){
+    try{ await loadRepMail(); }
+    catch(e){ const el = document.getElementById('mrStatus'); if(el){ el.textContent = 'Could not load email addresses: ' + e.message; el.style.color = 'var(--rust)'; } return; }
+    // Keep what was typed and ticked while the addresses were loading
+    const f = document.getElementById('mrForm'); if(!f) return;
+    const typed = { subject: f.elements.subject.value, body: f.elements.body.value,
+      ticked: new Set([...f.querySelectorAll('input[name=rep]:checked')].map(x => x.value)), touched: f.dataset.touched === '1' };
+    drawMessageReps(repMail.reps, repMail.history, typed.touched ? typed.ticked : pre, typed);
+  }
+}
+function drawMessageReps(list, history, pre, typed){
+  const loading = list.some(r => r.email === null);
+  const reps = list.slice().sort((a,b) => a.name.localeCompare(b.name));
+  const checked = r => typed && typed.touched ? pre.has(r.id) : (pre.size ? pre.has(r.id) : (r.email !== ''));
   openModal(`<h3>Message reps</h3>
     <p class="lead">One email from Rep Hub. Reps are in BCC, so nobody sees the others' addresses. Replies come to you.</p>
-    <form onsubmit="sendRepMessage(event)">
+    <div class="row-sub" id="mrStatus" style="margin:-6px 0 8px">${loading ? 'Getting their email addresses from Zoho…' : ''}</div>
+    <form id="mrForm" onsubmit="sendRepMessage(event)" onchange="if(event.target.name==='rep')this.dataset.touched='1'" data-touched="${typed && typed.touched ? '1' : ''}">
       <div class="field"><label style="display:flex;justify-content:space-between">To
-        <span><a href="#" class="inline-link" onclick="event.preventDefault();document.querySelectorAll('input[name=rep]:not(:disabled)').forEach(x=>x.checked=true)">all</a> ·
-          <a href="#" class="inline-link" onclick="event.preventDefault();document.querySelectorAll('input[name=rep]').forEach(x=>x.checked=false)">none</a></span></label>
-        <div class="pick-list">${reps.map(r => `<label class="pick ${r.email?'':'off'}"><input type="checkbox" name="rep" value="${esc(r.id)}" ${r.email?'':'disabled'} ${pre.size ? (pre.has(r.id)?'checked':'') : (r.email?'checked':'')}>
-          <span>${esc(splitRepName(r.name).name)}<span class="row-sub"> · ${r.email ? esc(r.email) : 'no email in Zoho'}</span></span></label>`).join('')}</div></div>
-      <div class="field"><label>Subject</label><input name="subject" required maxlength="200" placeholder="Visit reports due Friday"></div>
-      <div class="field"><label>Message</label><textarea name="body" required rows="7" placeholder="Hi all,"></textarea></div>
+        <span><a href="#" class="inline-link" onclick="event.preventDefault();document.getElementById('mrForm').dataset.touched='1';document.querySelectorAll('input[name=rep]:not(:disabled)').forEach(x=>x.checked=true)">all</a> ·
+          <a href="#" class="inline-link" onclick="event.preventDefault();document.getElementById('mrForm').dataset.touched='1';document.querySelectorAll('input[name=rep]').forEach(x=>x.checked=false)">none</a></span></label>
+        <div class="pick-list">${reps.map(r => `<label class="pick ${r.email === '' ? 'off' : ''}"><input type="checkbox" name="rep" value="${esc(r.id)}" ${r.email === '' ? 'disabled' : ''} ${checked(r) && r.email !== '' ? 'checked' : ''}>
+          <span>${esc(splitRepName(r.name).name)}<span class="row-sub"> · ${r.email === null ? '…' : r.email ? esc(r.email) : 'no email in Zoho'}</span></span></label>`).join('')}</div></div>
+      <div class="field"><label>Subject</label><input name="subject" required maxlength="200" placeholder="Visit reports due Friday" value="${esc(typed ? typed.subject : '')}"></div>
+      <div class="field"><label>Message</label><textarea name="body" required rows="7" placeholder="Hi all,">${esc(typed ? typed.body : '')}</textarea></div>
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
         <button class="btn primary" type="submit">Send</button></div></form>
-    ${repMail.history.length ? `<h3 class="sub-h">Sent before</h3>${repMail.history.slice(0,8).map(m => `<details class="row" style="display:block">
+    ${history && history.length ? `<h3 class="sub-h">Sent before</h3>${history.slice(0,8).map(m => `<details class="row" style="display:block">
       <summary class="row-title" style="cursor:pointer">${esc(m.subject)} <span class="row-sub">· ${fmt(String(m.at).slice(0,10))} · ${m.recipients} rep${m.recipients===1?'':'s'} · ${esc(m.by||'')}</span></summary>
       <div style="white-space:pre-wrap;font-size:13.5px;margin-top:6px">${esc(m.body)}</div></details>`).join('')}` : ''}`);
 }
@@ -4743,6 +4784,7 @@ async function sendRepMessage(e){
   if(!ids.length) return toast('Choose at least one rep');
   const btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Sending…';
   try{ const r = await API.call('/messages/reps', { method:'POST', body: JSON.stringify({ repIds: ids, subject: fv(f,'subject'), body: fv(f,'body') }) });
+    loadRepMail(true).catch(() => {});        // so "Sent before" includes this one
     closeModal(); toast(`Sent to ${r.sent} rep${r.sent===1?'':'s'}${r.missing && r.missing.length ? ` (${r.missing.length} had no email)` : ''}`); }
   catch(ex){ btn.disabled = false; btn.textContent = 'Send'; toast(ex.message || 'Could not send'); }
 }
