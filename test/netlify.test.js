@@ -22,6 +22,7 @@ const FAKE_ZOHO_PORT = 19877;
 process.env.ZOHO_API_DOMAIN = `http://127.0.0.1:${FAKE_ZOHO_PORT}`;
 process.env.ZOHO_ACCOUNTS_DOMAIN = `http://127.0.0.1:${FAKE_ZOHO_PORT}`;
 process.env.RECAPTCHA_VERIFY_URL = `http://127.0.0.1:${FAKE_ZOHO_PORT}/recaptcha/siteverify`;
+process.env.RECAPTCHA_ANCHOR_URL = `http://127.0.0.1:${FAKE_ZOHO_PORT}/recaptcha/anchor`;
 
 /* ─── in-memory Postgres ─── */
 const { newDb } = require('pg-mem');
@@ -51,6 +52,11 @@ const fakeZoho = http.createServer((req, res) => {
     zohoCalls.push({ method: req.method, path: url.pathname });
     const json = d => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(d)); };
 
+    // fake Google widget page: keys starting 6Lv are score (v3) keys
+    if (url.pathname === '/recaptcha/anchor') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(/^6Lv/.test(url.searchParams.get('k') || '') && url.searchParams.get('size') === 'normal' ? 'Invalid input' : '<html>ok</html>');
+    }
     // fake Google reCAPTCHA: "good" passes
     if (url.pathname === '/recaptcha/siteverify') {
       const resp = new URLSearchParams(body).get('response');
@@ -1090,6 +1096,17 @@ describe('owner, permissions and 2-step sign-in', () => {
     assert.equal(json(locked).locked, true);
   });
 
+  test('sign-up answers at once; the code email follows in a second call', async () => {
+    const email = 'quick.signup@example.com';
+    const before = mails.length;
+    const res = await invoke('POST', '/auth/signup', { body: { name: 'Quick Person', email, password: 'longenough1', sendLater: true } });
+    assert.equal(res.statusCode, 201, res.body);
+    assert.equal(json(res).sending, true);
+    assert.equal(mails.length, before, 'nothing emailed yet');
+    assert.equal((await invoke('POST', '/auth/resend-verification', { body: { email } })).statusCode, 200);
+    assert.ok(mails.slice(before).some(m => m.to === email), 'the code went out');
+  });
+
   test('emailed links only set up an account; they never sign anyone in', async () => {
     const res = await invoke('POST', '/auth/request-link', { body: { email: 'admin@test.org' } });
     assert.equal(res.statusCode, 200, res.body);
@@ -1140,6 +1157,11 @@ describe('owner, permissions and 2-step sign-in', () => {
       const robot = await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse', captcha: 'bad' } });
       assert.equal(robot.statusCode, 400);
       assert.equal((await invoke('POST', '/auth/forgot', { body: { email: 'rep@test.org' } })).statusCode, 400, 'forgot needs it too');
+
+      // A score (v3) key saved as "v2" is recognised and stored as v3
+      const v3 = json(await invoke('PUT', '/admin/access', { token: ownerToken, headers: h,
+        body: { captcha: { siteKey: '6Lv' + 'c'.repeat(37), secret, type: 'v2' } } }));
+      assert.equal(v3.captcha.type, 'v3', 'the key type is worked out from Google, not trusted from the form');
     } finally {
       await invoke('PUT', '/admin/access', { token: ownerToken, headers: h, body: { captcha: { siteKey: '', secret: '' } } });
     }

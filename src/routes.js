@@ -366,6 +366,21 @@ async function humanCheck(req, res) {
     return true;
   }
 }
+/**
+ * Which kind of key is this? Google's widget page says "Invalid" when asked
+ * to draw a tick box with a score-based key. Picking the wrong type once
+ * locked everyone out, so the owner no longer has to know. Null if unsure.
+ */
+async function detectCaptchaType(siteKey, site) {
+  try {
+    const co = Buffer.from(`${new URL(site).origin}:443`).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+    const base = process.env.RECAPTCHA_ANCHOR_URL || 'https://www.google.com/recaptcha/api2/anchor';
+    const page = await (await fetch(`${base}?ar=1&k=${encodeURIComponent(siteKey)}&co=${co}&hl=en&size=normal`,
+      { signal: AbortSignal.timeout(5000) })).text();
+    return /Invalid (input|key type)/i.test(page) ? 'v3' : 'v2';
+  } catch (e) { return null; }
+}
+
 r.get('/auth/captcha', wrap(async (req, res) => {
   res.set('Cache-Control', 'public, max-age=60');
   const k = await captchaKeys();
@@ -450,7 +465,10 @@ r.post('/auth/signup', wrap(async (req, res) => {
     if ((await q.everyUser()).some(u => String(u.email).toLowerCase() === email)) {
       return res.status(409).json({ error: 'That account has been switched off. Ask the office to turn it back on.' });
     }
-    const rep = await zohoRepFor(email).catch(e => { console.error('[signup] Zoho lookup failed:', e.message); return null; });
+    // The app's own sign-up does the Zoho lookup later, while the code email is
+    // on its way (see /auth/resend-verification), so pressing Create is quick.
+    const rep = req.body?.sendLater ? null
+      : await zohoRepFor(email).catch(e => { console.error('[signup] Zoho lookup failed:', e.message); return null; });
     // One account per Zoho contact; a second address for the same rep stays unlinked
     const taken = rep && (await q.allUsers()).some(u => u.zoho_owner_id === rep.id);
     const id = 'u_' + Date.now().toString(36) + crypto.randomBytes(2).toString('hex');
@@ -462,6 +480,7 @@ r.post('/auth/signup', wrap(async (req, res) => {
     await audit(id, 'user.signedUp', { email, linked: !!(rep && !taken) }, req.ip);
   }
   user = await q.userByEmail(email);
+  if (req.body?.sendLater) return res.status(201).json({ ok: true, email, sending: true });
 
   const recent = await q.recentTokenCount(user.id, 'verify');
   if ((recent?.c || 0) >= 8) {
@@ -489,11 +508,11 @@ r.post('/auth/verify-email', wrap(async (req, res) => {
   const problem = await useCode(user, code, 'verify');
   if (problem) return res.status(401).json({ error: problem });
 
-  await q.markVerified(user.id);
-  await q.touchLogin(user.id);
-  await audit(user.id, 'auth.emailVerified', {}, req.ip);
-  notifyOfficeOfSignup(user).catch(() => {});
-  res.json({ token: auth.issue(user), user: await auth.withAccess(user) });
+  await Promise.all([q.markVerified(user.id), q.touchLogin(user.id), audit(user.id, 'auth.emailVerified', {}, req.ip),
+    linkRepIfUnlinked(user)]);           // in case the earlier lookup missed
+  const fresh = await q.userById(user.id);
+  notifyOfficeOfSignup(fresh).catch(() => {});
+  res.json({ token: auth.issue(fresh), user: await auth.withAccess(fresh) });
 }));
 
 r.post('/auth/resend-verification', wrap(async (req, res) => {
@@ -504,10 +523,23 @@ r.post('/auth/resend-verification', wrap(async (req, res) => {
   if ((recent?.c || 0) >= 8) {
     return res.status(429).json({ error: 'Several codes have been sent already. Use one of those, or wait a few minutes.' });
   }
-  const sent = await sendCode(user, req, 'verify');
+  // The code email and the Zoho rep lookup side by side: neither waits on the other
+  const [sent] = await Promise.all([sendCode(user, req, 'verify'), linkRepIfUnlinked(user)]);
   if (sent && sent.ok === false) return res.status(503).json({ error: 'The code could not be emailed just now. Try again in a minute.' });
   res.json({ ok: true });
 }));
+
+/** A new account whose email is a rep's in Zoho gets that rep's rings. Never throws. */
+async function linkRepIfUnlinked(user) {
+  if (!user || user.zoho_owner_id || user.role !== 'rep') return;
+  try {
+    const rep = await zohoRepFor(String(user.email).toLowerCase());
+    if (!rep) return;
+    if ((await q.allUsers()).some(u => u.zoho_owner_id === rep.id)) return;   // one account per rep
+    await q.linkZoho(user.id, rep.id, rep.phone || null, rep.region || null);
+    await audit(user.id, 'user.linkedToZoho', { contactId: rep.id }, null);
+  } catch (e) { console.error('[signup] Zoho lookup failed:', e.message); }
+}
 
 /** Tell the office someone joined, and whether they still need linking. */
 async function notifyOfficeOfSignup(user) {
@@ -2394,7 +2426,8 @@ r.put('/admin/access', auth.authRequired, access.requireOwner, auth.requireEleva
       if (!secret && !(await captchaKeys()).secret) return res.status(400).json({ error: 'Paste the secret key as well.' });
       await q.setSetting('captcha_site_key', site);
       if (secret) await q.setSetting('captcha_secret', secret);
-      await q.setSetting('captcha_type', b.captcha.type === 'v2' ? 'v2' : 'v3');
+      const detected = await detectCaptchaType(site, siteUrl(req));
+      await q.setSetting('captcha_type', detected || (b.captcha.type === 'v2' ? 'v2' : 'v3'));
       await q.setSetting('captcha_proven', '');     // new keys must prove themselves before they can block anyone
     }
   }

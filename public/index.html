@@ -288,6 +288,9 @@
   *{-webkit-tap-highlight-color:transparent;}
   .captcha-slot{min-height:78px;margin:2px 0 12px;display:flex;justify-content:center;}
   .captcha-note{font-size:11.5px;color:var(--ink-faint);text-align:center;margin:-2px 0 10px;}
+  .powered{margin-top:22px;padding-top:14px;border-top:1px solid var(--line);text-align:center;font-size:12px;
+    color:var(--ink-faint);letter-spacing:.01em;}
+  .powered strong{color:var(--ink-muted);font-weight:600;}
   .grecaptcha-badge{visibility:hidden;}   /* v3's floating badge would cover the phone tab bar; the note above credits Google */
   .perm-all{background:var(--surface-2);border-radius:8px;padding-left:10px;padding-right:0;}
 
@@ -1011,7 +1014,7 @@ const API = {
   verifyLink(token){ return this.call('/auth/verify-link',{method:'POST',body:JSON.stringify({token})}); },
   forgot(email){ return this.call('/auth/forgot',{method:'POST',body:JSON.stringify({email,captcha:captchaToken()})}); },
   verifyCode(email,code){ return this.call('/auth/verify-code',{method:'POST',body:JSON.stringify({email,code})}); },
-  signup(name,email,password){ return this.call('/auth/signup',{method:'POST',body:JSON.stringify({name,email,password,captcha:captchaToken()})}); },
+  signup(name,email,password){ return this.call('/auth/signup',{method:'POST',body:JSON.stringify({name,email,password,captcha:captchaToken(),sendLater:true})}); },
   verifyEmail(email,code){ return this.call('/auth/verify-email',{method:'POST',body:JSON.stringify({email,code})}); },
   resendVerification(email){ return this.call('/auth/resend-verification',{method:'POST',body:JSON.stringify({email})}); },
   changePassword(current,next){ return this.call('/auth/password',{method:'POST',body:JSON.stringify({current,next})}); },
@@ -5032,6 +5035,7 @@ function setupScreen(){
       </form>
     </div>
     <p class="tag" style="margin-top:16px;font-size:12.5px">${supportLine()}</p>
+    ${poweredBy()}
   </div></div>`;
 }
 
@@ -5090,6 +5094,7 @@ function loginScreen(){
       <h3 style="margin:0 0 4px">Confirm your email</h3>
       <p class="lead" style="margin:0 0 14px">We've emailed a six-digit code to <strong>${esc(ui.verifyFor)}</strong>.
         Type it here to finish setting up your account.</p>
+      <div class="row-sub" id="vfSending" style="text-align:center;margin:-6px 0 12px">${ui.verifySending ? 'Sending your code…' : ''}</div>
       <form onsubmit="doVerifyEmail(event)">
         <div class="field"><label>Code</label>
           <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required
@@ -5242,7 +5247,11 @@ function shell(inner){
       <strong>That link didn't work</strong>${esc(ui.linkError)}</div>`:''}
     <div id="setupNote"></div>
     <p class="tag" style="margin-top:16px;font-size:12.5px">${supportLine()}</p>
+    ${poweredBy()}
   </div></div>`;
+}
+function poweredBy(){
+  return `<div class="powered">Powered by <strong>Prosynergy Bookkeeping</strong></div>`;
 }
 
 /** Set up or reset: both send a choose-a-password link. */
@@ -5356,9 +5365,14 @@ async function doSignup(e){
   btn.disabled = true; btn.textContent = 'Creating…';
   try{
     await prepareCaptcha('signup');
-    await API.signup(name, email, pw);
-    ui.verifyFor = email; ui.authMode = 'signin';
+    const out = await API.signup(name, email, pw);
+    // Straight to "enter your code"; the email goes out alongside
+    ui.verifyFor = email; ui.authMode = 'signin'; ui.verifySending = !!(out && out.sending);
     render();
+    if(out && out.sending) API.resendVerification(email)
+      .then(() => { ui.verifySending = false; const n = document.getElementById('vfSending'); if(n) n.textContent = 'Sent. It can take a few seconds to arrive.'; })
+      .catch(e => { ui.verifySending = false; const n = document.getElementById('vfSending');
+        if(n){ n.textContent = e.message || 'The code could not be sent. Tap "Send another code".'; n.style.color = 'var(--rust)'; } });
   }catch(ex){ resetCaptcha(); show(ex.message || 'Could not create the account'); }
 }
 

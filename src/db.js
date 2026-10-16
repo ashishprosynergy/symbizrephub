@@ -302,6 +302,9 @@ const q = {
   forgetDevice: (hash, userId) => query('DELETE FROM trusted_devices WHERE token_hash = $1 AND user_id = $2', [hash, userId]),
   forgetDevicesFor: userId => query('DELETE FROM trusted_devices WHERE user_id = $1', [userId]),
   setRole: (id, role) => query('UPDATE users SET role = $1 WHERE id = $2', [role, id]),
+  linkZoho: (id, contactId, phone, region) => query(
+    'UPDATE users SET zoho_owner_id = $2, phone = COALESCE(phone, $3), region = COALESCE(region, $4) WHERE id = $1 AND zoho_owner_id IS NULL',
+    [id, contactId, phone, region]),
 
   getSetting: key => one('SELECT value FROM settings WHERE key = $1', [key]),
   setSetting: (key, value) => query(
