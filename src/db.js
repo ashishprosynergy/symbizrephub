@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   zoho_owner_id TEXT,
   active        BOOLEAN NOT NULL DEFAULT TRUE,
+  email_verified BOOLEAN NOT NULL DEFAULT TRUE,
   digest_email  BOOLEAN NOT NULL DEFAULT TRUE,
   digest_sms    BOOLEAN NOT NULL DEFAULT FALSE,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -167,6 +168,8 @@ CREATE TABLE IF NOT EXISTS login_tokens (
 
 ALTER TABLE login_tokens ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'signin';
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE;
+
 CREATE INDEX IF NOT EXISTS idx_token_user ON login_tokens (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_writes (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries (user_id, entry_date);
@@ -209,10 +212,14 @@ const q = {
   hardDelete:  id    => query('DELETE FROM users WHERE id = $1', [id]),
   touchLogin:  id    => query('UPDATE users SET last_login_at = now() WHERE id = $1', [id]),
   insertUser:  u     => query(
-    `INSERT INTO users (id,email,name,phone,role,region,password_hash,zoho_owner_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [u.id, u.email, u.name, u.phone, u.role, u.region, u.password_hash, u.zoho_owner_id]),
+    `INSERT INTO users (id,email,name,phone,role,region,password_hash,zoho_owner_id,email_verified)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [u.id, u.email, u.name, u.phone, u.role, u.region, u.password_hash, u.zoho_owner_id,
+     u.email_verified !== false]),
   setPassword: (hash, id) => query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, id]),
+  markVerified: id => query('UPDATE users SET email_verified = TRUE WHERE id = $1', [id]),
+  // Someone signing up again before confirming: keep the one row, take the new details
+  updateSignup: (id, name, hash) => query('UPDATE users SET name = $1, password_hash = $2 WHERE id = $3', [name, hash, id]),
   deactivate:  id    => query('UPDATE users SET active = FALSE WHERE id = $1', [id]),
 
   enqueue: (userId, clientUuid, module, op, payload) => query(
@@ -297,11 +304,12 @@ const q = {
      WHERE user_id = $1 AND created_at > now() - interval '10 minutes'
        AND ($2::text IS NULL OR purpose = $2)`,
     [userId, purpose || null]),
-  // When a new code is issued the older ones stop working, so there is never
-  // any doubt about which code in the inbox is the live one.
-  expireOlderCodes: userId => query(
-    "UPDATE login_tokens SET used_at = now() WHERE user_id = $1 AND purpose = 'otp' AND used_at IS NULL",
-    [userId]),
+  // Once one code has worked, every other outstanding code of that kind dies.
+  // Killing them when a NEW code was sent instead meant asking twice made the
+  // first email's code fail with "already used".
+  expireOtherCodes: (userId, purpose) => query(
+    'UPDATE login_tokens SET used_at = now() WHERE user_id = $1 AND purpose = $2 AND used_at IS NULL',
+    [userId, purpose]),
   purgeOldTokens: () => query("DELETE FROM login_tokens WHERE expires_at < now() - interval '1 day'"),
 
   logSend: (userId, kind, channel, subject, ok, error) => query(

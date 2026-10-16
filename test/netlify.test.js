@@ -393,6 +393,87 @@ describe('first-run setup', () => {
     assert.equal(await db.q.userByEmail('nobody@nowhere.test'), null);
   });
 
+  describe('sign up, confirm, sign in, forgot', () => {
+    const reminders = require('../src/reminders');
+    let realSend, sent;
+    // Mail is off in tests; capture what would have gone out instead
+    before(() => { realSend = reminders.sendEmail;
+      reminders.sendEmail = async (to, subject) => { sent.push({ to, subject }); return { ok: true }; }; });
+    after(() => { reminders.sendEmail = realSend; });
+    const lastCode = to => (sent.filter(s => s.to === to).pop()?.subject.match(/(\d{6})/) || [])[1];
+
+    test('a new person can sign up, confirm by code and be signed in', async () => {
+      sent = [];
+      const email = 'new.person@example.com';
+      const res = await invoke('POST', '/auth/signup', { body: { name: 'New Person', email, password: 'longenough1' } });
+      assert.equal(res.statusCode, 201, res.body);
+      const code = lastCode(email);
+      assert.ok(code, 'a confirmation code was emailed');
+
+      // Signing in before confirming sends them back to the code screen
+      const early = await invoke('POST', '/auth/login', { body: { email, password: 'longenough1' } });
+      assert.equal(early.statusCode, 403);
+      assert.equal(JSON.parse(early.body).needsVerification, true);
+
+      // The first code still works even though signing in sent another
+      const ok = await invoke('POST', '/auth/verify-email', { body: { email, code } });
+      assert.equal(ok.statusCode, 200, ok.body);
+      assert.ok(JSON.parse(ok.body).token);
+
+      const login = await invoke('POST', '/auth/login', { body: { email, password: 'longenough1' } });
+      assert.equal(login.statusCode, 200);
+      const u = await db.q.userByEmail(email);
+      assert.equal(u.role, 'rep');
+      assert.equal(u.zoho_owner_id, null, 'not a Zoho rep, so linked to nothing and sees nothing');
+    });
+
+    test('signing up twice with a confirmed email is refused', async () => {
+      sent = [];
+      const res = await invoke('POST', '/auth/signup', { body: { name: 'Again', email: 'new.person@example.com', password: 'longenough1' } });
+      assert.equal(res.statusCode, 409);
+    });
+
+    test('sign-up checks the password length', async () => {
+      const res = await invoke('POST', '/auth/signup', { body: { name: 'X', email: 'short@example.com', password: 'short' } });
+      assert.equal(res.statusCode, 400);
+    });
+
+    test('asking for two reset codes leaves the first one working', async () => {
+      sent = [];
+      const email = 'new.person@example.com';
+      await invoke('POST', '/auth/forgot', { body: { email } });
+      const first = lastCode(email);
+      await invoke('POST', '/auth/forgot', { body: { email } });
+      const second = lastCode(email);
+      assert.notEqual(first, undefined);
+
+      const res = await invoke('POST', '/auth/verify-code', { body: { email, code: first } });
+      assert.equal(res.statusCode, 200, res.body);
+      // Once one has worked, the other is spent
+      if (second !== first) {
+        const again = await invoke('POST', '/auth/verify-code', { body: { email, code: second } });
+        assert.equal(again.statusCode, 401);
+      }
+
+      const { token } = JSON.parse(res.body);
+      const set = await invoke('POST', '/auth/set-password', { body: { token, password: 'brandnewpass' } });
+      assert.equal(set.statusCode, 200);
+      const login = await invoke('POST', '/auth/login', { body: { email, password: 'brandnewpass' } });
+      assert.equal(login.statusCode, 200);
+    });
+
+    test('a signed-in person can change their password', async () => {
+      const email = 'new.person@example.com';
+      const { token } = JSON.parse((await invoke('POST', '/auth/login', { body: { email, password: 'brandnewpass' } })).body);
+      const wrong = await invoke('POST', '/auth/password', { token, body: { current: 'nope-nope', next: 'anotherpass1' } });
+      assert.equal(wrong.statusCode, 400);
+      const ok = await invoke('POST', '/auth/password', { token, body: { current: 'brandnewpass', next: 'anotherpass1' } });
+      assert.equal(ok.statusCode, 200);
+      const login = await invoke('POST', '/auth/login', { body: { email, password: 'anotherpass1' } });
+      assert.equal(login.statusCode, 200);
+    });
+  });
+
   test('status reports whether Zoho is connected', async () => {
     const body = JSON.parse((await invoke('GET', '/setup/status')).body);
     assert.equal(typeof body.zohoReady, 'boolean');

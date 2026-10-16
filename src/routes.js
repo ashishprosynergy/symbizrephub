@@ -197,13 +197,7 @@ function signInEmail({ name, url, minutes }) {
  * is scoped to their own rings exactly as one made by the office would be.
  */
 async function accountFromZoho(email) {
-  const rings = (await zoho.coql(queries.repsOnRings())).map(fromZoho.ring);
-  const names = new Map();
-  rings.forEach(r => { if (r.repZohoId && !names.has(r.repZohoId)) names.set(r.repZohoId, r.repName); });
-  if (!names.size) return null;
-
-  const contacts = (await zoho.coql(queries.contactsByIds([...names.keys()]))).map(fromZoho.member);
-  const c = contacts.find(x => String(x.email || '').trim().toLowerCase() === email);
+  const c = await zohoRepFor(email);
   if (!c) return null;
 
   // Already here under another address, or switched off: leave it to the office
@@ -211,7 +205,7 @@ async function accountFromZoho(email) {
   if (existing.some(u => u.zoho_owner_id === c.id || String(u.email).toLowerCase() === email)) return null;
 
   const user = {
-    id: 'u_' + Date.now().toString(36), email, name: names.get(c.id) || c.name || email,
+    id: 'u_' + Date.now().toString(36), email, name: c.repName || c.name || email,
     phone: c.phone || null, role: 'rep', region: c.region || null,
     // Unusable until they choose their own with the emailed code
     password_hash: auth.hash(crypto.randomBytes(24).toString('hex')),
@@ -286,30 +280,46 @@ r.post('/auth/request-link', wrap(async (req, res) => {
  * device from the one they are signing in on, and some mail clients mangle
  * links. A code works whatever they are holding.
  */
-async function sendResetCode(user, req) {
-  // Only the newest code should work. Leaving older ones live meant a rep
-  // with two emails open could type a valid code and be told it was wrong.
-  await q.expireOlderCodes(user.id).catch(() => {});
+/**
+ * Email a six-digit code. purpose 'otp' resets a password; 'verify' confirms
+ * the address on a new sign-up. Every code stays good until it expires or
+ * another one is used, so asking twice never breaks the first email.
+ */
+async function sendCode(user, req, purpose = 'otp') {
   const code = String(crypto.randomInt(100000, 1000000));
   const minutes = 15;
   const expires = new Date(Date.now() + minutes * 60000).toISOString();
   // Stored as the code itself, scoped to this user and single use. It is
   // short-lived and rate limited, which is what makes six digits safe enough.
-  await q.addLoginToken(`otp:${user.id}:${code}`, user.id, expires, req.ip, 'otp');
+  await q.addLoginToken(`${purpose}:${user.id}:${code}`, user.id, expires, req.ip, purpose);
+  const verify = purpose === 'verify';
   return reminders.sendEmail(user.email, `Your Rep Hub code: ${code}`,
     `<!doctype html><html><body style="margin:0;background:#F2F5EC;font-family:-apple-system,Segoe UI,Arial,sans-serif;">
     <div style="max-width:440px;margin:0 auto;padding:26px 18px;text-align:center;">
-      <h1 style="font-size:18px;color:#1E2A20;margin:0 0 6px;">Your password reset code</h1>
+      <h1 style="font-size:18px;color:#1E2A20;margin:0 0 6px;">${verify ? 'Confirm your email' : 'Your password reset code'}</h1>
       <p style="color:#5A6455;font-size:14px;margin:0 0 18px;">
-        ${esc((user.name||'').split(' ')[0] || 'Hello')}, type this into Rep Hub to choose a new password.</p>
+        ${esc((user.name||'').split(' ')[0] || 'Hello')}, ${verify
+          ? 'type this into Rep Hub to finish setting up your account.'
+          : 'type this into Rep Hub to choose a new password.'}</p>
       <div style="font-family:ui-monospace,Menlo,monospace;font-size:34px;font-weight:700;
         letter-spacing:.18em;color:#2E5132;background:#fff;border-radius:10px;padding:16px 10px;">${code}</div>
       <p style="color:#8A9284;font-size:12.5px;margin:18px 0 0;">
         It expires in ${minutes} minutes and works once.
-        If you didn't ask for this, ignore it — your password has not changed.</p>
+        ${verify ? "If you didn't sign up for Rep Hub, ignore it." : "If you didn't ask for this, ignore it — your password has not changed."}</p>
       <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network</p>
     </div></body></html>`,
-    { userId: user.id, kind: 'otp' });
+    { userId: user.id, kind: purpose });
+}
+
+/** Check a code of the given purpose; burn it and its siblings if good. */
+async function useCode(user, code, purpose) {
+  const row = await q.findLoginToken(`${purpose}:${user.id}:${code}`);
+  if (!row || row.purpose !== purpose) return 'That code is not right. Check it and try again.';
+  if (row.used_at) return 'That code has already been used. Ask for a new one.';
+  if (new Date(row.expires_at) < new Date()) return 'That code has expired. Ask for a new one.';
+  await q.useLoginToken(row.token);
+  await q.expireOtherCodes(user.id, purpose).catch(() => {});
+  return null;
 }
 
 /** Check a code and hand back a short-lived token to set the password with. */
@@ -321,18 +331,125 @@ r.post('/auth/verify-code', wrap(async (req, res) => {
   const user = await q.userByEmail(email);
   if (!user || user.active === false) return res.status(401).json({ error: 'That code is not right. Check it and try again.' });
 
-  const row = await q.findLoginToken(`otp:${user.id}:${code}`);
-  if (!row || row.purpose !== 'otp') return res.status(401).json({ error: 'That code is not right. Check it and try again.' });
-  if (row.used_at) return res.status(401).json({ error: 'That code has already been used. Ask for a new one.' });
-  if (new Date(row.expires_at) < new Date()) return res.status(401).json({ error: 'That code has expired. Ask for a new one.' });
+  const problem = await useCode(user, code, 'otp');
+  if (problem) return res.status(401).json({ error: problem });
 
-  await q.useLoginToken(row.token);
   // Swap the code for a token the set-password step accepts
   const token = crypto.randomBytes(32).toString('hex');
   await q.addLoginToken(token, user.id, new Date(Date.now() + 15 * 60000).toISOString(), req.ip, 'setpassword');
   await audit(user.id, 'auth.codeVerified', {}, req.ip);
   res.json({ token, name: user.name, email: user.email });
 }));
+
+/* ── Sign up ──
+ * Anyone can make an account with their own email and password, confirmed
+ * by a code. A rep whose email is on their Zoho contact is linked to their
+ * rings straight away. Anyone else gets an account that shows nothing until
+ * the office links it — so signing up never opens up member data. */
+
+/** Their Zoho rep contact, if this email is one. */
+async function zohoRepFor(email) {
+  const rings = (await zoho.coql(queries.repsOnRings())).map(fromZoho.ring);
+  const names = new Map();
+  rings.forEach(r => { if (r.repZohoId && !names.has(r.repZohoId)) names.set(r.repZohoId, r.repName); });
+  if (!names.size) return null;
+  const contacts = (await zoho.coql(queries.contactsByIds([...names.keys()]))).map(fromZoho.member);
+  const c = contacts.find(x => String(x.email || '').trim().toLowerCase() === email);
+  return c ? { ...c, repName: names.get(c.id) } : null;
+}
+
+r.post('/auth/signup', wrap(async (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  if (!name) return res.status(400).json({ error: 'Enter your name' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'That does not look like an email address' });
+  if (password.length < 8) return res.status(400).json({ error: 'Use at least 8 characters for your password' });
+
+  let user = await q.userByEmail(email);
+  if (user && user.email_verified !== false) {
+    return res.status(409).json({ error: 'There is already an account for that email. Sign in, or use "Forgotten your password?"' });
+  }
+
+  if (user) {
+    // Signed up before but never confirmed: take the new details, send a new code
+    await q.updateSignup(user.id, name, auth.hash(password));
+  } else {
+    if ((await q.everyUser()).some(u => String(u.email).toLowerCase() === email)) {
+      return res.status(409).json({ error: 'That account has been switched off. Ask the office to turn it back on.' });
+    }
+    const rep = await zohoRepFor(email).catch(e => { console.error('[signup] Zoho lookup failed:', e.message); return null; });
+    // One account per Zoho contact; a second address for the same rep stays unlinked
+    const taken = rep && (await q.allUsers()).some(u => u.zoho_owner_id === rep.id);
+    const id = 'u_' + Date.now().toString(36) + crypto.randomBytes(2).toString('hex');
+    await q.insertUser({
+      id, email, name, phone: rep?.phone || null, role: 'rep', region: rep?.region || null,
+      password_hash: auth.hash(password), zoho_owner_id: rep && !taken ? rep.id : null,
+      email_verified: false,
+    });
+    await audit(id, 'user.signedUp', { email, linked: !!(rep && !taken) }, req.ip);
+  }
+  user = await q.userByEmail(email);
+
+  const recent = await q.recentTokenCount(user.id, 'verify');
+  if ((recent?.c || 0) >= 8) {
+    return res.status(429).json({ error: 'Several codes have been sent already. Use one of those, or wait a few minutes.' });
+  }
+  const sent = await sendCode(user, req, 'verify');
+  if (sent && sent.ok === false) {
+    return res.status(503).json({ error: sent.skipped
+      ? 'Email is not switched on for this site, so the confirmation code could not be sent.'
+      : 'The confirmation code could not be emailed just now. Try again in a minute.' });
+  }
+  res.status(201).json({ ok: true, email, linked: !!user.zoho_owner_id });
+}));
+
+/** The code from the sign-up email. Confirms the address and signs them in. */
+r.post('/auth/verify-email', wrap(async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const code = String(req.body?.code || '').replace(/\D/g, '');
+  if (code.length !== 6) return res.status(400).json({ error: 'The code is six digits' });
+
+  const user = await q.userByEmail(email);
+  if (!user) return res.status(401).json({ error: 'That code is not right. Check it and try again.' });
+  if (user.email_verified !== false) return res.status(409).json({ error: 'That email is already confirmed. Sign in with your password.' });
+
+  const problem = await useCode(user, code, 'verify');
+  if (problem) return res.status(401).json({ error: problem });
+
+  await q.markVerified(user.id);
+  await q.touchLogin(user.id);
+  await audit(user.id, 'auth.emailVerified', {}, req.ip);
+  notifyOfficeOfSignup(user).catch(() => {});
+  res.json({ token: auth.issue(user), user: auth.publicUser(user) });
+}));
+
+r.post('/auth/resend-verification', wrap(async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const user = await q.userByEmail(email);
+  if (!user || user.email_verified !== false) return res.status(400).json({ error: 'Nothing waiting to be confirmed for that email.' });
+  const recent = await q.recentTokenCount(user.id, 'verify');
+  if ((recent?.c || 0) >= 8) {
+    return res.status(429).json({ error: 'Several codes have been sent already. Use one of those, or wait a few minutes.' });
+  }
+  const sent = await sendCode(user, req, 'verify');
+  if (sent && sent.ok === false) return res.status(503).json({ error: 'The code could not be emailed just now. Try again in a minute.' });
+  res.json({ ok: true });
+}));
+
+/** Tell the office someone joined, and whether they still need linking. */
+async function notifyOfficeOfSignup(user) {
+  const office = await q.allOffice();
+  const linked = !!user.zoho_owner_id;
+  for (const o of office) {
+    await reminders.sendEmail(o.email, `New Rep Hub sign-up: ${user.name}`,
+      `<p><strong>${esc(user.name)}</strong> (${esc(user.email)}) has created a Rep Hub account.</p>
+       <p>${linked
+         ? 'Their email matches a rep in Zoho, so they already see their own rings.'
+         : 'Their email is not on a rep\'s contact in Zoho, so they see nothing yet. If they should, link them from Admin → Accounts, or remove the account if you don\'t know them.'}</p>`,
+      { userId: o.id, kind: 'signup' });
+  }
+}
 
 async function sendPasswordLink(user, req, { invite } = {}) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -382,7 +499,7 @@ r.post('/auth/forgot', wrap(async (req, res) => {
     return res.status(429).json({ error: 'Several codes have been sent already. Use the most recent one, or wait a few minutes.' });
   }
 
-  const sent = await sendResetCode(user, req);
+  const sent = await sendCode(user, req, 'otp');
   if (sent && sent.ok === false) {
     // Not configured and "the mail server said no" need different fixes, so
     // do not report both as the first.
@@ -421,6 +538,8 @@ r.post('/auth/set-password', wrap(async (req, res) => {
 
   await q.setPassword(auth.hash(password), user.id);
   await q.useLoginToken(token);
+  // Getting here took a code or link from their inbox, so the address is theirs
+  if (user.email_verified === false) await q.markVerified(user.id);
   await audit(user.id, 'auth.passwordSet', {}, req.ip);
   res.json({ token: auth.issue(user), user: auth.publicUser(user) });
 }));
@@ -441,6 +560,7 @@ r.post('/auth/verify-link', wrap(async (req, res) => {
   if (!user || user.active === false) return res.status(401).json({ error: 'That account is no longer active' });
 
   await q.useLoginToken(token);       // burn it before issuing the session
+  if (user.email_verified === false) await q.markVerified(user.id);   // the link came from their inbox
   await audit(user.id, 'auth.linkUsed', {}, req.ip);
   res.json({ token: auth.issue(user), user: auth.publicUser(user) });
 }));
@@ -449,6 +569,14 @@ r.post('/auth/login', wrap(async (req, res) => {
   const { email, password } = req.body || {};
   const out = await auth.login(email, password, req.ip);
   if (!out) return res.status(401).json({ error: 'Email or password is incorrect' });
+  if (out.unverified) {
+    const recent = await q.recentTokenCount(out.user.id, 'verify');
+    if ((recent?.c || 0) < 8) await sendCode(out.user, req, 'verify');
+    return res.status(403).json({
+      error: 'Confirm your email first. We have sent a code to ' + out.user.email + '.',
+      needsVerification: true, email: out.user.email,
+    });
+  }
   res.json(out);
 }));
 

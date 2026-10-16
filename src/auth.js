@@ -29,6 +29,8 @@ async function login(email, password, ip) {
     await audit(user?.id, 'login.failed', { email }, ip);
     return null;
   }
+  // Right password, but they never typed the code from the sign-up email
+  if (user.email_verified === false) return { unverified: true, user };
   await q.touchLogin(user.id);
   await audit(user.id, 'login.ok', null, ip);
   return { token: issue(user), user: publicUser(user) };

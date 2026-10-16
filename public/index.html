@@ -701,7 +701,10 @@ const API = {
     if(res.status === 401 && !path.startsWith('/auth/')){
       this.setToken(null); throw new Error('SESSION_EXPIRED');
     }
-    if(!res.ok){ const b = await res.json().catch(()=>({})); throw new Error(b.error || ('Request failed: '+res.status)); }
+    if(!res.ok){ const b = await res.json().catch(()=>({}));
+      const err = new Error(b.error || ('Request failed: '+res.status));
+      err.data = b; err.status = res.status;   // e.g. needsVerification on sign-in
+      throw err; }
     return res.status === 204 ? null : res.json();
   },
   login(email,password){ return this.call('/auth/login',{method:'POST',body:JSON.stringify({email,password})}); },
@@ -709,6 +712,10 @@ const API = {
   verifyLink(token){ return this.call('/auth/verify-link',{method:'POST',body:JSON.stringify({token})}); },
   forgot(email){ return this.call('/auth/forgot',{method:'POST',body:JSON.stringify({email})}); },
   verifyCode(email,code){ return this.call('/auth/verify-code',{method:'POST',body:JSON.stringify({email,code})}); },
+  signup(name,email,password){ return this.call('/auth/signup',{method:'POST',body:JSON.stringify({name,email,password})}); },
+  verifyEmail(email,code){ return this.call('/auth/verify-email',{method:'POST',body:JSON.stringify({email,code})}); },
+  resendVerification(email){ return this.call('/auth/resend-verification',{method:'POST',body:JSON.stringify({email})}); },
+  changePassword(current,next){ return this.call('/auth/password',{method:'POST',body:JSON.stringify({current,next})}); },
   checkSetup(token){ return this.call('/auth/check-setup',{method:'POST',body:JSON.stringify({token})}); },
   setPassword(token,password){ return this.call('/auth/set-password',{method:'POST',body:JSON.stringify({token,password})}); },
   me(){ return this.call('/auth/me'); },
@@ -3819,7 +3826,48 @@ async function trySetupLink(){
  */
 function loginScreen(){
   const sentTo = ui.linkSentTo;
-  const mode = ui.authMode || 'signin';   // signin | setup | forgot
+  const mode = ui.authMode || 'signin';   // signin | signup | setup | forgot
+
+  if(ui.verifyFor){
+    return shell(`<div class="card">
+      <h3 style="margin:0 0 4px">Confirm your email</h3>
+      <p class="lead" style="margin:0 0 14px">We've emailed a six-digit code to <strong>${esc(ui.verifyFor)}</strong>.
+        Type it here to finish setting up your account.</p>
+      <form onsubmit="doVerifyEmail(event)">
+        <div class="field"><label>Code</label>
+          <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required
+                 placeholder="000000" class="otp" oninput="this.value=this.value.replace(/\\D/g,'')"></div>
+        <div id="loginErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
+        <button class="btn primary" type="submit" id="loginBtn" style="width:100%;justify-content:center">Confirm and sign in</button>
+      </form>
+      <div style="text-align:center;margin-top:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+        <button class="btn sm" onclick="resendVerification(event)">Send another code</button>
+        <button class="btn sm" onclick="ui.verifyFor=null;ui.authMode='signin';render()">Back</button>
+      </div>
+      <p class="row-sub" style="margin-top:10px;text-align:center">
+        Codes last 15 minutes. Not there? Check spam or junk.</p>
+    </div>`);
+  }
+
+  if(mode === 'signup'){
+    return shell(`<div class="card">
+      <h3 style="margin:0 0 4px">Create your account</h3>
+      <p class="lead" style="margin:0 0 14px">Reps: use the email Symbiz has for you and your rings appear automatically.</p>
+      <form onsubmit="doSignup(event)">
+        <div class="field"><label>Your name</label>
+          <input name="name" required autocomplete="name" placeholder="First and last name"></div>
+        <div class="field"><label>Email</label>
+          <input name="email" type="email" required autocomplete="username"
+                 placeholder="you@yourbusiness.com" value="${esc(ui.loginEmail||'')}"></div>
+        ${passwordField('Choose a password','password',{minlength:8, autocomplete:'new-password', placeholder:'At least 8 characters'})}
+        ${passwordField('Type it again','confirm',{minlength:8, autocomplete:'new-password'})}
+        <div id="loginErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
+        <button class="btn primary" type="submit" id="loginBtn" style="width:100%;justify-content:center">Create account</button>
+      </form>
+      <div style="text-align:center;margin-top:12px">
+        Already have an account? <button class="btn sm" onclick="ui.authMode='signin';render()">Sign in</button>
+      </div></div>`);
+  }
 
   if(ui.codeFor){
     return shell(`<div class="card">
@@ -3837,8 +3885,7 @@ function loginScreen(){
         <button class="btn sm" onclick="ui.codeFor=null;ui.authMode='signin';render()">Back</button>
       </div>
       <p class="row-sub" style="margin-top:10px;text-align:center">
-        It expires in 15 minutes. If you asked for more than one, use the newest —
-        older codes stop working.</p>
+        Codes last 15 minutes. If you asked more than once, any of them works.</p>
     </div>`);
   }
 
@@ -3888,7 +3935,7 @@ function loginScreen(){
         <button class="btn primary" type="submit" style="width:100%;justify-content:center">Sign in</button>
       </form>
       <div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;flex-wrap:wrap">
-        <button class="btn sm" onclick="ui.authMode='setup';render()">First time here?</button>
+        <button class="btn sm" onclick="ui.authMode='signup';render()">Create an account</button>
         <button class="btn sm" onclick="ui.authMode='forgot';render()">Forgotten your password?</button>
       </div>
       <div style="text-align:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
@@ -3962,6 +4009,87 @@ async function resendCode(){
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = 'Send another'; }
   }
+}
+
+/** Session in hand: load their data and show the app. */
+async function finishSignIn(out){
+  API.setToken(out.token);
+  signInAs(out.user);
+  await refreshMode();
+  await loadFromServer();
+  render();
+}
+
+async function doSignup(e){
+  e.preventDefault();
+  const f = e.target.elements;
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('loginErr');
+  const show = msg => { err.style.display='block'; err.textContent = msg;
+    btn.disabled = false; btn.textContent = 'Create account'; };
+  const name = f.namedItem('name').value.trim();
+  const email = f.namedItem('email').value.trim();
+  const pw = f.namedItem('password').value, again = f.namedItem('confirm').value;
+  ui.loginEmail = email;
+  if(pw.length < 8) return show('Use at least 8 characters for your password.');
+  if(pw !== again) return show("The two passwords don't match.");
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try{
+    await API.signup(name, email, pw);
+    ui.verifyFor = email; ui.authMode = 'signin';
+    render();
+  }catch(ex){ show(ex.message || 'Could not create the account'); }
+}
+
+async function doVerifyEmail(e){
+  e.preventDefault();
+  const code = e.target.elements.namedItem('code').value.trim();
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('loginErr');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try{
+    const out = await API.verifyEmail(ui.verifyFor, code);
+    ui.verifyFor = null;
+    await finishSignIn(out);
+    toast('Welcome to Rep Hub');
+  }catch(ex){
+    err.style.display = 'block';
+    err.textContent = ex.message || 'That code did not work';
+    btn.disabled = false; btn.textContent = 'Confirm and sign in';
+  }
+}
+
+async function resendVerification(ev){
+  const btn = ev && ev.target;
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+  try{ await API.resendVerification(ui.verifyFor); toast('A new code is on its way'); }
+  catch(e){ toast(e.message || 'Could not send another'); }
+  finally{ if(btn){ btn.disabled = false; btn.textContent = 'Send another code'; } }
+}
+
+/** Signed in already: change the password, knowing the current one. */
+function openChangePassword(){
+  openModal(`<h3>Change your password</h3>
+    <form onsubmit="submitChangePassword(event)">
+      ${passwordField('Current password','current',{autocomplete:'current-password'})}
+      ${passwordField('New password','next',{minlength:8, autocomplete:'new-password', placeholder:'At least 8 characters'})}
+      ${passwordField('Type the new one again','confirm',{minlength:8, autocomplete:'new-password'})}
+      <div id="cpErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
+      <p class="row-sub">Forgotten the current one? Sign out and use "Forgotten your password?".</p>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn primary" id="cpBtn">Save new password</button></div>
+    </form>`);
+}
+async function submitChangePassword(e){
+  e.preventDefault();
+  const f = e.target.elements, err = document.getElementById('cpErr'), btn = document.getElementById('cpBtn');
+  const show = msg => { err.style.display='block'; err.textContent = msg; btn.disabled = false; btn.textContent = 'Save new password'; };
+  const next = f.namedItem('next').value;
+  if(next.length < 8) return show('Use at least 8 characters.');
+  if(next !== f.namedItem('confirm').value) return show("The two new passwords don't match.");
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try{ await API.changePassword(f.namedItem('current').value, next); closeModal(); toast('Password changed'); }
+  catch(ex){ show(ex.message || 'Could not change it'); }
 }
 
 /** The one-time sign-in link, from whatever is in the email box. */
@@ -4110,6 +4238,12 @@ async function doLogin(e){
     render();
   }catch(ex){
     const m = String(ex.message || '');
+    // Signed up but never confirmed: a fresh code has just been sent
+    if(ex.data && ex.data.needsVerification){
+      ui.verifyFor = ex.data.email || ui.loginEmail;
+      render();
+      return;
+    }
     // Tell the truth about WHY. "Wrong password" when the server has no
     // database is the single most confusing thing this screen could say.
     if(m === 'Failed to fetch' || /NetworkError|load failed/i.test(m)){
@@ -4545,6 +4679,7 @@ function render(){
           return `<button class="rail-link ${ui.view===id?'active':''}" onclick="setView('${id}')"><span>${label}</span>${b?`<span class="pill ${id==='today'||id==='approvals'||id==='dash'?'':'muted'}">${b}</span>`:''}</button>`;
         }).join('')).join('')}</div>
       <div class="rail-foot">
+        ${API.live?`<button class="rail-link" onclick="openChangePassword()">Change password</button>`:''}
         <button class="rail-link" onclick="logout()">Sign out</button>
         <div style="font-size:10.5px;color:var(--ink-faint);padding:10px 11px 0;line-height:1.5">
           Managed by Prosynergy Bookkeeping<br>540-212-9403</div></div>
