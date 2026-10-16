@@ -1253,6 +1253,15 @@ function dueItems(repId){
     .sort((a,b)=> new Date(a.nextDue)-new Date(b.nextDue));
 }
 function lastContact(memberId){ return lastContactCached(memberId); }
+/**
+ * When this member is next due, from their most recent activity that set a
+ * date. Taking the first match instead meant an old, long-superseded due date
+ * could mark someone overdue after they had been called.
+ */
+function currentDue(memberId){
+  return S.activities.filter(a=>a.memberId===memberId&&a.nextDue)
+    .sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0]||null;
+}
 function lastFacContact(facId){
   const l=S.activities.filter(a=>a.facId===facId).sort((a,b)=>new Date(b.date)-new Date(a.date));
   return l[0]||null;
@@ -1554,13 +1563,16 @@ function vPeople(){
   const mem=S.members.filter(m=>m.repId===ui.me && m.ringId);
   const facs=S.facilitators.filter(f=>myRings(ui.me).some(r=>r.facId===f.id));
   let list=mem.filter(m=>!q||m.name.toLowerCase().includes(q)||m.business.toLowerCase().includes(q));
-  if(ui.filter==='overdue') list=list.filter(m=>{const a=S.activities.find(x=>x.memberId===m.id&&x.nextDue);return a&&days(a.nextDue)<0;});
+  // The Members screen shares ui.filter with its own chips (active,
+  // discontinued). Carried over here they matched no chip and hid people.
+  if(!['all','overdue','never','renewing'].includes(ui.filter)) ui.filter='all';
+  if(ui.filter==='overdue') list=list.filter(m=>{const a=currentDue(m.id);return a&&days(a.nextDue)<0;});
   if(ui.filter==='never') list=list.filter(m=>!lastContact(m.id));
   if(ui.filter==='renewing') list=list.filter(m=>m.renews&&days(m.renews)<=60&&days(m.renews)>=0);
   if(ui.filter!=='all'&&ui.filter!=='never') list=list.filter(m=>m.status==='active');
 
   const memRows=list.map(m=>{
-    const lc=lastContact(m.id), due=S.activities.find(a=>a.memberId===m.id&&a.nextDue);
+    const lc=lastContact(m.id), due=currentDue(m.id);
     return `<div class="row clicky" onclick="openMember('${m.id}')">
       <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
         <div class="av">${initials(m.name)}</div>
@@ -2091,6 +2103,7 @@ function exportCoverage(){ ui.report='rep-activity'; exportReport(); }
 function vMembersAll(){
   const q=ui.q.toLowerCase();
   let list=S.members.filter(m=>!q||m.name.toLowerCase().includes(q)||(m.business||'').toLowerCase().includes(q));
+  if(!['all','active','renewing','discontinued'].includes(ui.filter)) ui.filter='all';
   if(ui.filter==='active') list=list.filter(m=>m.status==='active');
   if(ui.filter==='discontinued') list=list.filter(m=>m.status==='discontinued');
   if(ui.filter==='renewing') list=list.filter(m=>m.renews&&days(m.renews)<=90&&days(m.renews)>=0&&m.status==='active');
@@ -4187,6 +4200,18 @@ const adapt = {
     };
   },
 
+  /** 2023-03-14 → the next 14 March on or after today, as YYYY-MM-DD. */
+  nextAnniversary(d){
+    const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return '';
+    const y = parseInt(TODAY_S.slice(0, 4), 10);
+    // 29 Feb falls on 28 Feb in other years rather than rolling into March
+    const on = yr => { const leap = (yr % 4 === 0 && yr % 100 !== 0) || yr % 400 === 0;
+      return `${yr}-${m[2]}-${m[2] === '02' && m[3] === '29' && !leap ? '28' : m[3]}`; };
+    const thisYear = on(y);
+    return thisYear >= TODAY_S ? thisYear : on(y + 1);
+  },
+
   member(m, ringLookup){
     const ringId = (m.ringIds && m.ringIds[0]) || null;
     return {
@@ -4208,7 +4233,10 @@ const adapt = {
       ringNames: m.ringNames || [],
       repId: (ringId && ringLookup && ringLookup[ringId]) || null,
       joined: m.joined || '',
-      renews: '',                           // not in their schema
+      // Their Zoho has no renewal date. Memberships are annual, so it is the
+      // next anniversary of the paid start date. Without this "Renewing soon"
+      // could never match anyone.
+      renews: adapt.nextAnniversary(m.joined || m.memberSince),
       status: String(m.status || '').toLowerCase() === 'active' ? 'active' : 'discontinued',
       isFacilitator: !!m.isFacilitator,
     };
@@ -4812,11 +4840,6 @@ function vEventDetail() {
       ${e.capacity ? `<div class="kv"><span class="k">Capacity</span><span>${e.capacity}</span></div>` : ''}
       ${e.notes ? `<div class="kv"><span class="k">Notes</span><span>${esc(e.notes)}</span></div>` : ''}
     </div>
-    <div class="btnrow" style="margin-bottom:6px">
-      <button class="btn primary" onclick="${API.live?`openAddRegistration('${e.id}')`:`openReg('${e.id}')`}">Add a registration</button>
-      <button class="btn" onclick="exportRegs('${e.id}')">Export list</button>
-      <button class="btn" onclick="printSignInSheet('${e.id}')">Print sign-in sheet</button>
-    </div>
     ${(() => {
       const regs = eventRegs(e.id);
       const coming = attendeeList(e.id);
@@ -4854,13 +4877,26 @@ function vEventDetail() {
       </div>
 
       <div class="btnrow" style="margin:12px 0">
-        ${API.live?`<button class="btn primary" onclick="openAddRegistration('${e.id}')">Register someone</button>`:''}
+        <button class="btn primary" onclick="${API.live?`openAddRegistration('${e.id}')`:`openReg('${e.id}')`}">Register someone</button>
         <button class="btn" onclick="printSignInSheet('${e.id}')">Sign-in sheet</button>
         <button class="btn" onclick="exportAttendees('${e.id}')">Export list</button>
       </div>
 
-      <h3 class="sub-h">Coming · ${coming.length}</h3>
-      ${coming.length ? `<div class="card" style="padding:4px 14px">${coming.map(person).join('')}</div>`
+      ${(() => {
+        // Registrants and their guests on separate tabs. One long mixed list
+        // made it hard to see who had signed up versus who they were bringing.
+        const tab = ['all','registered','guests'].includes(ui.evTab) ? ui.evTab : 'all';
+        const registrants = coming.filter(a=>!a.guestOf);
+        const shown = tab==='registered' ? registrants : tab==='guests' ? guests : coming;
+        const label = { all:'Everyone', registered:'Registered', guests:'Guests' };
+        const count = { all:coming.length, registered:registrants.length, guests:guests.length };
+        const chips = coming.length ? `<div class="chips">${['all','registered','guests'].map(k =>
+          `<button class="chip ${tab===k?'on':''}" onclick="ui.evTab='${k}';renderContent()">${label[k]} · ${count[k]}</button>`).join('')}</div>` : '';
+        return `${chips}
+          ${shown.length ? `<div class="card" style="padding:4px 14px">${shown.map(person).join('')}</div>`
+            : coming.length ? `<div class="empty">${tab==='guests'?'Nobody is bringing a guest.':'No registrations.'}</div>` : ''}`;
+      })()}
+      ${coming.length ? ''
         : regsError[e.id]
             ? `<div class="callout rust"><strong>Couldn't load the registrations</strong>${esc(regsError[e.id])}
                <div class="btnrow" style="margin-top:9px">
@@ -5127,6 +5163,7 @@ function vTimesheet() {
       <button class="btn" onclick="timesheetPDF('${isRep() ? '' : ''}' || (isRep()?ui.me:(ui.tsRep||'r1')))">Timesheet PDF</button>
       <button class="btn" onclick="expenseReportPDF(isRep()?ui.me:(ui.tsRep||'r1'))">Expense claim PDF</button>
       <button class="btn" onclick="exportAccounting()">Export CSV</button>
+      <button class="btn" onclick="exportAccountingPDF()">Export PDF</button>
     </div>
     ${isOffice() ? (() => {
       const approved = [...S.timeEntries.filter(t => t.status === 'Approved'), ...S.expenses.filter(x => x.status === 'Approved')];
@@ -5304,6 +5341,28 @@ function exportAccounting() {
   S.expenses.filter(x => !isRep() || x.repId === ui.me)
     .forEach(x => rows.push(['Expense', pname(x.repId), x.date, x.category, '', x.amount.toFixed(2), x.description, x.status]));
   downloadCSV(`hours-and-expenses-${TODAY_S}.csv`, rows);
+}
+
+/** The same list as Export CSV, laid out to print or save as a PDF. */
+function exportAccountingPDF() {
+  const time = S.timeEntries.filter(t => !isRep() || t.repId === ui.me);
+  const exp = S.expenses.filter(x => !isRep() || x.repId === ui.me);
+  if (!time.length && !exp.length) { toast('Nothing logged to export'); return; }
+  const byDate = (a, b) => String(a.date).localeCompare(String(b.date));
+  const hours = time.reduce((s, t) => s + Number(t.hours || 0), 0);
+  const amount = exp.reduce((s, x) => s + Number(x.amount || 0), 0);
+
+  openPrintable('Hours and expenses', `
+    ${orgHeader('Hours and Expenses', `${isRep() ? esc(me().name) + '<br>' : 'All reps<br>'}${fmt(TODAY_S)}`)}
+    ${time.length ? `<table><thead><tr><th>Rep</th><th>Date</th><th>Category</th><th>Details</th><th>Status</th><th class="num">Hours</th></tr></thead>
+      <tbody>${time.slice().sort(byDate).map(t => `<tr><td>${esc(pname(t.repId))}</td><td>${fmt(t.date)}</td>
+        <td>${esc(t.category)}</td><td>${esc(t.description)}</td><td>${esc(t.status)}</td><td class="num">${t.hours}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="5">Total hours</td><td class="num">${hours}</td></tr></tfoot></table>` : ''}
+    ${exp.length ? `<table><thead><tr><th>Rep</th><th>Date</th><th>Category</th><th>Description</th><th>Status</th><th class="num">Amount</th></tr></thead>
+      <tbody>${exp.slice().sort(byDate).map(x => `<tr><td>${esc(pname(x.repId))}</td><td>${fmt(x.date)}</td>
+        <td>${esc(x.category)}</td><td>${esc(x.description)}</td><td>${esc(x.status)}</td><td class="num">${money(x.amount)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="5">Total expenses</td><td class="num">${money(amount)}</td></tr></tfoot></table>` : ''}
+    <p class="note">Use your browser's print dialog and choose "Save as PDF".</p>`);
 }
 
 /* ══════════════════ MODALS for the new features ══════════════════ */
@@ -5617,7 +5676,7 @@ function loadRegs(eventId){
 }
 
 function openEvent(id) {
-  ui.eventId = id; ui.view = 'eventDetail'; closeSheet(); render();
+  ui.eventId = id; ui.evTab = 'all'; ui.view = 'eventDetail'; closeSheet(); render();
   // The view calls loadRegs itself, which also guards against a second
   // request while one is in flight. Fetching here as well doubled every load.
 }

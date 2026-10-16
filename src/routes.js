@@ -7,6 +7,7 @@ const { q, audit, setting } = require('./db');
 const auth = require('./auth');
 const { enqueue, flushQueue } = require('./sync');
 const reminders = require('./reminders');
+const { tablePDF } = require('./lib/pdf');
 const {
   nextDueDate, ringHealth, toZoho, fromZoho, daysUntil, today, addDays, queries, M,
 } = require('./domain');
@@ -1178,12 +1179,43 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
   const approverUsers = (await q.allUsers()).filter(u => approverIds.includes(u.id));
   const byLine = approverUsers.length ? `Approved by ${approverUsers.map(u => u.name).join(', ')}.` : '';
 
-  const sent = await reminders.sendEmail(to, `Rep hours and expenses — ${today()}`,
+  const totalHours = t.reduce((s, x) => s + Number(x.hours), 0);
+  const totalAmount = e.reduce((s, x) => s + Number(x.amount), 0);
+
+  // The same rows as a PDF, for whoever files or prints it. The CSV stays the
+  // one to import; the PDF is the one a person reads.
+  const pdf = tablePDF({
+    title: 'Rep hours and expenses',
+    subtitle: `Approved for payment · ${today()}${byLine ? ' · ' + byLine : ''}`,
+    columns: [
+      { label: 'Type', width: 7 }, { label: 'Rep', width: 14 }, { label: 'Date', width: 9 },
+      { label: 'Category', width: 13 }, { label: 'Hours', width: 6, align: 'right' },
+      { label: 'Amount', width: 9, align: 'right' }, { label: 'Description', width: 28 },
+      { label: 'Receipt', width: 14 },
+    ],
+    rows: rows.slice(1).map(r => r.map((c, i) => (i === 5 && c !== '' ? '$' + Number(c).toFixed(2) : c))),
+    footer: ['Total', '', '', '', totalHours, '$' + totalAmount.toFixed(2), '', ''],
+    note: 'Expenses marked MISSING have no receipt attached in Rep Hub.',
+  });
+
+  const cellStyle = 'padding:5px 8px;border-bottom:1px solid #E9ECDF;font-size:13px;text-align:left';
+  const table = `<table style="border-collapse:collapse;width:100%;max-width:760px">
+    <tr>${rows[0].map(h => `<th style="${cellStyle};border-bottom:2px solid #2E5132">${esc(h)}</th>`).join('')}</tr>
+    ${rows.slice(1).map(r => `<tr>${r.map(c => `<td style="${cellStyle}">${esc(c)}</td>`).join('')}</tr>`).join('')}
+  </table>`;
+
+  const stamp = today();
+  const sent = await reminders.sendEmail(to, `Rep hours and expenses — ${stamp}`,
     `<p>${t.length} time entries and ${e.length} expenses approved for payment. ${esc(byLine)}</p>
-     <p>Total: ${t.reduce((s, x) => s + Number(x.hours), 0)} hours, $${e.reduce((s, x) => s + Number(x.amount), 0).toFixed(2)}</p>
-     <pre style="font:12px/1.5 monospace;background:#f5f5f0;padding:10px;border-radius:6px">${csv}</pre>`,
+     <p>Total: ${totalHours} hours, $${totalAmount.toFixed(2)}</p>
+     <p>The same list is attached as a spreadsheet (CSV) and a PDF.</p>
+     ${table}`,
     { userId: req.user.id, kind: 'accounting',
-      replyTo: approverUsers.length === 1 ? approverUsers[0].email : req.user.email });
+      replyTo: approverUsers.length === 1 ? approverUsers[0].email : req.user.email,
+      attachments: [
+        { filename: `rep-hours-and-expenses-${stamp}.csv`, content: csv, contentType: 'text/csv' },
+        { filename: `rep-hours-and-expenses-${stamp}.pdf`, content: pdf, contentType: 'application/pdf' },
+      ] });
 
   if (sent && sent.ok === false) {
     // Marking them claimed when the email failed would silently lose a month
@@ -1492,6 +1524,18 @@ r.get('/admin/mail-status', auth.authRequired, auth.requireAdmin, wrap(async (re
     problems.push('SMTP_PASS has spaces in it — Google shows the app password in four blocks, but it must be typed without spaces');
   }
   if (m.from && !/@/.test(m.from)) problems.push('MAIL_FROM does not contain an email address');
+
+  // Mail arriving for you but not for reps is almost always this. Sending as
+  // noreply@symbiz.org through someone's Gmail fails the domain checks, and
+  // Yahoo and iCloud (where most reps are) bin or bounce it. Your own inbox
+  // trusts the account, so it looks fine from where you sit.
+  const domainOf = s => (String(s || '').match(/@([^>\s]+)/) || [])[1]?.toLowerCase() || '';
+  const fromDomain = domainOf(m.from), userDomain = domainOf(m.user);
+  if (fromDomain && userDomain && /@/.test(m.user) && fromDomain !== userDomain) {
+    problems.push(`MAIL_FROM is @${fromDomain} but mail is sent through ${userDomain}. ` +
+      `Yahoo, iCloud and Outlook will reject or junk it. Set MAIL_FROM to an address at @${userDomain}, ` +
+      `or send through a mailbox on ${fromDomain}.`);
+  }
 
   res.json({
     enabled: m.enabled,

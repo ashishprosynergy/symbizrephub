@@ -525,6 +525,32 @@ describe('hours and expenses', () => {
 });
 
 /* ═══════════ SCHEDULED FUNCTIONS ═══════════ */
+describe('accounting PDF', () => {
+  const { tablePDF } = require('../src/lib/pdf');
+  const cols = [{ label: 'Rep', width: 2 }, { label: 'Note', width: 5 }, { label: 'Amount', width: 1, align: 'right' }];
+
+  test('produces a well-formed PDF whose xref points where it says', () => {
+    const buf = tablePDF({ title: 'T', columns: cols, rows: [['A', 'B', '1.00']], footer: ['Total', '', '1.00'] });
+    const s = buf.toString('latin1');
+    assert.ok(s.startsWith('%PDF-1.4'));
+    assert.ok(s.trimEnd().endsWith('%%EOF'));
+    const at = parseInt(s.match(/startxref\n(\d+)/)[1], 10);
+    assert.equal(s.slice(at, at + 4), 'xref');
+  });
+
+  test('long lists run onto further pages', () => {
+    const rows = Array.from({ length: 80 }, (_, i) => ['Rep', 'Row ' + i, '1.00']);
+    const s = tablePDF({ title: 'T', columns: cols, rows }).toString('latin1');
+    assert.ok((s.match(/\/Type \/Page /g) || []).length >= 3);
+  });
+
+  test('brackets and curly quotes cannot break the file', () => {
+    const s = tablePDF({ title: 'T', columns: cols, rows: [['(x)', '“café” \\ (y', '2']] }).toString('latin1');
+    assert.ok(s.includes('\\(x\\)'));
+    assert.ok(!/[“”]/.test(s));
+  });
+});
+
 describe('scheduled functions', () => {
   test('all four export a handler', () => {
     for (const f of ['weekly-digest', 'overdue-nudge', 'office-summary', 'sync-flush']) {

@@ -117,7 +117,7 @@ function esc(s) {
 
 /* ─────────── sending ─────────── */
 
-async function sendEmail(to, subject, html, { userId, kind } = {}) {
+async function sendEmail(to, subject, html, { userId, kind, replyTo, attachments } = {}) {
   const t = mailer();
   if (!t) {
     // Be explicit: a caller that marks work as "sent" must know it wasn't.
@@ -126,7 +126,8 @@ async function sendEmail(to, subject, html, { userId, kind } = {}) {
     return { skipped: true, ok: false, error: 'Email is not configured on this site' };
   }
   try {
-    await t.sendMail({ from: cfg.mail.from, to, subject, html });
+    await t.sendMail({ from: cfg.mail.from, to, subject, html,
+      ...(replyTo ? { replyTo } : {}), ...(attachments ? { attachments } : {}) });
     await q.logSend(userId || null, kind || 'email', 'email', subject, true, null);
     return { ok: true };
   } catch (err) {
