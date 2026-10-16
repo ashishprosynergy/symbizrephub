@@ -317,7 +317,7 @@ async function sendCode(user, req, purpose = 'otp') {
    Off until the owner pastes keys into Access & security. Fails OPEN when
    the keys are wrong or Google can't be reached, and says so in the
    activity log: a typo in a key must never lock every director out. */
-let captchaCache = null;
+let captchaCache = null, unprovenNoted = 0;
 async function captchaKeys() {
   if (captchaCache && Date.now() - captchaCache.at < 60000) return captchaCache.keys;
   const keys = { site: await setting('captcha_site_key', ''), secret: await setting('captcha_secret', ''),
@@ -336,8 +336,8 @@ async function humanCheck(req, res) {
   if (!token) {
     if (!proven) {
       // The keys have never worked (wrong type, wrong domain…). Let people in
-      // and leave a note, rather than lock everyone out — as happened once.
-      await audit(null, 'captcha.unproven', { path: req.path }, req.ip);
+      // rather than lock everyone out — as happened once. Noted once an hour.
+      if (Date.now() - unprovenNoted > 3600000) { unprovenNoted = Date.now(); await audit(null, 'captcha.unproven', { path: req.path }, req.ip); }
       return true;
     }
     res.status(400).json({ error: 'Tick "I\'m not a robot" first.', captcha: true }); return false;
@@ -457,13 +457,14 @@ async function zohoRepFor(email) {
 }
 
 r.post('/auth/signup', wrap(async (req, res) => {
-  if (!(await humanCheck(req, res))) return;
   const name = String(req.body?.name || '').trim();
   const email = String(req.body?.email || '').trim().toLowerCase();
   const password = String(req.body?.password || '');
+  // Cheap checks first; the robot check (a call to Google) only for a real attempt
   if (!name) return res.status(400).json({ error: 'Enter your name' });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'That does not look like an email address' });
   if (password.length < 8) return res.status(400).json({ error: 'Use at least 8 characters for your password' });
+  if (!(await humanCheck(req, res))) return;
 
   let user = await q.userByEmail(email);
   if (user && user.email_verified !== false) {
@@ -474,7 +475,7 @@ r.post('/auth/signup', wrap(async (req, res) => {
     // Signed up before but never confirmed: take the new details, send a new code
     await q.updateSignup(user.id, name, auth.hash(password));
   } else {
-    if ((await q.everyUser()).some(u => String(u.email).toLowerCase() === email)) {
+    if (await q.anyUserByEmail(email)) {        // exists but switched off
       return res.status(409).json({ error: 'That account has been switched off. Ask the office to turn it back on.' });
     }
     // The app's own sign-up does the Zoho lookup later, while the code email is
@@ -520,8 +521,8 @@ r.post('/auth/verify-email', wrap(async (req, res) => {
   const problem = await useCode(user, code, 'verify');
   if (problem) return res.status(401).json({ error: problem });
 
-  await Promise.all([q.markVerified(user.id), q.touchLogin(user.id), audit(user.id, 'auth.emailVerified', {}, req.ip),
-    linkRepIfUnlinked(user)]);           // in case the earlier lookup missed
+  // The Zoho rep lookup already ran while the code email went out; not again here
+  await Promise.all([q.markVerified(user.id), q.touchLogin(user.id), audit(user.id, 'auth.emailVerified', {}, req.ip)]);
   const fresh = await q.userById(user.id);
   notifyOfficeOfSignup(fresh).catch(() => {});
   res.json({ token: auth.issue(fresh), user: await auth.withAccess(fresh) });

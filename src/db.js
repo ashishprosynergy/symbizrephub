@@ -248,6 +248,7 @@ async function migrate({ force = false } = {}) {
 const q = {
   userByEmail: email => one('SELECT * FROM users WHERE lower(email) = lower($1) AND active = TRUE', [email]),
   userById:    id    => one('SELECT * FROM users WHERE id = $1', [id]),
+  anyUserByEmail: email => one('SELECT id, active FROM users WHERE lower(email) = lower($1)', [email]),
   allReps:     ()    => query("SELECT * FROM users WHERE role = 'rep' AND active = TRUE ORDER BY name"),
   allOffice:   ()    => query("SELECT * FROM users WHERE role IN ('staff','admin') AND active = TRUE"),
   // Active accounts only. A deactivated one must disappear from the list and

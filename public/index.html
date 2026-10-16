@@ -4949,17 +4949,34 @@ function captchaSlot(){
     ? `<div class="captcha-note" id="captchaSlot">Protected by Google reCAPTCHA</div>`
     : `<div class="captcha-slot" id="captchaSlot"></div>`;
 }
-/* v3: ask Google for a token just before sending the form */
-async function prepareCaptcha(action){
-  v3Token = '';
-  if(!captchaSiteKey || captchaType !== 'v3' || !window.grecaptcha || !grecaptcha.execute) return;
-  try{
-    v3Token = await new Promise((ok, no) => {
-      setTimeout(() => no(new Error('timeout')), 6000);
-      grecaptcha.ready(() => grecaptcha.execute(captchaSiteKey, { action: action || 'login' }).then(ok, no));
-    });
-  }catch(e){ v3Token = ''; }
+/* v3: the token is fetched while the person is still typing (warmCaptcha),
+   so pressing the button doesn't wait on Google. Tokens last two minutes;
+   one older than 100 seconds is replaced. If Google is blocked (ad
+   blockers do), give up after 2.5 seconds rather than hang. */
+var v3Pending = null, v3At = 0;
+function fetchV3(action){
+  if(!captchaSiteKey || captchaType !== 'v3' || !window.grecaptcha || !grecaptcha.execute) return Promise.resolve('');
+  return new Promise(ok => {
+    const t = setTimeout(() => ok(''), 2500);
+    try{ grecaptcha.ready(() => grecaptcha.execute(captchaSiteKey, { action: action || 'login' })
+      .then(tok => { clearTimeout(t); ok(tok || ''); }, () => { clearTimeout(t); ok(''); })); }
+    catch(e){ clearTimeout(t); ok(''); }
+  });
 }
+function warmCaptcha(action){
+  if(captchaType !== 'v3' || !captchaSiteKey) return;
+  if(v3Pending || (v3Token && Date.now() - v3At < 100000)) return;
+  v3Pending = fetchV3(action).then(tok => { v3Token = tok; v3At = tok ? Date.now() : 0; v3Pending = null; return tok; });
+}
+async function prepareCaptcha(action){
+  if(captchaType !== 'v3' || !captchaSiteKey) return;
+  if(v3Token && Date.now() - v3At < 100000) return;     // ready from typing
+  if(!v3Pending) warmCaptcha(action);
+  await v3Pending;
+}
+// A token is single-use: after each attempt the next one is fetched fresh
+function spendCaptcha(){ v3Token = ''; v3At = 0; }
+document.addEventListener('focusin', e => { if(e.target.closest && e.target.closest('.login form')) warmCaptcha('login'); });
 function mountCaptcha(){
   const slot = document.getElementById('captchaSlot');
   captchaWidget = null;
@@ -4986,7 +5003,7 @@ function mountCaptcha(){
   }
 }
 function captchaToken(){
-  if(captchaType === 'v3') return v3Token;
+  if(captchaType === 'v3'){ const t = v3Token; spendCaptcha(); return t; }
   try{ return captchaWidget !== null ? grecaptcha.getResponse(captchaWidget) : ''; }catch(e){ return ''; }
 }
 /* A token works once, so every attempt that fails needs a fresh tick */
