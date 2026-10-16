@@ -38,7 +38,7 @@
 [functions."sync-flush"]
   schedule = "*/15 * * * *"
 
-# Accounting day: ask the approver (Mel) to OK the batch
+# Accounting day: put the approved batch in front of the admins
 [functions."accounting-auto"]
   schedule = "0 13 * * *"
 

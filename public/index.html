@@ -747,10 +747,9 @@ const API = {
   saveSettings(obj){ return this.call('/admin/settings',{method:'PUT',body:JSON.stringify(obj)}); },
   booksStatus(){ return this.call('/admin/books-status'); },
   accountingBatches(){ return this.call('/accounting/batches'); },
-  batch(token){ return this.call('/accounting/batch/'+encodeURIComponent(token)); },
-  batchReceipt(token,id){ return this.call('/accounting/batch/'+encodeURIComponent(token)+'/receipt/'+id); },
-  approveBatch(token){ return this.call('/accounting/batch/'+encodeURIComponent(token)+'/approve',{method:'POST'}); },
-  returnBatch(token,note){ return this.call('/accounting/batch/'+encodeURIComponent(token)+'/return',{method:'POST',body:JSON.stringify({note})}); },
+  batch(id){ return this.call('/accounting/batches/'+id); },
+  approveBatch(id){ return this.call('/accounting/batches/'+id+'/approve',{method:'POST'}); },
+  returnBatch(id,note){ return this.call('/accounting/batches/'+id+'/return',{method:'POST',body:JSON.stringify({note})}); },
   booksRetry(){ return this.call('/accounting/books-retry',{method:'POST'}); },
   checkSetup(token){ return this.call('/auth/check-setup',{method:'POST',body:JSON.stringify({token})}); },
   setPassword(token,password){ return this.call('/auth/set-password',{method:'POST',body:JSON.stringify({token,password})}); },
@@ -1401,6 +1400,10 @@ function restoreNotifs(){
 function allNotifications(){
   const out=[];
   if(isOffice()){
+    if(isAdmin()) ((S.acctBatches && S.acctBatches.pending) || []).forEach(b =>
+      out.push({k:'acct:'+b.id, t:`Hours and expenses ready for your final approval`,
+        s:`${b.expenses} expense${b.expenses===1?'':'s'}, ${b.time} time entr${b.time===1?'y':'ies'} · sent by ${b.requestedBy||'the office'}`,
+        go:()=>{ setView('approvals'); openBatchReview(b.id); }}));
     S.rings.filter(r=>r.status==='pending').forEach(r=>
       out.push({k:'pending:'+r.id, t:`${r.name} is waiting on approval`, s:`Submitted by ${pname(r.repId)}`, go:()=>setView('approvals')}));
     const od=dueItems(null).filter(a=>days(a.nextDue)<-30);
@@ -2017,7 +2020,90 @@ function vApprovals(){
     ${waiting.length ? pendingRows(waiting, true) : `<div class="empty">Nothing waiting.</div>`}
     ${decided.length ? `<h3 class="sub-h">Recently decided</h3>${pendingRows(decided, false)}` : ''}
   `;
-  return vApprovalsInner(zohoAsks);
+  // Hours and expenses waiting for an admin's final approval come first
+  return (S.acctBatches && S.acctBatches.pending && S.acctBatches.pending.length
+    ? `<h3 class="sub-h">Hours and expenses · final approval</h3>${acctStatusCallouts()}` : '')
+    + vApprovalsInner(zohoAsks);
+}
+
+/**
+ * Hours and expenses waiting for the final OK, and the last batch sent back.
+ * Admins get the Review button; everyone else sees where things stand.
+ */
+function acctStatusCallouts(){
+  const b = S.acctBatches || {};
+  const waiting = (b.pending || [])[0];
+  const back = b.returned;
+  return `${waiting ? `<div class="callout ${isAdmin() ? 'ok' : 'info'}">
+      <strong>${isAdmin() ? 'Ready for your final approval' : 'Waiting for an admin to give the final approval'}</strong>
+      ${waiting.expenses} expense${waiting.expenses === 1 ? '' : 's'} and ${waiting.time} time entr${waiting.time === 1 ? 'y' : 'ies'},
+      sent by ${esc(waiting.requestedBy || 'the office')} on ${fmt(String(waiting.createdAt).slice(0,10))}.
+      ${isAdmin() ? 'Nothing goes to accounting until you send it.' : 'It goes to accounting as soon as an admin approves it.'}
+      ${isAdmin() ? `<div class="btnrow" style="margin-top:9px"><button class="btn sm primary" onclick="openBatchReview(${waiting.id})">Review and send</button></div>` : ''}
+    </div>` : ''}
+    ${back && !waiting ? `<div class="callout rust"><strong>Sent back by ${esc(back.decidedBy || 'an admin')}</strong>
+      ${back.note ? esc(back.note) : 'No note was left.'} Nothing went to accounting — make any changes, then send again.</div>` : ''}`;
+}
+
+/** The admin's review: every item and receipt, then send or return. */
+async function openBatchReview(id){
+  openModal(`<h3>Final approval</h3><p class="lead">Loading…</p>`);
+  let b;
+  try{ b = await API.batch(id); }
+  catch(e){ openModal(`<h3>Couldn't open it</h3><p class="lead">${esc(e.message)}</p>
+    <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`); return; }
+  const total = b.expenses.reduce((s,x)=>s+x.amount,0), hours = b.time.reduce((s,x)=>s+x.hours,0);
+  openModal(`<h3>Final approval</h3>
+    <p class="lead">${b.expenses.length} expense${b.expenses.length===1?'':'s'} · <strong>${money(total)}</strong> · ${hours} hour${hours===1?'':'s'}.
+      Approving emails ${esc(S.settings.accountingEmail || 'accounting')}${S.settings.booksAuto !== 'off' ? ' and makes the Zoho Books bills' : ''}.</p>
+    <div style="max-height:46vh;overflow:auto;margin-bottom:8px">
+    ${b.expenses.length ? `<h3 class="sub-h" style="margin-top:0">Expenses</h3>${b.expenses.map(x=>`<div class="row">
+      <div class="row-main"><div class="row-title">${money(x.amount)} — ${esc(x.category)}${x.vendor?' · '+esc(x.vendor):''}</div>
+        <div class="row-sub">${esc(x.rep)} · ${fmt(x.date)} · ${esc(x.description)}</div></div>
+      <div class="row-actions">${x.hasReceipt?`<button class="btn sm" onclick="viewReceipt('x_${x.id}',{backToBatch:${b.id}})">Receipt</button>`:`<span class="tag overdue">no receipt</span>`}</div>
+      </div>`).join('')}` : ''}
+    ${b.time.length ? `<h3 class="sub-h">Hours</h3>${b.time.map(x=>`<div class="row"><div class="row-main">
+      <div class="row-title">${x.hours} hour${x.hours===1?'':'s'} — ${esc(x.category)}</div>
+      <div class="row-sub">${esc(x.rep)} · ${fmt(x.date)} · ${esc(x.description)}</div></div></div>`).join('')}` : ''}
+    </div>
+    <div id="batchReturn"></div>
+    <div id="batchErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
+    <div class="m-actions">
+      <button type="button" class="btn" onclick="closeModal()">Close</button>
+      <button type="button" class="btn" id="batchBackBtn" onclick="showBatchReturn(${b.id})">Send back with a note</button>
+      <button type="button" class="btn primary" id="batchOkBtn" onclick="approveBatchInApp(${b.id})">Approve and send to accounting</button>
+    </div>`);
+}
+function showBatchReturn(id){
+  document.getElementById('batchReturn').innerHTML = `<div class="field"><label>What needs changing?</label>
+    <textarea id="batchNote" placeholder="e.g. the Staples receipt is missing; check mileage on the 4th"></textarea></div>`;
+  const btn = document.getElementById('batchBackBtn');
+  btn.textContent = 'Send back to the office';
+  btn.onclick = () => returnBatchInApp(id);
+}
+async function approveBatchInApp(id){
+  const btn = document.getElementById('batchOkBtn'), err = document.getElementById('batchErr');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try{
+    const out = await API.approveBatch(id);
+    const [t, x, b] = await Promise.all([API.time(), API.expenses(), API.accountingBatches()]);
+    S.timeEntries = t.map(adapt.timeEntry); S.expenses = x.map(adapt.expense); S.acctBatches = b; save();
+    openModal(`<h3>Sent to accounting</h3>
+      <p class="lead">${out.time} time entr${out.time === 1 ? 'y' : 'ies'} and ${out.expenses} expense${out.expenses === 1 ? '' : 's'} emailed to ${esc(out.to)}.</p>
+      ${out.books ? `<div class="callout ${out.books.failed || out.books.error ? 'rust' : 'ok'}"><strong>Zoho Books</strong>
+        ${out.books.error ? esc(out.books.error) : `${out.books.made} bill${out.books.made === 1 ? '' : 's'} made${out.books.left ? `; ${out.books.left} more within 15 minutes` : ''}.
+        ${out.books.failed ? `${out.books.failed} could not be made — see Settings → Zoho Books.` : ''}`}</div>` : ''}
+      <div class="m-actions"><button class="btn primary" onclick="closeModal();render()">Done</button></div>`);
+  }catch(e){ err.style.display='block'; err.textContent = e.message; btn.disabled = false; btn.textContent = 'Approve and send to accounting'; }
+}
+async function returnBatchInApp(id){
+  const btn = document.getElementById('batchBackBtn');
+  btn.disabled = true;
+  try{
+    await API.returnBatch(id, (document.getElementById('batchNote')||{}).value || '');
+    S.acctBatches = await API.accountingBatches(); save();
+    closeModal(); toast('Sent back to the office'); render();
+  }catch(e){ btn.disabled = false; toast(e.message); }
 }
 function vApprovalsInner(extra){
   const pend=S.rings.filter(r=>r.status==='pending');
@@ -2785,12 +2871,8 @@ function vSettings(){
             ${['1','15','Last','Off'].map(d => `<option value="${d}" ${String(S.settings.accountingDay || '1') === d ? 'selected' : ''}>${d === 'Off' ? 'Off — manual only' : d === 'Last' ? 'Last day of month' : d + (d === '1' ? 'st' : 'th') + ' of the month'}</option>`).join('')}
           </select></div>
       </div>
-      <div class="field"><label>Approved by before it goes to accounting</label>
-        <input type="email" value="${esc(S.settings.accountingApprover ?? 'melvin.b@symbiz.org')}" placeholder="Leave empty to send without approval"
-               onchange="setSetting('accountingApprover', this.value.trim())">
-        <div class="hint">On the day above, this person is emailed everything approved, with a link to review the receipts and approve it.
-          Nothing reaches accounting, or Zoho Books, until they do. If they send it themselves, it goes straight through.</div></div>
-      <div class="row-sub">Reps still see everything they submitted.</div>
+      <div class="row-sub">On that day everything approved is put in front of the admins on the Approvals screen.
+        Nothing reaches accounting, or Zoho Books, until an admin gives the final approval there. Reps still see everything they submitted.</div>
     </div>
 
     ${API.live ? `<h3 class="sub-h">Zoho Books</h3>
@@ -2863,7 +2945,7 @@ async function retryBooks(btn){
 
 // Settings the server acts on. These used to be kept only in this browser,
 // so the server never saw (for one) the accounting address typed in here.
-const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','accountingApprover','booksAuto','booksPayee','booksAccount'];
+const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount'];
 async function setSetting(k,v){
   S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`);
   if(API.live && isOffice() && SERVER_SETTINGS.includes(k)){
@@ -3864,7 +3946,8 @@ function navGroups(){
 }
 
 function badgeFor(id){
-  if(id==='approvals') return S.rings.filter(r=>r.status==='pending').length;
+  if(id==='approvals') return S.rings.filter(r=>r.status==='pending').length
+    + (isAdmin() && S.acctBatches && S.acctBatches.pending ? S.acctBatches.pending.length : 0);
   if(id==='today') return dueItems(ui.me).filter(a=>days(a.nextDue)<=S.settings.dueWindow).length;
   if(id==='requests') return S.requests.filter(r=>r.repId===ui.me&&r.stage!=='Placed').length;
   if(id==='dash') return S.rings.filter(r=>r.status==='pending').length;
@@ -4761,7 +4844,7 @@ async function loadFromServer(){
       });
     }) : Promise.resolve(),
     isAdmin() ? settle(API.users(), v => { if(Array.isArray(v)){ serverUsers = v; keepTeam(); } }) : Promise.resolve(),
-    isOffice() ? settle(API.accountingBatches(), v => { S.acctBatches = Array.isArray(v) ? v : []; }) : Promise.resolve(),
+    isOffice() ? settle(API.accountingBatches(), v => { S.acctBatches = v && Array.isArray(v.pending) ? v : { pending: [], returned: null }; }) : Promise.resolve(),
     settle(API.facilitators(),      v => {
       (v||[]).forEach(f=>{
         const at = S.facilitators.findIndex(x=>x.id===f.id);
@@ -4952,7 +5035,6 @@ function tabbarHTML(){
 }
 function render(){
   const app=document.getElementById('app');
-  if(approval){ shellFor=null; app.innerHTML=approvalScreen(); return; }
   if(setupToken){ shellFor=null; app.innerHTML=setupScreen(); return; }
   if(!ui.me){ shellFor=null; app.innerHTML=loginScreen(); checkSetup(); return; }
   // Remember the screen, so a refresh comes back to it
@@ -5001,84 +5083,6 @@ function fillShell(){
   setPart('topRight', `<button class="bell" onclick="openNotifs()">🔔${nc?`<span class="pill">${nc}</span>`:''}</button>`);
   setPart('banners', bannersHTML());
   setPart('tabbar', tabbarHTML());
-}
-
-/**
- * The page Mel's approval email opens (?approve=…). No sign-in: the link is
- * the permission, it works once, and it only covers that one batch.
- */
-var approval = null;
-(function(){
-  const m = location.search.match(/[?&]approve=([a-f0-9]{20,})/i);
-  if(!m) return;
-  approval = { token: m[1], loading: true };
-  API.batch(m[1]).then(b => { approval = { token: m[1], batch: b }; })
-    .catch(e => { approval = { token: m[1], error: e.message }; })
-    .finally(() => render());
-})();
-function approvalScreen(){
-  const a = approval;
-  const wrap = inner => `<div class="login"><div class="login-box" style="max-width:720px;width:100%">
-    <div class="login-brand"><span class="wordmark">Rep Hub</span></div><p class="tag">Symbiz Network</p>${inner}</div></div>`;
-  if(a.loading) return wrap(`<div class="card"><p class="lead">Loading what needs your approval…</p></div>`);
-  if(a.done) return wrap(`<div class="card"><h3 style="margin:0 0 6px">${a.done === 'approved' ? 'Approved and sent' : 'Sent back to the office'}</h3>
-    <p class="lead">${esc(a.message || '')}</p>
-    <div class="btnrow"><button class="btn" onclick="location.href='/'">Open Rep Hub</button></div></div>`);
-  if(a.error) return wrap(`<div class="card"><h3 style="margin:0 0 6px">This link can't be used</h3><p class="lead">${esc(a.error)}</p>
-    <div class="btnrow"><button class="btn" onclick="location.href='/'">Open Rep Hub</button></div></div>`);
-  const b = a.batch;
-  const total = b.expenses.reduce((s,x)=>s+x.amount,0), hours = b.time.reduce((s,x)=>s+x.hours,0);
-  return wrap(`<div class="card" style="text-align:left">
-    <h3 style="margin:0 0 4px">Approve rep hours and expenses</h3>
-    <p class="lead" style="margin:0 0 12px">${b.expenses.length} expense${b.expenses.length===1?'':'s'} · <strong>${money(total)}</strong>
-      · ${hours} hour${hours===1?'':'s'}. Nothing goes to accounting until you approve.</p>
-    ${b.expenses.length ? `<h3 class="sub-h">Expenses</h3>${b.expenses.map(x=>`<div class="row">
-      <div class="row-main"><div class="row-title">${money(x.amount)} — ${esc(x.category)}${x.vendor?' · '+esc(x.vendor):''}</div>
-        <div class="row-sub">${esc(x.rep)} · ${fmt(x.date)} · ${esc(x.description)}</div></div>
-      <div class="row-actions">${x.hasReceipt?`<button class="btn sm" onclick="viewBatchReceipt(${x.id})">Receipt</button>`:`<span class="tag overdue">no receipt</span>`}</div>
-      </div>`).join('')}` : ''}
-    ${b.time.length ? `<h3 class="sub-h">Hours</h3>${b.time.map(x=>`<div class="row"><div class="row-main">
-      <div class="row-title">${x.hours} hour${x.hours===1?'':'s'} — ${esc(x.category)}</div>
-      <div class="row-sub">${esc(x.rep)} · ${fmt(x.date)} · ${esc(x.description)}</div></div></div>`).join('')}` : ''}
-    <div id="apprErr" style="display:none;color:var(--rust);font-size:13px;margin:10px 0"></div>
-    <div class="btnrow" style="margin-top:14px">
-      <button class="btn primary" id="apprBtn" onclick="approveBatchNow()">Approve and send to accounting</button>
-      <button class="btn" onclick="returnBatchForm()">Send back with a note</button>
-    </div>
-    <div id="returnSlot"></div>
-  </div>`);
-}
-async function approveBatchNow(){
-  const btn = document.getElementById('apprBtn'), err = document.getElementById('apprErr');
-  btn.disabled = true; btn.textContent = 'Sending…';
-  try{
-    const out = await API.approveBatch(approval.token);
-    approval = { done: 'approved', message: `Emailed to ${out.to}${out.books && out.books.made ? `, and ${out.books.made} bill${out.books.made===1?'':'s'} made in Zoho Books` : ''}. Thank you.` };
-    render();
-  }catch(e){ err.style.display='block'; err.textContent = e.message; btn.disabled = false; btn.textContent = 'Approve and send to accounting'; }
-}
-function returnBatchForm(){
-  document.getElementById('returnSlot').innerHTML = `<div class="field" style="margin-top:12px"><label>What needs changing?</label>
-    <textarea id="returnNote" placeholder="e.g. E3 needs a receipt; mileage on the 4th looks high"></textarea></div>
-    <button class="btn" onclick="returnBatchNow(this)">Send back to the office</button>`;
-}
-async function returnBatchNow(btn){
-  btn.disabled = true;
-  try{
-    await API.returnBatch(approval.token, document.getElementById('returnNote').value);
-    approval = { done: 'returned', message: 'The office has been emailed your note. Nothing went to accounting.' };
-    render();
-  }catch(e){ btn.disabled = false; toast(e.message); }
-}
-async function viewBatchReceipt(id){
-  try{
-    const r = await API.batchReceipt(approval.token, id);
-    openModal(`<h3>${esc(r.name || 'Receipt')}</h3>
-      ${/^image\//.test(r.type) ? `<img src="${r.data}" alt="Receipt" style="width:100%;border-radius:8px;border:1px solid var(--line)">`
-        : `<object data="${r.data}" type="application/pdf" style="width:100%;height:60vh;border:1px solid var(--line);border-radius:8px"></object>`}
-      <div class="m-actions"><a class="btn" href="${r.data}" download="${esc(r.name||'receipt')}">Download</a>
-        <button class="btn primary" onclick="closeModal()">Close</button></div>`);
-  }catch(e){ toast(e.message || 'Could not open the receipt'); }
 }
 
 /* Opening or refreshing the app: if someone was signed in on this device,
@@ -5818,20 +5822,14 @@ function vTimesheet() {
       const approved = [...S.timeEntries.filter(t => t.status === 'Approved'), ...S.expenses.filter(x => x.status === 'Approved')];
       const pend = [...S.timeEntries.filter(t => t.status === 'Submitted'), ...S.expenses.filter(x => x.status === 'Submitted')];
       const day = S.settings.accountingDay || '1';
-      const approver = S.settings.accountingApprover ?? 'melvin.b@symbiz.org';
-      const iAmApprover = approver && String(approver).toLowerCase() === String((me()||{}).email||'').toLowerCase();
-      const waiting = (S.acctBatches || [])[0];
-      return `${waiting ? `<div class="callout info"><strong>Waiting for ${esc(waiting.approver)} to approve</strong>
-          ${waiting.expenses} expense${waiting.expenses === 1 ? '' : 's'} and ${waiting.time} time entr${waiting.time === 1 ? 'y' : 'ies'},
-          asked ${fmt(String(waiting.createdAt).slice(0,10))}. They go to accounting the moment it's approved.
-          Sending again replaces this request with everything approved now.</div>` : ''}
+      return `${acctStatusCallouts()}
         <div class="callout ${approved.length ? 'ok' : 'info'}">
         <strong>${approved.length} approved item${approved.length === 1 ? '' : 's'} ready for ${esc(S.settings.accountingEmail || 'accounting')}</strong>
-        ${day === 'Off' ? 'Automatic sending is off — use the button below.'
-          : `On the ${day === 'Last' ? 'last day' : day + (day === '1' ? 'st' : 'th')} of each month ${approver && !iAmApprover ? `they go to ${esc(approver)} to approve first` : 'they are sent automatically'}.`}
+        ${day === 'Off' ? '' : `On the ${day === 'Last' ? 'last day' : day + (day === '1' ? 'st' : 'th')} of each month they are put in front of the admins for final approval.`}
+        ${isAdmin() ? 'As an admin, Send now goes straight to accounting.' : 'Sending puts them on the Approvals screen for an admin to give the final approval.'}
         ${pend.length ? ` ${pend.length} item${pend.length === 1 ? ' is' : 's are'} still waiting on approval and won't be included.` : ''}
         <div class="btnrow" style="margin-top:9px">
-          <button class="btn sm primary" onclick="sendToAccounting()">${approver && !iAmApprover ? `Send to ${esc(approver.split('@')[0])} for approval` : 'Send now'}</button>
+          <button class="btn sm primary" onclick="sendToAccounting()">${isAdmin() ? 'Send now' : 'Send for final approval'}</button>
           <button class="btn sm" onclick="previewAccounting()">Preview what goes</button>
         </div></div>`; })() : ''}
     ${(() => {
@@ -5966,11 +5964,11 @@ async function sendToAccounting() {
     try {
       const out = await API.accountingSend();
       if (out.awaitingApproval) {
-        S.acctBatches = await API.accountingBatches().catch(() => S.acctBatches || []);
-        openModal(`<h3>Sent to ${esc(out.approver)} for approval</h3>
+        S.acctBatches = await API.accountingBatches().catch(() => S.acctBatches);
+        openModal(`<h3>Waiting for final approval</h3>
           <p class="lead">${out.expenses} expense${out.expenses === 1 ? '' : 's'} (${money(out.amount)}) and ${out.time} time entr${out.time === 1 ? 'y' : 'ies'}
-            are waiting for approval. Once approved they go to ${esc(to)}${S.settings.booksAuto !== 'off' ? ' and into Zoho Books' : ''} automatically.
-            If anything is sent back, you'll get an email with the note.</p>
+            are on the Approvals screen for an admin. When an admin approves them they go to ${esc(to)}${S.settings.booksAuto !== 'off' ? ' and into Zoho Books' : ''}.
+            If they're sent back, the note will show here in Hours and expenses.</p>
           <div class="m-actions"><button class="btn primary" onclick="closeModal();render()">Done</button></div>`);
         return;
       }
@@ -6467,7 +6465,7 @@ function clearReceipt() {
   });
 }
 
-async function viewReceipt(expenseId) {
+async function viewReceipt(expenseId, { backToBatch } = {}) {
   const x = S.expenses.find(e => e.id === expenseId);
   if (!x || !x.receipt) { toast('No receipt attached'); return; }
   // Receipts are not shipped with the list — fetch the file only when opened
@@ -6493,7 +6491,8 @@ async function viewReceipt(expenseId) {
     <div class="m-actions">
       <a class="btn" href="${x.receipt.data}" target="_blank" rel="noopener">Open in a new tab</a>
       <a class="btn" href="${x.receipt.data}" download="${esc(x.receipt.name)}">Download</a>
-      <button class="btn primary" onclick="closeModal()">Close</button>
+      ${backToBatch ? `<button class="btn primary" onclick="openBatchReview(${Number(backToBatch)})">Back to the review</button>`
+        : `<button class="btn primary" onclick="closeModal()">Close</button>`}
     </div>`);
 }
 

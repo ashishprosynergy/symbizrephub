@@ -618,12 +618,12 @@ describe('hours and expenses', () => {
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
     queryStringParameters: {}, body: body ? JSON.stringify(body) : null, isBase64Encoded: false,
   }, {});
-  let repToken, officeToken;
+  let repToken, officeToken, adminToken;
   before(async () => {
     repToken = JSON.parse((await invoke('POST','/auth/login',{body:{email:'rep@test.org',password:'correct-horse'}})).body).token;
     officeToken = JSON.parse((await invoke('POST','/auth/login',{body:{email:'office@test.org',password:'correct-horse'}})).body).token;
-    // These tests send straight to accounting; the approval step has its own test
-    await db.q.setSetting('accountingApprover', '');
+    // An admin's Send goes straight to accounting; office staff's waits for an admin
+    adminToken = JSON.parse((await invoke('POST','/auth/login',{body:{email:'admin@test.org',password:'correct-horse'}})).body).token;
   });
 
   test('schema creates the hours and expenses tables', async () => {
@@ -701,7 +701,7 @@ describe('hours and expenses', () => {
     cfg.mail.enabled = true; cfg.mail.host = 'smtp.test';
     reminders.sendEmail = async (to, subject, html, opts) => { mail = { to, subject, html, opts }; return { ok: true }; };
     try {
-      const res = await invoke('POST', '/accounting/send', { token: officeToken });
+      const res = await invoke('POST', '/accounting/send', { token: adminToken });
       assert.equal(res.statusCode, 200, res.body);
     } finally {
       reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
@@ -745,7 +745,7 @@ describe('hours and expenses', () => {
         if (x.status === 'Submitted') await invoke('POST', `/expenses/${x.id}/approve`, { token: officeToken });
       }
 
-      const sent = JSON.parse((await invoke('POST', '/accounting/send', { token: officeToken })).body);
+      const sent = JSON.parse((await invoke('POST', '/accounting/send', { token: adminToken })).body);
       assert.ok(sent.books, 'books result reported');
       assert.equal(sent.books.made, 1, JSON.stringify(sent.books));     // Meals has an account
       assert.equal(sent.books.failed, 1);                               // Mileage has none yet
@@ -786,7 +786,7 @@ describe('hours and expenses', () => {
     }
   });
 
-  test('with an approver set, nothing reaches accounting until they approve the link', async () => {
+  test('office staff send to an admin for final approval; nothing is emailed until the admin sends it', async () => {
     const cfg = require('../src/config');
     const reminders = require('../src/reminders');
     const realSend = reminders.sendEmail, realMail = { ...cfg.mail };
@@ -794,75 +794,86 @@ describe('hours and expenses', () => {
     cfg.mail.enabled = true; cfg.mail.host = 'smtp.test';
     reminders.sendEmail = async (to, subject, html, opts) => { mails.push({ to, subject, html, opts }); return { ok: true }; };
     try {
-      await db.q.setSetting('accountingApprover', 'mel@test.org');
       await invoke('POST', '/expenses', { token: repToken, body: { date: '2026-10-08', amount: 19.99, category: 'Printing',
         vendor: 'Staples', description: 'Flyers for info night' } });
       for (const x of JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body)) {
         if (x.status === 'Submitted') await invoke('POST', `/expenses/${x.id}/approve`, { token: officeToken });
       }
 
-      // The office presses Send: it goes to Mel, not accounting
+      // Office staff press Send: it waits for an admin, and nobody is emailed
       const asked = JSON.parse((await invoke('POST', '/accounting/send', { token: officeToken })).body);
       assert.equal(asked.awaitingApproval, true, JSON.stringify(asked));
-      assert.equal(mails.length, 1);
-      assert.equal(mails[0].to, 'mel@test.org');
-      const token = mails[0].html.match(/approve=([a-f0-9]+)/)[1];
+      assert.equal(mails.length, 0, 'no email to anyone');
       let rows = JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body);
       assert.ok(rows.some(x => x.description === 'Flyers for info night' && x.status === 'Approved'), 'still waiting, not sent');
-      const waiting = JSON.parse((await invoke('GET', '/accounting/batches', { token: officeToken })).body);
-      assert.equal(waiting.length, 1);
+      const list = JSON.parse((await invoke('GET', '/accounting/batches', { token: adminToken })).body);
+      assert.equal(list.pending.length, 1);
+      assert.equal(list.pending[0].requestedBy, 'Test Office');
+      const id = list.pending[0].id;
 
-      // Mel opens the link — no sign-in — and sees the items
-      const view = JSON.parse((await invoke('GET', `/accounting/batch/${token}`)).body);
+      // The admin reviews it in the app
+      const view = JSON.parse((await invoke('GET', `/accounting/batches/${id}`, { token: adminToken })).body);
       assert.ok(view.expenses.some(x => x.vendor === 'Staples' && x.amount === 19.99));
 
-      // Something approved after he was asked is not slipped into his batch
+      // Office staff cannot give the final approval
+      assert.equal((await invoke('POST', `/accounting/batches/${id}/approve`, { token: officeToken })).statusCode, 403);
+
+      // Something approved after the batch was made is not slipped into it
       await invoke('POST', '/expenses', { token: repToken, body: { date: '2026-10-09', amount: 5, category: 'Other', vendor: 'X', description: 'Late item' } });
       for (const x of JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body)) {
         if (x.status === 'Submitted') await invoke('POST', `/expenses/${x.id}/approve`, { token: officeToken });
       }
 
-      // He approves: accounting gets it, and only what he saw
-      const ok = await invoke('POST', `/accounting/batch/${token}/approve`);
+      // The admin approves: accounting gets exactly what was reviewed
+      const ok = await invoke('POST', `/accounting/batches/${id}/approve`, { token: adminToken });
       assert.equal(ok.statusCode, 200, ok.body);
-      const toAccounting = mails.find(m => /Rep hours and expenses —/.test(m.subject));
-      assert.ok(toAccounting, 'accounting emailed');
-      assert.ok(/Flyers for info night/.test(toAccounting.html));
-      assert.ok(!/Late item/.test(toAccounting.html), 'the later item waits for the next batch');
+      assert.equal(mails.length, 1, 'only the accounting email');
+      assert.match(mails[0].subject, /Rep hours and expenses —/);
+      assert.ok(/Flyers for info night/.test(mails[0].html));
+      assert.ok(!/Late item/.test(mails[0].html), 'the later item waits for the next batch');
       rows = JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body);
       assert.equal(rows.find(x => x.description === 'Flyers for info night').status, 'Reimbursed');
       assert.equal(rows.find(x => x.description === 'Late item').status, 'Approved');
+      assert.equal((await invoke('POST', `/accounting/batches/${id}/approve`, { token: adminToken })).statusCode, 409);
 
-      // The link is spent
-      assert.equal((await invoke('POST', `/accounting/batch/${token}/approve`)).statusCode, 410);
-      assert.equal((await invoke('GET', '/accounting/batch/not-a-real-token')).statusCode, 404);
-
-      // Sending back: the office hears why, nothing is sent
+      // Sent back with a note: the office sees it in the app; nothing is sent
       mails.length = 0;
       await invoke('POST', '/accounting/send', { token: officeToken });
-      const t2 = mails[0].html.match(/approve=([a-f0-9]+)/)[1];
-      const back = await invoke('POST', `/accounting/batch/${t2}/return`, { body: { note: 'Need a receipt for the late item' } });
+      const id2 = JSON.parse((await invoke('GET', '/accounting/batches', { token: adminToken })).body).pending[0].id;
+      const back = await invoke('POST', `/accounting/batches/${id2}/return`, { token: adminToken, body: { note: 'Need a receipt for the late item' } });
       assert.equal(back.statusCode, 200);
-      assert.ok(mails.some(m => m.to === 'office@test.org' && /Need a receipt/.test(m.html)));
+      assert.equal(mails.length, 0);
+      const after = JSON.parse((await invoke('GET', '/accounting/batches', { token: officeToken })).body);
+      assert.equal(after.pending.length, 0);
+      assert.equal(after.returned.note, 'Need a receipt for the late item');
+      assert.equal(after.returned.decidedBy, 'Test Admin');
       rows = JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body);
       assert.equal(rows.find(x => x.description === 'Late item').status, 'Approved');
 
-      // The automatic run: on the chosen day it asks once; other days it doesn't
+      // An admin's own Send goes straight to accounting
+      const direct = JSON.parse((await invoke('POST', '/accounting/send', { token: adminToken })).body);
+      assert.equal(direct.sent, true, JSON.stringify(direct));
+      assert.equal(mails.length, 1);
+
+      // The automatic run: on the chosen day it makes one batch for the admins; other days nothing
+      await invoke('POST', '/expenses', { token: repToken, body: { date: '2026-10-10', amount: 7, category: 'Other', vendor: 'Y', description: 'Monthly item' } });
+      for (const x of JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body)) {
+        if (x.status === 'Submitted') await invoke('POST', `/expenses/${x.id}/approve`, { token: officeToken });
+      }
       const routes = require('../src/routes');
       await db.q.setSetting('accountingDay', '15');
       mails.length = 0;
-      const notToday = await routes.runAutoAccounting(new Date('2026-11-14T15:00:00Z'));
-      assert.equal(notToday.skipped, 'not today');
+      assert.equal((await routes.runAutoAccounting(new Date('2026-11-14T15:00:00Z'))).skipped, 'not today');
       const due = await routes.runAutoAccounting(new Date('2026-11-15T15:00:00Z'));
       assert.equal(due.awaitingApproval, true, JSON.stringify(due));
-      assert.equal(mails.filter(m => m.to === 'mel@test.org').length, 1);
-      const again = await routes.runAutoAccounting(new Date('2026-11-15T20:00:00Z'));
-      assert.equal(again.skipped, 'already asked today');
+      assert.equal(mails.length, 0, 'the schedule emails nobody');
+      const sched = JSON.parse((await invoke('GET', '/accounting/batches', { token: adminToken })).body).pending[0];
+      assert.equal(sched.requestedBy, 'the monthly schedule');
+      assert.equal((await routes.runAutoAccounting(new Date('2026-11-15T20:00:00Z'))).skipped, 'already done today');
       await db.q.setSetting('accountingDay', 'Last');
       assert.equal((await routes.runAutoAccounting(new Date('2026-11-29T15:00:00Z'))).skipped, 'not today');
     } finally {
       reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
-      await db.q.setSetting('accountingApprover', '');
       await db.q.setSetting('accountingDay', '1');
     }
   });

@@ -300,7 +300,10 @@ const q = {
     `INSERT INTO accounting_batches (token,period,time_ids,expense_ids,requested_by,approver)
      VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
     [b.token, b.period || null, JSON.stringify(b.timeIds), JSON.stringify(b.expenseIds), b.requestedBy || null, b.approver]),
-  batchByToken: token => one('SELECT * FROM accounting_batches WHERE token = $1', [token]),
+  batchById: id => one('SELECT * FROM accounting_batches WHERE id = $1', [id]),
+  // The office sees the admin's note on a batch sent back, for a fortnight
+  lastReturnedBatch: () => one(
+    "SELECT * FROM accounting_batches WHERE status = 'returned' AND decided_at > now() - interval '14 days' ORDER BY decided_at DESC LIMIT 1"),
   batchByPeriod: period => one('SELECT * FROM accounting_batches WHERE period = $1', [period]),
   pendingBatches: () => query("SELECT * FROM accounting_batches WHERE status = 'pending' ORDER BY created_at DESC"),
   decideBatch: (id, status, by, note) => query(

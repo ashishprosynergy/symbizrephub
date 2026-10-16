@@ -1510,154 +1510,99 @@ async function deliverToAccounting({ timeIds, expenseIds, actor, ip } = {}) {
   return { status: 200, body: { sent: true, to, time: t.length, expenses: e.length, books: booksOut } };
 }
 
-/* ── Mel approves before anything goes to accounting ── */
-const DEFAULT_APPROVER = 'melvin.b@symbiz.org';
-const approverEmail = async () => String(await setting('accountingApprover', DEFAULT_APPROVER)).trim();
-
-/**
- * Put everything approved into a batch and ask the approver to OK it. The
- * email carries a one-time link: he can approve without a Rep Hub login,
- * and only the link in his inbox can do it.
+/* ── An admin gives the final approval before anything goes to accounting ──
+ *
+ * Office staff (or the monthly schedule) put everything approved into a
+ * batch. It waits on the admins' Approvals screen — nobody is emailed — and
+ * an admin reviews it and sends it on, or returns it with a note. An admin
+ * pressing Send themselves is the approval, so theirs goes straight through.
  */
-async function requestApproval({ actor, period, base } = {}) {
-  const approver = await approverEmail();
+const day10 = d => (d instanceof Date ? d.toISOString() : String(d || '')).slice(0, 10);
+
+async function createBatch({ actor, period } = {}) {
   const [time, exp] = await Promise.all([q.allTime(), q.allExpenses()]);
   const t = time.filter(x => x.status === 'Approved');
   const e = exp.filter(x => x.status === 'Approved');
   if (!t.length && !e.length) return { status: 400, body: { error: 'Nothing approved to send' } };
-  if (!cfg.mail.enabled || !cfg.mail.host) {
-    return { status: 503, body: { error: 'Email is not configured for this site, so the approval request could not be sent.' } };
-  }
-
+  // Asking again replaces the open request with everything approved now
   await q.supersedeBatches();
-  const token = crypto.randomBytes(24).toString('hex');
-  await q.addBatch({ token, period, timeIds: t.map(x => x.id), expenseIds: e.map(x => x.id),
-                     requestedBy: actor?.id || 'schedule', approver });
-
-  const url = `${base || cfg.appUrl}/?approve=${token}`;
-  const total = e.reduce((s, x) => s + Number(x.amount), 0);
-  const hours = t.reduce((s, x) => s + Number(x.hours), 0);
-  const byRep = {};
-  e.forEach(x => { const k = x.rep_name || 'Unknown'; byRep[k] = byRep[k] || { amount: 0, n: 0, hours: 0 }; byRep[k].amount += Number(x.amount); byRep[k].n++; });
-  t.forEach(x => { const k = x.rep_name || 'Unknown'; byRep[k] = byRep[k] || { amount: 0, n: 0, hours: 0 }; byRep[k].hours += Number(x.hours); });
-  const cell = 'padding:6px 9px;border-bottom:1px solid #E9ECDF;font-size:13px;text-align:left';
-
-  const sent = await reminders.sendEmail(approver, `Approve rep hours and expenses — $${total.toFixed(2)}`,
-    `<!doctype html><html><body style="margin:0;background:#F2F5EC;font-family:-apple-system,Segoe UI,Arial,sans-serif;">
-    <div style="max-width:560px;margin:0 auto;padding:24px 16px;">
-      <h1 style="font-size:19px;color:#1E2A20;margin:0 0 6px;">Ready for your approval</h1>
-      <p style="color:#5A6455;font-size:14px;line-height:1.5;margin:0 0 16px">
-        ${e.length} expense${e.length === 1 ? '' : 's'} totalling <strong>$${total.toFixed(2)}</strong>
-        and ${hours} hour${hours === 1 ? '' : 's'} have been approved by the office${period ? ` for ${esc(period)}` : ''}.
-        Nothing goes to accounting until you approve it.</p>
-      <table style="border-collapse:collapse;width:100%;background:#fff;border-radius:8px;margin-bottom:18px">
-        <tr><th style="${cell}">Rep</th><th style="${cell}">Expenses</th><th style="${cell}">Hours</th></tr>
-        ${Object.entries(byRep).map(([k, v]) => `<tr><td style="${cell}">${esc(k)}</td>
-          <td style="${cell}">$${v.amount.toFixed(2)}${v.n ? ` (${v.n})` : ''}</td><td style="${cell}">${v.hours || '—'}</td></tr>`).join('')}
-      </table>
-      <p style="margin:0 0 10px"><a href="${url}" style="display:inline-block;background:#2E5132;color:#fff;text-decoration:none;
-        padding:13px 24px;border-radius:8px;font-weight:600;font-size:15px">Review and approve</a></p>
-      <p style="color:#8A9284;font-size:12.5px;line-height:1.6">The link shows every item and receipt. You can approve it,
-        or send it back to the office with a note. It works once.</p>
-      <p style="color:#8A9284;font-size:11.5px;word-break:break-all">${esc(url)}</p>
-    </div></body></html>`,
-    { userId: actor?.id || null, kind: 'accounting-approval', replyTo: actor?.email || undefined });
-  if (sent && sent.ok === false) {
-    return { status: 502, body: { error: `The approval request could not be emailed: ${sent.error}` } };
-  }
-  await audit(actor?.id || null, 'accounting.approvalRequested', { approver, expenses: e.length, time: t.length, period }, null);
-  return { status: 200, body: { awaitingApproval: true, approver, expenses: e.length, time: t.length, amount: total } };
+  await q.addBatch({ token: crypto.randomBytes(24).toString('hex'), period,
+    timeIds: t.map(x => x.id), expenseIds: e.map(x => x.id), requestedBy: actor?.id || 'schedule', approver: 'admin' });
+  const amount = e.reduce((s, x) => s + Number(x.amount), 0);
+  await audit(actor?.id || null, 'accounting.batchCreated', { expenses: e.length, time: t.length, period }, null);
+  return { status: 200, body: { awaitingApproval: true, expenses: e.length, time: t.length, amount } };
 }
 
 r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
-  const approver = await approverEmail();
-  // The approver sending it himself is the approval
-  const out = approver && approver.toLowerCase() !== String(req.user.email).toLowerCase()
-    ? await requestApproval({ actor: req.user, base: siteUrl(req) })
-    : await deliverToAccounting({ actor: req.user, ip: req.ip });
+  const out = req.user.role === 'admin'
+    ? await deliverToAccounting({ actor: req.user, ip: req.ip })
+    : await createBatch({ actor: req.user });
+  if (req.user.role === 'admin' && out.status === 200) await q.supersedeBatches();   // nothing left waiting
   res.status(out.status).json(out.body);
 }));
 
-/** Open requests, for the Hours and expenses screen. */
+/** The batch waiting for final approval (and the last one sent back), for both screens. */
 r.get('/accounting/batches', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
-  const rows = await q.pendingBatches();
-  res.json(rows.map(b => ({ id: b.id, approver: b.approver, period: b.period, createdAt: b.created_at,
-    expenses: JSON.parse(b.expense_ids).length, time: JSON.parse(b.time_ids).length })));
+  const [pending, returned] = await Promise.all([q.pendingBatches(), q.lastReturnedBatch()]);
+  const names = Object.fromEntries((await q.everyUser()).map(u => [u.id, u.name]));
+  const shape = b => ({ id: b.id, period: b.period, createdAt: b.created_at, status: b.status, note: b.note || '',
+    requestedBy: b.requested_by === 'schedule' ? 'the monthly schedule' : (names[b.requested_by] || ''),
+    decidedBy: names[b.decided_by] || '', decidedAt: b.decided_at,
+    expenses: JSON.parse(b.expense_ids).length, time: JSON.parse(b.time_ids).length });
+  res.json({ pending: pending.map(shape), returned: returned ? shape(returned) : null });
 }));
 
-/* What the link in Mel's email opens. The token is the permission. */
-async function openBatch(token) {
-  const b = await q.batchByToken(String(token || ''));
-  if (!b) return { error: 'That approval link is not valid.', status: 404 };
+async function pendingBatch(id) {
+  const b = await q.batchById(parseInt(id, 10));
+  if (!b) return { status: 404, error: 'That batch was not found' };
   if (b.status !== 'pending') {
-    return { error: b.status === 'approved' ? 'This has already been approved and sent to accounting.'
-      : b.status === 'returned' ? 'This was sent back to the office.' : 'A newer request has replaced this one — use the latest email.', status: 410 };
+    return { status: 409, error: b.status === 'approved' ? 'This has already been sent to accounting.'
+      : b.status === 'returned' ? 'This was sent back to the office.' : 'A newer batch has replaced this one.' };
   }
-  if (Date.now() - new Date(b.created_at).getTime() > 21 * 86400000) return { error: 'This link has expired. Ask the office to send it again.', status: 410 };
   return { batch: b };
 }
 
-r.get('/accounting/batch/:token', wrap(async (req, res) => {
-  const { batch: b, error, status } = await openBatch(req.params.token);
-  if (error) return res.status(status).json({ error });
+/** Everything in a batch, for the admin to review. Receipts open via /expenses/:id/receipt. */
+r.get('/accounting/batches/:id', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  const b = await q.batchById(parseInt(req.params.id, 10));
+  if (!b) return res.status(404).json({ error: 'That batch was not found' });
   const ids = { t: JSON.parse(b.time_ids).map(Number), e: JSON.parse(b.expense_ids).map(Number) };
   const [time, exp] = await Promise.all([q.allTime(), q.allExpenses()]);
-  const day = d => (d instanceof Date ? d.toISOString() : String(d || '')).slice(0, 10);
   res.json({
-    approver: b.approver, period: b.period, createdAt: b.created_at,
-    expenses: exp.filter(x => ids.e.includes(Number(x.id))).map(x => ({ id: x.id, rep: x.rep_name, date: day(x.entry_date),
+    id: b.id, status: b.status, period: b.period, createdAt: b.created_at,
+    expenses: exp.filter(x => ids.e.includes(Number(x.id))).map(x => ({ id: x.id, rep: x.rep_name, date: day10(x.entry_date),
       amount: Number(x.amount), category: x.category, vendor: x.vendor || '', description: x.description || '',
       status: x.status, hasReceipt: !!x.receipt_name })),
-    time: time.filter(x => ids.t.includes(Number(x.id))).map(x => ({ id: x.id, rep: x.rep_name, date: day(x.entry_date),
+    time: time.filter(x => ids.t.includes(Number(x.id))).map(x => ({ id: x.id, rep: x.rep_name, date: day10(x.entry_date),
       hours: Number(x.hours), category: x.category, description: x.description || '', status: x.status })),
   });
 }));
 
-r.get('/accounting/batch/:token/receipt/:id', wrap(async (req, res) => {
-  const { batch: b, error, status } = await openBatch(req.params.token);
-  if (error) return res.status(status).json({ error });
-  const id = parseInt(req.params.id, 10);
-  if (!JSON.parse(b.expense_ids).map(Number).includes(id)) return res.status(404).json({ error: 'Not in this batch' });
-  const row = await q.receiptFor(id);
-  if (!row || !row.receipt_data) return res.status(404).json({ error: 'No receipt on that expense' });
-  res.json({ name: row.receipt_name, type: row.receipt_type, data: row.receipt_data });
-}));
-
-r.post('/accounting/batch/:token/approve', wrap(async (req, res) => {
-  const { batch: b, error, status } = await openBatch(req.params.token);
+r.post('/accounting/batches/:id/approve', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+  const { batch: b, error, status } = await pendingBatch(req.params.id);
   if (error) return res.status(status).json({ error });
   const out = await deliverToAccounting({ timeIds: JSON.parse(b.time_ids), expenseIds: JSON.parse(b.expense_ids),
-    actor: { id: null, email: b.approver }, ip: req.ip });
+    actor: req.user, ip: req.ip });
   if (out.status === 200) {
-    await q.decideBatch(b.id, 'approved', b.approver, null);
-    await audit(null, 'accounting.approved', { batch: b.id, by: b.approver }, req.ip);
+    await q.decideBatch(b.id, 'approved', req.user.id, null);
+    await audit(req.user.id, 'accounting.approved', { batch: b.id }, req.ip);
   }
   res.status(out.status).json(out.body);
 }));
 
-r.post('/accounting/batch/:token/return', wrap(async (req, res) => {
-  const { batch: b, error, status } = await openBatch(req.params.token);
+r.post('/accounting/batches/:id/return', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+  const { batch: b, error, status } = await pendingBatch(req.params.id);
   if (error) return res.status(status).json({ error });
   const note = String(req.body?.note || '').trim().slice(0, 2000);
-  await q.decideBatch(b.id, 'returned', b.approver, note);
-  // Tell whoever asked (or the whole office, for the monthly run)
-  const asker = b.requested_by && b.requested_by !== 'schedule' ? await q.userById(b.requested_by) : null;
-  const to = asker ? [asker] : await q.allOffice();
-  for (const u of to) {
-    await reminders.sendEmail(u.email, 'Rep hours and expenses sent back',
-      `<p>${esc(b.approver)} has sent the hours and expenses back without approving them.</p>
-       ${note ? `<p><strong>Note:</strong> ${esc(note)}</p>` : ''}
-       <p>Nothing went to accounting. Make any changes in Rep Hub, then send again.</p>`,
-      { userId: u.id, kind: 'accounting-returned' });
-  }
-  await audit(null, 'accounting.returned', { batch: b.id, by: b.approver, note }, req.ip);
+  await q.decideBatch(b.id, 'returned', req.user.id, note);
+  await audit(req.user.id, 'accounting.returned', { batch: b.id, note }, req.ip);
   res.json({ ok: true });
 }));
 
 /**
  * The automatic run, called daily by the scheduler. On the day chosen in
- * Settings (1st, 15th or last of the month, US Eastern) it asks the approver
- * — once per day, however often it is called.
+ * Settings (1st, 15th or last of the month, US Eastern) it puts everything
+ * approved in front of the admins — once per day, however often it runs.
  */
 async function runAutoAccounting(now = new Date()) {
   const when = String(await setting('accountingDay', '1'));
@@ -1669,10 +1614,8 @@ async function runAutoAccounting(now = new Date()) {
   const due = when === 'Last' ? d === last : d === Number(when);
   if (!due) return { skipped: 'not today' };
   const period = `${parts.year}-${parts.month}-${parts.day}`;
-  if (await q.batchByPeriod(period)) return { skipped: 'already asked today' };
-
-  const approver = await approverEmail();
-  const out = approver ? await requestApproval({ period }) : await deliverToAccounting({});
+  if (await q.batchByPeriod(period)) return { skipped: 'already done today' };
+  const out = await createBatch({ period });
   return { period, status: out.status, ...out.body };
 }
 r.runAutoAccounting = runAutoAccounting;
@@ -2125,7 +2068,7 @@ r.get('/admin/audit', auth.authRequired, auth.requireOffice, wrap(async (req, re
  */
 const OFFICE_SETTINGS = {
   retryDays: '4', rescheduleDays: '7', dueWindow: String(cfg.reminders.dueWindowDays), announcement: '',
-  accountingEmail: 'accounting@symbiz.org', accountingDay: '1', accountingApprover: 'melvin.b@symbiz.org',
+  accountingEmail: 'accounting@symbiz.org', accountingDay: '1',
   booksAuto: 'on', booksPayee: 'rep', booksAccount: '',
 };
 
@@ -2141,8 +2084,8 @@ r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
   for (const [k, v] of Object.entries(req.body || {})) {
     if (!(k in OFFICE_SETTINGS)) continue;
     let val = String(v ?? '').trim().slice(0, 500);
-    if ((k === 'accountingEmail' || k === 'accountingApprover') && val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
-      return res.status(400).json({ error: `That ${k === 'accountingApprover' ? 'approver' : 'accounting'} address does not look like an email` });
+    if (k === 'accountingEmail' && val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+      return res.status(400).json({ error: 'That accounting address does not look like an email' });
     }
     if (k === 'accountingDay' && !['1', '15', 'Last', 'Off'].includes(val)) continue;
     if (k === 'booksPayee' && !['rep', 'vendor'].includes(val)) continue;
