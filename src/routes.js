@@ -183,16 +183,67 @@ function signInEmail({ name, url, minutes }) {
  * reps uses Gmail — the rest are on Yahoo, iCloud and their own business
  * domains, so a Google-only sign-in would lock out ten of them.
  *
- * Always answers the same way whether or not the address exists, so this
- * cannot be used to find out who has an account.
+ * An address with no account, and no rep in Zoho behind it, is told so.
+ * That does say whether an address is known, a fair trade for a closed group
+ * of reps who were otherwise left waiting for emails that never came.
  */
+/**
+ * A rep asking for a code before the office has created their account.
+ *
+ * Only a handful of accounts had been made, so every other rep who typed
+ * their email got nothing — and was told a code was on its way. If the
+ * address belongs to a Regional Rep on an active ring in Zoho, make the
+ * account now. Safe: the code still only goes to that inbox, and the account
+ * is scoped to their own rings exactly as one made by the office would be.
+ */
+async function accountFromZoho(email) {
+  const rings = (await zoho.coql(queries.repsOnRings())).map(fromZoho.ring);
+  const names = new Map();
+  rings.forEach(r => { if (r.repZohoId && !names.has(r.repZohoId)) names.set(r.repZohoId, r.repName); });
+  if (!names.size) return null;
+
+  const contacts = (await zoho.coql(queries.contactsByIds([...names.keys()]))).map(fromZoho.member);
+  const c = contacts.find(x => String(x.email || '').trim().toLowerCase() === email);
+  if (!c) return null;
+
+  // Already here under another address, or switched off: leave it to the office
+  const existing = await q.allUsers();
+  if (existing.some(u => u.zoho_owner_id === c.id || String(u.email).toLowerCase() === email)) return null;
+
+  const user = {
+    id: 'u_' + Date.now().toString(36), email, name: names.get(c.id) || c.name || email,
+    phone: c.phone || null, role: 'rep', region: c.region || null,
+    // Unusable until they choose their own with the emailed code
+    password_hash: auth.hash(crypto.randomBytes(24).toString('hex')),
+    zoho_owner_id: c.id,
+  };
+  await q.insertUser(user);
+  await audit(user.id, 'user.selfSetupFromZoho', { email, contactId: c.id }, null);
+  return q.userByEmail(email);
+}
+
+/** The account for this email, creating it for a known Zoho rep if need be. */
+async function findOrCreateAccount(email) {
+  const user = await q.userByEmail(email);
+  if (user) return user.active === false ? null : user;
+  return accountFromZoho(email).catch(e => {
+    console.error('[auth] Zoho rep lookup failed:', e.message);
+    return null;
+  });
+}
+
+// Saying plainly that nothing was sent. "A code is on its way" for an address
+// with no account left reps waiting for an email that was never coming.
+const NO_ACCOUNT = 'There is no Rep Hub account for that email, and it is not a rep\'s email in Symbiz\'s records. ' +
+  'Check it is the address the office has for you, or ask Keturah or Mel to add you.';
+
 r.post('/auth/request-link', wrap(async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   const same = { ok: true, message: 'If that address has an account, a sign-in link is on its way.' };
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'That does not look like an email address' });
 
-  const user = await q.userByEmail(email);
-  if (!user || user.active === false) return res.json(same);
+  const user = await findOrCreateAccount(email);
+  if (!user) return res.status(404).json({ error: NO_ACCOUNT, noAccount: true });
 
   const recent = await q.recentTokenCount(user.id, 'signin');
   if ((recent?.c || 0) >= 8) {
@@ -321,8 +372,8 @@ r.post('/auth/forgot', wrap(async (req, res) => {
   const same = { ok: true, message: 'If that address has an account, a code is on its way.' };
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'That does not look like an email address' });
 
-  const user = await q.userByEmail(email);
-  if (!user || user.active === false) return res.json(same);
+  const user = await findOrCreateAccount(email);
+  if (!user) return res.status(404).json({ error: NO_ACCOUNT, noAccount: true });
 
   // Generous, and counted only against codes. The old limit was shared with
   // sign-in links, so a few attempts silently stopped anything being sent.

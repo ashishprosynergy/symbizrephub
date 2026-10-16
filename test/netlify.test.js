@@ -358,6 +358,41 @@ describe('first-run setup', () => {
     assert.equal((await db.q.allUsers()).length, before);
   });
 
+  test('a rep in Zoho with no account yet gets one when they ask for a code', async () => {
+    const ring = { id: 'RING_SELF', Name: 'Self Ring', Active: true,
+                   Regional_Rep: { id: 'CONTACT_SELF', name: 'Selfserve Rep' } };
+    const contact = { id: 'CONTACT_SELF', Full_Name: 'Selfserve Rep (77)', Email: 'Self.Rep@Example.com' };
+    store.Growth_Ring_Groups.push(ring);
+    store.Contacts.push(contact);
+    try {
+      const res = await invoke('POST', '/auth/forgot', { body: { email: 'self.rep@example.com' } });
+      // Mail is off in tests, so the send itself reports 503 — but not "no account"
+      assert.notEqual(res.statusCode, 404, res.body);
+      const u = await db.q.userByEmail('self.rep@example.com');
+      assert.ok(u, 'the account should have been created');
+      assert.equal(u.role, 'rep');
+      assert.equal(u.zoho_owner_id, 'CONTACT_SELF', 'linked to their Zoho contact so they see their rings');
+      assert.equal(u.name, 'Selfserve Rep');
+
+      // Asking again uses that account rather than making a second one
+      const before = (await db.q.allUsers()).length;
+      await invoke('POST', '/auth/forgot', { body: { email: 'self.rep@example.com' } });
+      assert.equal((await db.q.allUsers()).length, before);
+    } finally {
+      store.Growth_Ring_Groups.splice(store.Growth_Ring_Groups.indexOf(ring), 1);
+      store.Contacts.splice(store.Contacts.indexOf(contact), 1);
+    }
+  });
+
+  test('an email with no account and no Zoho rep is told so, not sent a phantom code', async () => {
+    for (const path of ['/auth/forgot', '/auth/request-link']) {
+      const res = await invoke('POST', path, { body: { email: 'nobody@nowhere.test' } });
+      assert.equal(res.statusCode, 404, path);
+      assert.match(JSON.parse(res.body).error, /no Rep Hub account/i);
+    }
+    assert.equal(await db.q.userByEmail('nobody@nowhere.test'), null);
+  });
+
   test('status reports whether Zoho is connected', async () => {
     const body = JSON.parse((await invoke('GET', '/setup/status')).body);
     assert.equal(typeof body.zohoReady, 'boolean');
