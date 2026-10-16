@@ -140,7 +140,7 @@ function htmlToText(html) {
     .trim();
 }
 
-async function sendEmail(to, subject, html, { userId, kind, replyTo, attachments } = {}) {
+async function sendEmail(to, subject, html, { userId, kind, replyTo, attachments, bcc } = {}) {
   const t = mailer();
   if (!t) {
     // Be explicit: a caller that marks work as "sent" must know it wasn't.
@@ -152,7 +152,7 @@ async function sendEmail(to, subject, html, { userId, kind, replyTo, attachments
     // A plain-text copy alongside the HTML. HTML-only mail is one of the
     // things Gmail and Yahoo score as spam, which is where codes were landing.
     await t.sendMail({ from: cfg.mail.from, to, subject, html, text: htmlToText(html),
-      ...(replyTo ? { replyTo } : {}), ...(attachments ? { attachments } : {}) });
+      ...(replyTo ? { replyTo } : {}), ...(bcc ? { bcc } : {}), ...(attachments ? { attachments } : {}) });
     await q.logSend(userId || null, kind || 'email', 'email', subject, true, null);
     return { ok: true };
   } catch (err) {
@@ -230,14 +230,15 @@ async function runOfficeSummary({ dryRun = false } = {}) {
   let stats = {};
   try {
     const [rings, members, activities] = await Promise.all([
-      zoho.coql(`select id, Status from ${M.RING} limit 200`),
-      zoho.coql(`select id, Member_Status from ${M.CONTACT} limit 200`),
+      zoho.coql(`select id, Status, Active from ${M.RING} where id is not null limit 200`),
+      zoho.coql(`select COUNT(id) from ${M.CONTACT} where Active = true and Status = 'Active'`),
       zoho.coql(`select id, Next_Due_Date from ${M.ACTIVITY} where Next_Due_Date is not null limit 200`),
     ]);
     stats = {
-      'Active Growth Rings': rings.filter(r => r.Status === 'active').length,
-      'Awaiting approval': rings.filter(r => r.Status === 'pending').length,
-      'Active members': members.filter(m => (m.Member_Status || 'active') === 'active').length,
+      // Zoho's values are capitalised ("Active", "Pending"); members are counted by Zoho itself
+      'Active Growth Rings': rings.filter(r => r.Active !== false && !/pending/i.test(r.Status || '')).length,
+      'Awaiting approval': rings.filter(r => /pending/i.test(r.Status || '')).length,
+      'Active members': Number(Object.values((members && members[0]) || {})[0]) || 0,
       'Contacts overdue': activities.filter(a => daysUntil(a.Next_Due_Date) < 0).length,
       'Contacts due in 30 days': activities.filter(a => { const d = daysUntil(a.Next_Due_Date); return d >= 0 && d <= 30; }).length,
     };

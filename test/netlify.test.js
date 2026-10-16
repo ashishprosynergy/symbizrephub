@@ -1363,7 +1363,7 @@ describe('accounting PDF', () => {
 
 describe('scheduled functions', () => {
   test('every scheduled function exports a handler', () => {
-    for (const f of ['weekly-digest', 'overdue-nudge', 'office-summary', 'sync-flush', 'accounting-auto']) {
+    for (const f of ['weekly-digest', 'manager-digest', 'overdue-nudge', 'office-summary', 'sync-flush', 'accounting-auto']) {
       const mod = require(`../netlify/functions/${f}`);
       assert.equal(typeof mod.handler, 'function', `${f} has no handler`);
     }
@@ -1373,6 +1373,117 @@ describe('scheduled functions', () => {
     const { handler } = require('../netlify/functions/sync-flush');
     const res = await handler({}, {});
     assert.equal(res.statusCode, 200);
+  });
+});
+
+/* ═══════════ MANAGING THE REPS ═══════════ */
+describe('managing the reps: warnings, goals, check-ins, moving rings, visits, messages', () => {
+  const { handler } = require('../netlify/functions/api');
+  const invoke = (method, path, { body, token } = {}) => handler({
+    httpMethod: method, path: `/.netlify/functions/api${path}`,
+    rawUrl: `https://x.netlify.app/.netlify/functions/api${path}`,
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    queryStringParameters: {}, body: body ? JSON.stringify(body) : null, isBase64Encoded: false,
+  }, {});
+  const J = r => JSON.parse(r.body);
+  let office, rep;
+  before(async () => {
+    office = J(await invoke('POST', '/auth/login', { body: { email: 'office@test.org', password: 'correct-horse' } })).token;
+    rep = J(await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse' } })).token;
+    store.Growth_Ring_Groups.push({ id: 'GRM1', Name: 'Mel 1', Active: true, Regional_Rep: { id: 'REPM', name: 'Quiet Rep #0042' } });
+  });
+
+  test('reps cannot see the team picture', async () => {
+    assert.equal((await invoke('GET', '/manager/snapshot', { token: rep })).statusCode, 403);
+  });
+
+  test('a rep who never signed in and whose ring has not met is flagged', async () => {
+    const res = await invoke('GET', '/manager/snapshot', { token: office });
+    assert.equal(res.statusCode, 200);
+    const s = J(res);
+    const r = s.reps.find(x => x.id === 'REPM');
+    assert.ok(r, 'the rep is in the picture');
+    assert.equal(r.quietRings[0].id, 'GRM1');
+    const kinds = s.warnings.filter(w => w.repId === 'REPM').map(w => w.kind);
+    assert.ok(kinds.includes('quiet') && kinds.includes('noMeeting'), kinds.join(','));
+  });
+
+  test('goals are set by the office and read back, and a rep sees only their own', async () => {
+    assert.equal((await invoke('PUT', '/reps/goals/CONTACT_REP_1', { token: rep, body: { calls: 5 } })).statusCode, 403);
+    const put = await invoke('PUT', '/reps/goals/CONTACT_REP_1', { token: office, body: { calls: '40', visits: 4, newMembers: '' } });
+    assert.equal(put.statusCode, 200);
+    const all = J(await invoke('GET', '/reps/goals', { token: office }));
+    const g = all.goals.find(x => x.repId === 'CONTACT_REP_1');
+    assert.deepEqual([g.calls, g.visits, g.newMembers], [40, 4, null]);
+    const mine = J(await invoke('GET', '/reps/my-goal', { token: rep }));
+    assert.equal(mine.goal.calls, 40);
+    // Changing it updates, not duplicates
+    await invoke('PUT', '/reps/goals/CONTACT_REP_1', { token: office, body: { calls: 50 } });
+    assert.equal(J(await invoke('GET', '/reps/goals', { token: office })).goals.filter(x => x.repId === 'CONTACT_REP_1').length, 1);
+  });
+
+  test('a check-in note with a past next date raises a check-in warning; deleting it clears it', async () => {
+    const past = new Date(Date.now() - 3 * 864e5).toISOString().slice(0, 10);
+    const add = await invoke('POST', '/reps/REPM/notes', { token: office, body: { note: 'Talked about visits', nextCheckin: past } });
+    assert.equal(add.statusCode, 201);
+    const notes = J(await invoke('GET', '/reps/REPM/notes', { token: office }));
+    assert.equal(notes[0].note, 'Talked about visits');
+    assert.equal(notes[0].nextCheckin, past);
+    let s = J(await invoke('GET', '/manager/snapshot', { token: office }));
+    assert.ok(s.warnings.some(w => w.repId === 'REPM' && w.kind === 'checkin'));
+    await invoke('DELETE', `/reps/notes/${notes[0].id}`, { token: office });
+    s = J(await invoke('GET', '/manager/snapshot', { token: office }));
+    assert.ok(!s.warnings.some(w => w.repId === 'REPM' && w.kind === 'checkin'));
+    assert.equal((await invoke('POST', '/reps/REPM/notes', { token: rep, body: { note: 'x' } })).statusCode, 403);
+  });
+
+  test('moving a ring changes its Regional Rep in Zoho; reps cannot', async () => {
+    assert.equal((await invoke('POST', '/rings/GRM1/reassign', { token: rep, body: { repZohoId: '777' } })).statusCode, 403);
+    const res = await invoke('POST', '/rings/GRM1/reassign', { token: office, body: { repZohoId: '777' } });
+    assert.equal(res.statusCode, 200);
+    assert.equal(store.Growth_Ring_Groups.find(g => g.id === 'GRM1').Regional_Rep.id, '777');
+    store.Growth_Ring_Groups.find(g => g.id === 'GRM1').Regional_Rep = { id: 'REPM', name: 'Quiet Rep #0042' };
+  });
+
+  test('the office books a visit for a rep, then files the report', async () => {
+    const plan = await invoke('POST', '/visits', { token: office, body: { ringId: 'GRM1', date: '2026-11-03' } });
+    assert.equal(plan.statusCode, 201);
+    const g = store.Growth_Ring_Groups.find(x => x.id === 'GRM1');
+    assert.equal(g.Next_Rep_Visit, '2026-11-03');
+    // a rep cannot book someone else's ring
+    assert.equal((await invoke('POST', '/visits', { token: rep, body: { ringId: 'GRM1', date: '2026-11-03' } })).statusCode, 403);
+
+    const rpt = await invoke('POST', '/visits/report', { token: office,
+      body: { ringId: 'GRM1', date: '2026-11-04', attendance: '9 of 11', went: 'Lively', concerns: 'Low numbers' } });
+    assert.equal(rpt.statusCode, 201);
+    const act = store.Rep_Visit_Trackings.find(a => a.id === J(rpt).id);
+    assert.equal(act.Visit_Type, 'Ring Visit');
+    assert.match(act.Visit_Notes, /Attendance: 9 of 11[\s\S]*Concerns: Low numbers/);
+    assert.equal(act.Rep.id, 'REPM');
+    assert.equal(g.Last_Rep_Visit, '2026-11-04');
+    assert.equal(g.Next_Rep_Visit, null, 'the booked visit is done, so it is cleared');
+  });
+
+  test('messaging reps needs a subject and body, and never claims success when mail is off', async () => {
+    assert.equal((await invoke('POST', '/messages/reps', { token: office, body: { repIds: 'all', subject: '', body: 'x' } })).statusCode, 400);
+    store.Contacts.push({ id: 'REPM', Full_Name: 'Quiet Rep #0042', Email: 'quiet@test.org', Active: true });
+    const list = J(await invoke('GET', '/messages/reps', { token: office }));
+    assert.equal(list.reps.find(r => r.id === 'REPM').email, 'quiet@test.org');
+    const res = await invoke('POST', '/messages/reps', { token: office, body: { repIds: ['REPM'], subject: 'Hello', body: 'Hi all' } });
+    assert.equal(res.statusCode, 502);
+    assert.equal((await invoke('POST', '/messages/reps', { token: rep, body: { repIds: 'all', subject: 'a', body: 'b' } })).statusCode, 403);
+  });
+
+  test('the Monday email previews who it goes to and lists the warnings', async () => {
+    const res = await invoke('POST', '/manager/digest/run', { token: office, body: { dryRun: true } });
+    assert.equal(res.statusCode, 200);
+    const out = J(res).results[0];
+    assert.ok(out.to.includes('office@test.org'));
+    const manager = require('../src/manager');
+    const html = manager.digestHTML({ reps: [{ name: 'Quiet Rep', id: 'R', calls7: 0, rings: 1, overdue: 2, lastLogin: null, hasAccount: false,
+      lastCall: null, facLate: [], quietRings: [{ id: 'G', name: 'G' }], needVisit: [], upcomingMeetings: [], nextCheckin: null }] }, 'Mel B', 'https://x');
+    assert.match(html, /Quiet Rep<\/strong> has never signed in/);
+    assert.match(html, /Mel,/);
   });
 });
 
@@ -1393,7 +1504,7 @@ describe('netlify config', () => {
   });
 
   test('every schedule is declared', () => {
-    for (const f of ['weekly-digest', 'overdue-nudge', 'office-summary', 'sync-flush', 'accounting-auto']) {
+    for (const f of ['weekly-digest', 'manager-digest', 'overdue-nudge', 'office-summary', 'sync-flush', 'accounting-auto']) {
       assert.ok(toml.includes(`[functions."${f}"]`), `${f} is not scheduled`);
     }
   });

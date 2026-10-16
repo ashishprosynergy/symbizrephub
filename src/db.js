@@ -235,6 +235,37 @@ CREATE TABLE IF NOT EXISTS summit_notes (
 
 CREATE INDEX IF NOT EXISTS idx_summit_tasks ON summit_tasks (event_id, position);
 
+CREATE TABLE IF NOT EXISTS rep_goals (
+  rep_id      TEXT NOT NULL,
+  quarter     TEXT NOT NULL,
+  calls       INTEGER,
+  visits      INTEGER,
+  new_members INTEGER,
+  set_by      TEXT,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (rep_id, quarter)
+);
+
+CREATE TABLE IF NOT EXISTS rep_notes (
+  id           SERIAL PRIMARY KEY,
+  rep_id       TEXT NOT NULL,
+  author       TEXT,
+  note         TEXT NOT NULL,
+  next_checkin DATE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS rep_messages (
+  id          SERIAL PRIMARY KEY,
+  sent_by     TEXT,
+  subject     TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  recipients  TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_rep_notes ON rep_notes (rep_id, created_at);
+
 CREATE TABLE IF NOT EXISTS geocodes (
   address_key TEXT PRIMARY KEY,
   lat         DOUBLE PRECISION,
@@ -292,10 +323,11 @@ const q = {
   allOffice:   ()    => query("SELECT * FROM users WHERE role IN ('staff','admin') AND active = TRUE"),
   // Active accounts only. A deactivated one must disappear from the list and
   // free its Zoho contact so the person can be re-added.
-  allUsers:    ()    => query('SELECT id,email,name,role,region,active,phone,zoho_owner_id FROM users WHERE active = TRUE ORDER BY role, name'),
+  allUsers:    ()    => query('SELECT id,email,name,role,region,active,phone,zoho_owner_id,last_login_at,digest_email FROM users WHERE active = TRUE ORDER BY role, name'),
   everyUser:   ()    => query('SELECT id,email,name,role,region,active,phone,zoho_owner_id FROM users ORDER BY role, name'),
   hardDelete:  id    => query('DELETE FROM users WHERE id = $1', [id]),
   touchLogin:  id    => query('UPDATE users SET last_login_at = now() WHERE id = $1', [id]),
+  setDigestEmail: (id, on) => query('UPDATE users SET digest_email = $2 WHERE id = $1', [id, !!on]),
   insertUser:  u     => query(
     `INSERT INTO users (id,email,name,phone,role,region,password_hash,zoho_owner_id,email_verified)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -342,6 +374,22 @@ const q = {
   forgetDevice: (hash, userId) => query('DELETE FROM trusted_devices WHERE token_hash = $1 AND user_id = $2', [hash, userId]),
   forgetDevicesFor: userId => query('DELETE FROM trusted_devices WHERE user_id = $1', [userId]),
   setRole: (id, role) => query('UPDATE users SET role = $1 WHERE id = $2', [role, id]),
+  /* ── managing reps ── */
+  goalsFor: quarter => query('SELECT * FROM rep_goals WHERE quarter = $1', [quarter]),
+  setGoal: (repId, quarter, g, by) => query(
+    `INSERT INTO rep_goals (rep_id, quarter, calls, visits, new_members, set_by, updated_at) VALUES ($1,$2,$3,$4,$5,$6,now())
+     ON CONFLICT (rep_id, quarter) DO UPDATE SET calls = EXCLUDED.calls, visits = EXCLUDED.visits,
+       new_members = EXCLUDED.new_members, set_by = EXCLUDED.set_by, updated_at = now()`,
+    [repId, quarter, g.calls, g.visits, g.newMembers, by]),
+  repNotes: repId => query('SELECT * FROM rep_notes WHERE rep_id = $1 ORDER BY created_at DESC, id DESC', [repId]),
+  allRepNotes: () => query('SELECT * FROM rep_notes ORDER BY created_at DESC, id DESC'),
+  addRepNote: (repId, author, note, next) => query(
+    'INSERT INTO rep_notes (rep_id, author, note, next_checkin) VALUES ($1,$2,$3,$4) RETURNING id', [repId, author, note, next || null]),
+  deleteRepNote: (id) => query('DELETE FROM rep_notes WHERE id = $1', [id]),
+  addRepMessage: (by, subject, body, recipients) => query(
+    'INSERT INTO rep_messages (sent_by, subject, body, recipients) VALUES ($1,$2,$3,$4) RETURNING id', [by, subject, body, recipients]),
+  recentRepMessages: () => query('SELECT * FROM rep_messages ORDER BY created_at DESC LIMIT 20'),
+
   /* ── summits ── */
   summitTasks: eventId => query('SELECT * FROM summit_tasks WHERE event_id = $1 ORDER BY position, id', [eventId]),
   summitTaskCounts: () => query('SELECT event_id, count(*)::int AS total, sum(CASE WHEN done THEN 1 ELSE 0 END)::int AS done FROM summit_tasks GROUP BY event_id'),

@@ -29,6 +29,10 @@
 [functions."weekly-digest"]
   schedule = "0 11 * * 1"
 
+# Monday: how each rep is doing, for whoever manages them
+[functions."manager-digest"]
+  schedule = "0 12 * * 1"
+
 [functions."overdue-nudge"]
   schedule = "0 12 * * 3"
 

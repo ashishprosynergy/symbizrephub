@@ -298,6 +298,25 @@
   .mgr-card{border-left:4px solid var(--line);transition:transform .15s,box-shadow .15s;}
   .mgr-card:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(20,30,15,.08);}
   .mgr-card[hidden]{display:none;}
+  /* Managing the reps: warnings, goals, pickers */
+  .attn{margin:0 0 14px}
+  .attn-list{margin-top:6px}
+  .attn-list .row{align-items:center;gap:10px}
+  .attn-ic{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;flex:none;
+    background:var(--accent-soft);color:var(--accent)}
+  .attn-quiet,.attn-facLate{background:var(--rust-soft);color:var(--rust)}
+  .attn-checkin{background:var(--primary-soft);color:var(--primary)}
+  .goals{margin-top:10px;padding-top:9px;border-top:1px dashed var(--line)}
+  .goal-row{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12.5px}
+  .goal-l{width:92px;color:var(--ink-muted);flex:none}
+  .goal-n{min-width:44px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+  .pick-list{max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:9px;padding:4px 8px}
+  .pick{display:flex;gap:9px;align-items:flex-start;padding:7px 2px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:14px}
+  .pick:last-child{border-bottom:0}
+  .pick input{margin-top:3px;flex:none;width:auto}
+  .pick.off{opacity:.55;cursor:default}
+  .vp-date{width:auto;max-width:150px;padding:5px 7px;font-size:13px}
+  @media (max-width:560px){ .nv-row{flex-wrap:wrap} .vp-date{max-width:none;flex:1} }
   .mgr-rust{border-left-color:var(--rust);} .mgr-amber{border-left-color:var(--accent);} .mgr-green{border-left-color:var(--primary);}
   .mgr-av{background:var(--primary-soft);color:var(--primary);}
   .mgr-rust .mgr-av{background:var(--rust-soft);color:var(--rust);} .mgr-amber .mgr-av{background:var(--accent-soft);color:var(--accent);}
@@ -2137,6 +2156,15 @@ function allNotifications(){
     risky.slice(0,5).forEach(x=>
       out.push({k:'risk:'+x.r.id, t:`${x.r.name} is at risk`, s:`Health ${x.h} · ${x.r.repName||pname(x.r.repId)}`, go:()=>setView('allrings')}));
     if(risky.length>5) out.push({k:'risk-more:'+risky.length, t:`${risky.length-5} more rings at risk`, s:'See the Rings screen', go:()=>setView('allrings')});
+    // Early warnings about the reps, for whoever manages them
+    if(can('manager')){
+      loadMgr();
+      ((mgrData && mgrData.warnings) || []).forEach(w => out.push({
+        k:`mgr:${w.kind}:${w.repId}:${w.kind==='checkin'?(mgrRep(w.repId)||{}).nextCheckin:TODAY_S.slice(0,7)}`,
+        t:`${splitRepName(w.rep).name} ${w.text}`,
+        s: w.kind==='checkin' ? 'Tap to add a check-in note' : 'Rep manager',
+        go:()=>{ setView('manager'); attnGo(w.kind, w.repId); }}));
+    }
     return out;
   }
   dueItems(ui.me).forEach(a=>{
@@ -2235,6 +2263,7 @@ function vToday(){
   try{ welcomed = localStorage.getItem('rephub_welcomed') === '1'; }catch(e){}
   return `${announceBanner()}
     <div class="hello"><h2>${greeting()}</h2><div class="sub">${todayLong()}</div></div>
+    ${myGoalCard()}
     ${welcomed ? '' : `<div class="callout info"><strong>Welcome to Rep Hub</strong>
       This shows the Growth Rings you look after, who is due a call, and the forms you need.
       Tap a name to phone them, then log the call so the next one gets scheduled for you.
@@ -4379,6 +4408,8 @@ function vManager(){
       </div>
     </div>
 
+    ${mgrAttention()}
+
     <div class="kpis">
       ${kpi(cards.length,'reps','user','neutral',"ui.mgrFilter='all';renderContent()")}
       ${kpi(totalRings,'rings','ring','neutral',"setView('allrings')")}
@@ -4400,7 +4431,8 @@ function vManager(){
 
     ${heavy.length?`<div class="callout rust"><strong>${heavy.length===1?'One rep is':`${heavy.length} reps are`} carrying well above average</strong>
       ${heavy.map(c=>`${esc(c.name)} has ${c.rings} against an average of ${Math.round(avg)}`).join('; ')}.
-      <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="setView('coverage')">Look at coverage</button></div></div>`:''}
+      <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="setView('coverage')">Look at coverage</button>
+        ${API.live ? heavy.slice(0,3).map(c => `<button class="btn sm" onclick="openMoveRings('${esc(c.id)}')">Move some of ${esc(splitRepName(c.name).name.split(' ')[0])}'s rings</button>`).join('') : ''}</div></div>`:''}
     ${silent.length===cards.length?`<div class="callout"><strong>Nobody has logged anything yet</strong>
       That is expected before the reps start using the app. It becomes a worry after the first fortnight.</div>`:''}
 
@@ -4449,9 +4481,19 @@ function vManager(){
               <span class="num-n">${val}</span><span class="num-l">${label}</span></button>`).join('')}
         </div>
         ${open?`<div class="mgr-detail">${mgrDetail(c.id, ui.mgrOpen.slice(c.id.length))}</div>`:''}
+        ${(() => { const m = mgrRep(c.id); if(!m) return '';
+          const seen = m.lastLogin ? 'last signed in ' + fmt(m.lastLogin.slice(0,10)) : (m.hasAccount ? 'has never signed in' : 'no Rep Hub account yet');
+          const ci = m.nextCheckin
+            ? `<div class="row-sub" style="margin-top:8px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">${icon('calendar',13)} Check-in ${m.nextCheckin <= TODAY_S ? '<strong style="color:var(--rust)">due</strong>' : fmt(m.nextCheckin)} · ${seen}</div>`
+            : `<div class="row-sub" style="margin-top:8px">${seen.charAt(0).toUpperCase() + seen.slice(1)}</div>`;
+          return goalBars({ calls: m.callsQuarter, visits: m.visitsQuarter, newMembers: newMembersFor(c.id) }, m.goal) + ci; })()}
         <div class="btnrow" style="margin-top:10px">
           <button class="btn sm" onclick="previewAsRep('${esc(c.id)}','${esc(c.name)}')">See their screen</button>
           <button class="btn sm" onclick="ui.calRep='${esc(c.id)}';setView('calendar')">Their calendar</button>
+          ${API.live ? `<button class="btn sm" onclick="openGoals('${esc(c.id)}')">Goals</button>
+          <button class="btn sm" onclick="openRepNotes('${esc(c.id)}')">Check-ins</button>
+          <button class="btn sm" onclick="openMoveRings('${esc(c.id)}')">Move rings</button>
+          <button class="btn sm" onclick="openMessageReps(['${esc(c.id)}'])">Email</button>` : ''}
           ${c.noRhythm?`<button class="btn sm" onclick="setView('allrings')">${c.noRhythm} with no rhythm</button>`:''}
         </div>
       </div>`;
@@ -4465,6 +4507,334 @@ function mgrRefilter(){
   let n = 0;
   document.querySelectorAll('.mgr-card').forEach(c => { const hit = !q || c.dataset.name.includes(q); c.hidden = !hit; if(hit) n++; });
   const none = document.getElementById('mgrNone'); if(none) none.hidden = n > 0;
+}
+
+/* ══════════════ MANAGING THE REPS (Mel) ══════════════
+ * The team picture from the server: early warnings, goals, check-ins, rings
+ * needing a visit. Loaded once and kept; Refresh fetches it again. */
+var mgrData = null, mgrBusy = false;
+const quarterNow = () => { const d = new Date(); return `${d.getFullYear()}-Q${Math.floor(d.getMonth()/3)+1}`; };
+const quarterStartS = () => { const d = new Date(); return `${d.getFullYear()}-${String(Math.floor(d.getMonth()/3)*3+1).padStart(2,'0')}-01`; };
+function loadMgr(force){
+  if(mgrBusy || (mgrData && !force) || !API.live || !isOffice() || !can('manager')) return;
+  mgrBusy = true;
+  API.call('/manager/snapshot' + (force ? '?fresh=1' : '')).then(v => { mgrData = v; })
+    .catch(e => { if(!mgrData) mgrData = { error: e.message, reps: [], warnings: [] }; if(force) toast(e.message || 'Could not refresh'); })
+    .finally(() => { mgrBusy = false; if(ui.view === 'manager' || ui.view === 'visits') renderContent(); fillShell(); });
+}
+const mgrRep = id => (mgrData && mgrData.reps || []).find(r => r.id === id) || null;
+/** New members this quarter in the rep's rings, by the date they joined */
+const newMembersFor = repId => S.members.filter(m => m.repId === repId && m.joined && m.joined >= quarterStartS()).length;
+
+function goalBars(c, g){
+  if(!g || !(g.calls || g.visits || g.newMembers)) return '';
+  const bar = (label, have, want) => { if(!want) return '';
+    const p = Math.min(100, Math.round(have / want * 100));
+    return `<div class="goal-row"><span class="goal-l">${label}</span>
+      <div class="load" style="flex:1;margin:0"><span style="width:${p}%;background:${p>=100?'var(--primary)':p>=50?'var(--accent)':'var(--rust)'}"></span></div>
+      <span class="goal-n">${have}/${want}</span></div>`; };
+  return `<div class="goals"><div class="row-sub" style="margin-bottom:4px">${quarterNow().replace('-',' ')} goals</div>
+    ${bar('Calls', c.calls, g.calls)}${bar('Visits', c.visits, g.visits)}${bar('New members', c.newMembers, g.newMembers)}</div>`;
+}
+
+/** What needs Mel's attention: the same list the Monday email leads with */
+function mgrAttention(){
+  if(!API.live) return '';
+  loadMgr();
+  if(!mgrData) return `<div class="card attn"><div class="trend-t">Needs your attention</div>${skeleton(2)}</div>`;
+  if(mgrData.error) return `<div class="callout rust"><strong>Could not load the warnings</strong>${esc(mgrData.error)}</div>`;
+  const w = mgrData.warnings || [];
+  const ic = { quiet:'user', facLate:'phone', noMeeting:'ring', checkin:'calendar' };
+  return `<div class="card attn">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <div class="trend-t" style="margin:0">Needs your attention · ${w.length}</div>
+      <div class="btnrow" style="margin:0">
+        <button class="btn sm" onclick="openMessageReps()">${icon('inbox',14)} Message reps</button>
+        <button class="btn sm" onclick="openVisitPlan()">${icon('pin',14)} Visit plan</button>
+        <button class="btn sm" onclick="openDigestSettings()">${icon('calendar',14)} Monday email: ${mgrData.digestEmail?'on':'off'}</button>
+        <button class="btn sm ghost" onclick="loadMgr(true)" ${mgrBusy?'disabled':''}>${mgrBusy?'Refreshing…':'Refresh'}</button>
+      </div></div>
+    ${w.length ? `<div class="attn-list">${w.slice(0, ui.attnAll ? 200 : 6).map(x => `<div class="row clicky" onclick="attnGo('${x.kind}','${esc(x.repId)}')">
+        <span class="attn-ic attn-${x.kind}">${icon(ic[x.kind]||'bell',15)}</span>
+        <div class="row-main"><div class="row-title">${esc(splitRepName(x.rep).name)}</div><div class="row-sub">${esc(x.text)}</div></div>
+        <span class="row-sub">›</span></div>`).join('')}</div>
+      ${w.length > 6 ? `<button class="btn sm ghost" onclick="ui.attnAll=!ui.attnAll;renderContent()">${ui.attnAll?'Show fewer':`Show all ${w.length}`}</button>` : ''}`
+      : `<div class="row-sub" style="margin-top:8px">Nothing is slipping. Every rep has been active in the last fortnight.</div>`}
+  </div>`;
+}
+function attnGo(kind, repId){
+  const r = mgrRep(repId);
+  if(kind === 'checkin') return openRepNotes(repId);
+  if(!r) return;
+  const list = kind === 'facLate' ? r.facLate.map(x => [x.ring, `Facilitator call was due ${fmt(x.due)}`])
+    : kind === 'noMeeting' ? r.quietRings.map(x => [x.name, x.lastMeeting ? `Last meeting ${fmt(x.lastMeeting)}` : 'No meeting in 4 months'])
+    : [[splitRepName(r.name).name, r.lastLogin ? `Last signed in ${fmt(r.lastLogin.slice(0,10))}` : (r.hasAccount ? 'Has never signed in' : 'Has no Rep Hub account yet')],
+       ['Last call logged', r.lastCall ? fmt(r.lastCall) : 'none on record']];
+  openModal(`<h3>${esc(splitRepName(r.name).name)}</h3>
+    <p class="lead">${esc((mgrData.warnings.find(x => x.repId === repId && x.kind === kind) || {}).text || '')}</p>
+    ${list.map(([t, s]) => `<div class="row"><div class="row-main"><div class="row-title">${esc(t)}</div><div class="row-sub">${esc(s)}</div></div></div>`).join('')}
+    <div class="m-actions">
+      <button class="btn" onclick="closeModal();openRepNotes('${esc(repId)}')">Add a check-in note</button>
+      <button class="btn" onclick="closeModal();openMessageReps(['${esc(repId)}'])">Message them</button>
+      <button class="btn primary" onclick="closeModal();previewAsRep('${esc(repId)}','${esc(r.name)}')">See their screen</button></div>`);
+}
+
+function openDigestSettings(){
+  const on = mgrData && mgrData.digestEmail;
+  openModal(`<h3>Monday email</h3>
+    <p class="lead">Every Monday morning: who is behind, calls each rep logged last week, rings with no meeting lately,
+      facilitator calls long overdue, check-ins due and the coming week's ring meetings.</p>
+    <div class="m-actions">
+      <button class="btn" onclick="previewDigest()">Preview this week's</button>
+      <button class="btn ${on?'':'primary'}" onclick="setDigest(${!on})">${on?'Turn it off':'Turn it on'}</button></div>
+    <div id="digestOut"></div>`);
+}
+async function setDigest(on){
+  try{ await API.call('/manager/digest', { method:'PUT', body: JSON.stringify({ on }) });
+    if(mgrData) mgrData.digestEmail = on; closeModal(); toast(on ? 'You will get the Monday email' : 'Monday email turned off'); renderContent(); }
+  catch(e){ toast(e.message || 'Could not save'); }
+}
+async function previewDigest(){
+  const out = document.getElementById('digestOut'); if(out) out.innerHTML = `<div class="callout" style="margin-top:10px">Building it…</div>`;
+  try{ const r = await API.call('/manager/digest/run', { method:'POST', body: JSON.stringify({ dryRun: true }) });
+    const x = (r.results || [])[0] || {};
+    out.innerHTML = `<div class="callout ok" style="margin-top:10px"><strong>Goes to ${esc((x.to||[]).join(', ') || 'nobody yet')}</strong>
+      ${x.reps || 0} reps covered, ${(x.warnings||[]).length} thing${(x.warnings||[]).length===1?'':'s'} flagged.</div>`;
+  }catch(e){ out.innerHTML = `<div class="callout rust" style="margin-top:10px">${esc(e.message)}</div>`; }
+}
+
+/* ── Goals ── */
+function openGoals(repId){
+  const c = mgrRep(repId) || {}; const g = c.goal || {};
+  const name = splitRepName(c.name || pname(repId)).name;
+  openModal(`<h3>${esc(name)} · ${quarterNow().replace('-',' ')} goals</h3>
+    <p class="lead">What you'd like them to reach this quarter. Leave a box empty for no goal. They see their progress on their Today screen.</p>
+    <form onsubmit="saveGoals(event,'${esc(repId)}')">
+      <div class="two">
+        <div class="field"><label>Calls logged</label><input type="number" min="0" name="calls" value="${g.calls ?? ''}" placeholder="e.g. 40"></div>
+        <div class="field"><label>Ring visits</label><input type="number" min="0" name="visits" value="${g.visits ?? ''}" placeholder="e.g. 4"></div></div>
+      <div class="field"><label>New members in their rings</label><input type="number" min="0" name="newMembers" value="${g.newMembers ?? ''}" placeholder="e.g. 3"></div>
+      <div class="row-sub">So far this quarter: ${c.callsQuarter||0} calls, ${c.visitsQuarter||0} visits, ${newMembersFor(repId)} new members.</div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" type="submit">Save goals</button></div></form>`);
+}
+async function saveGoals(e, repId){
+  e.preventDefault(); const f = e.target;
+  const body = { quarter: quarterNow(), calls: fv(f,'calls'), visits: fv(f,'visits'), newMembers: fv(f,'newMembers') };
+  try{ const r = await API.call('/reps/goals/' + encodeURIComponent(repId), { method:'PUT', body: JSON.stringify(body) });
+    const c = mgrRep(repId); if(c) c.goal = { calls: r.calls, visits: r.visits, newMembers: r.newMembers };
+    closeModal(); toast('Goals saved'); renderContent(); }
+  catch(ex){ toast(ex.message || 'Could not save the goals'); }
+}
+
+/* ── Check-in notes ── */
+async function openRepNotes(repId){
+  const c = mgrRep(repId); const name = splitRepName((c && c.name) || pname(repId)).name;
+  openModal(`<h3>Check-ins with ${esc(name)}</h3><p class="lead">Loading…</p>`);
+  let notes = [];
+  try{ notes = await API.call('/reps/' + encodeURIComponent(repId) + '/notes'); }
+  catch(e){ openModal(`<h3>Check-ins</h3><p class="lead">${esc(e.message)}</p><div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`); return; }
+  const inTwo = new Date(Date.now() + 14*864e5).toISOString().slice(0,10);
+  openModal(`<h3>Check-ins with ${esc(name)}</h3>
+    <p class="lead">Private to the office. Set a next check-in and it shows in your notifications and the Monday email when it comes round.</p>
+    <form onsubmit="addRepNote(event,'${esc(repId)}')">
+      <div class="field"><label>What you talked about</label><textarea name="note" required placeholder="Struggling to reach two facilitators; agreed to visit Lancaster ring in May"></textarea></div>
+      <div class="field"><label>Next check-in</label><input type="date" name="next" value="${inTwo}"></div>
+      <div class="m-actions" style="margin-top:0"><button class="btn primary" type="submit">Save note</button></div></form>
+    <h3 class="sub-h">Earlier</h3>
+    ${notes.length ? notes.map(n => `<div class="row"><div class="row-main">
+        <div class="row-sub">${fmt(String(n.at).slice(0,10))} · ${esc(n.author||'')}${n.nextCheckin?` · next check-in ${fmt(n.nextCheckin)}`:''}</div>
+        <div style="white-space:pre-wrap;font-size:14px;margin-top:3px">${esc(n.note)}</div></div>
+        <button class="btn sm ghost" title="Delete" onclick="delRepNote(${n.id},'${esc(repId)}')">×</button></div>`).join('')
+      : `<div class="row-sub">No notes yet.</div>`}
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
+}
+async function addRepNote(e, repId){
+  e.preventDefault(); const f = e.target;
+  try{ await API.call('/reps/' + encodeURIComponent(repId) + '/notes', { method:'POST', body: JSON.stringify({ note: fv(f,'note'), nextCheckin: fv(f,'next') }) });
+    const c = mgrRep(repId); const nx = fv(f,'next');
+    if(c && nx && (!c.nextCheckin || nx < c.nextCheckin || c.nextCheckin < TODAY_S)) c.nextCheckin = nx;
+    toast('Note saved'); openRepNotes(repId); }
+  catch(ex){ toast(ex.message || 'Could not save the note'); }
+}
+async function delRepNote(id, repId){
+  if(!confirm('Delete this note?')) return;
+  try{ await API.call('/reps/notes/' + id, { method:'DELETE' }); openRepNotes(repId); }
+  catch(e){ toast(e.message || 'Could not delete'); }
+}
+
+/* ── Move rings between reps ── */
+function openMoveRings(repId){
+  const rings = S.rings.filter(r => r.repId === repId && r.status !== 'rejected');
+  const others = repScorecard().filter(c => c.id !== repId).sort((a,b) => a.rings - b.rings);
+  const name = splitRepName((rings[0] && rings[0].repName) || pname(repId)).name;
+  openModal(`<h3>Move rings from ${esc(name)}</h3>
+    <p class="lead">Changes the Regional Rep on the ring in Zoho. The new rep sees it straight away; the old one no longer does.</p>
+    <form onsubmit="moveRings(event,'${esc(repId)}')">
+      <div class="field"><label>Move to</label><select name="to" required>
+        <option value="">Choose a rep…</option>
+        ${others.map(c => `<option value="${esc(c.id)}">${esc(splitRepName(c.name).name)} · ${c.rings} ring${c.rings===1?'':'s'}</option>`).join('')}</select></div>
+      <div class="field"><label>Rings to move</label>
+        <div class="pick-list">${rings.map(r => `<label class="pick"><input type="checkbox" name="ring" value="${r.id}">
+          <span>${esc(r.name)}<span class="row-sub"> · ${r.serverMemberCount||ringMembers(r.id).length} members</span></span></label>`).join('')}</div></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" type="submit">Move</button></div></form>`);
+}
+async function moveRings(e, fromId){
+  e.preventDefault(); const f = e.target;
+  const to = fv(f,'to'); const ids = [...f.querySelectorAll('input[name=ring]:checked')].map(x => x.value);
+  if(!to) return toast('Choose who gets them');
+  if(!ids.length) return toast('Tick at least one ring');
+  const toCard = repScorecard().find(c => c.id === to);
+  const btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Moving…';
+  let ok = 0, failed = [];
+  for(const id of ids){
+    try{ await API.call('/rings/' + id + '/reassign', { method:'POST', body: JSON.stringify({ repZohoId: to }) });
+      const r = ring(id); if(r){ r.repId = to; r.repName = toCard ? toCard.name : r.repName; }
+      S.members.filter(m => m.ringId === id).forEach(m => { m.repId = to; });
+      ok++; }
+    catch(ex){ failed.push((ring(id)||{}).name || id); }
+  }
+  save(); mgrData = null; closeModal();
+  toast(failed.length ? `Moved ${ok}; could not move ${failed.join(', ')}` : `Moved ${ok} ring${ok===1?'':'s'} to ${splitRepName((toCard||{}).name||'').name}`);
+  render();
+}
+
+/* ── Message reps ── */
+var repMail = null;
+async function openMessageReps(preselect){
+  openModal(`<h3>Message reps</h3><p class="lead">Loading the reps' email addresses…</p>`);
+  try{ repMail = await API.call('/messages/reps'); }
+  catch(e){ openModal(`<h3>Message reps</h3><p class="lead">${esc(e.message)}</p><div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`); return; }
+  const pre = new Set(preselect || []);
+  const reps = repMail.reps.slice().sort((a,b) => a.name.localeCompare(b.name));
+  openModal(`<h3>Message reps</h3>
+    <p class="lead">One email from Rep Hub. Reps are in BCC, so nobody sees the others' addresses. Replies come to you.</p>
+    <form onsubmit="sendRepMessage(event)">
+      <div class="field"><label style="display:flex;justify-content:space-between">To
+        <span><a href="#" class="inline-link" onclick="event.preventDefault();document.querySelectorAll('input[name=rep]:not(:disabled)').forEach(x=>x.checked=true)">all</a> ·
+          <a href="#" class="inline-link" onclick="event.preventDefault();document.querySelectorAll('input[name=rep]').forEach(x=>x.checked=false)">none</a></span></label>
+        <div class="pick-list">${reps.map(r => `<label class="pick ${r.email?'':'off'}"><input type="checkbox" name="rep" value="${esc(r.id)}" ${r.email?'':'disabled'} ${pre.size ? (pre.has(r.id)?'checked':'') : (r.email?'checked':'')}>
+          <span>${esc(splitRepName(r.name).name)}<span class="row-sub"> · ${r.email ? esc(r.email) : 'no email in Zoho'}</span></span></label>`).join('')}</div></div>
+      <div class="field"><label>Subject</label><input name="subject" required maxlength="200" placeholder="Visit reports due Friday"></div>
+      <div class="field"><label>Message</label><textarea name="body" required rows="7" placeholder="Hi all,"></textarea></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" type="submit">Send</button></div></form>
+    ${repMail.history.length ? `<h3 class="sub-h">Sent before</h3>${repMail.history.slice(0,8).map(m => `<details class="row" style="display:block">
+      <summary class="row-title" style="cursor:pointer">${esc(m.subject)} <span class="row-sub">· ${fmt(String(m.at).slice(0,10))} · ${m.recipients} rep${m.recipients===1?'':'s'} · ${esc(m.by||'')}</span></summary>
+      <div style="white-space:pre-wrap;font-size:13.5px;margin-top:6px">${esc(m.body)}</div></details>`).join('')}` : ''}`);
+}
+async function sendRepMessage(e){
+  e.preventDefault(); const f = e.target;
+  const ids = [...f.querySelectorAll('input[name=rep]:checked')].map(x => x.value);
+  if(!ids.length) return toast('Choose at least one rep');
+  const btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Sending…';
+  try{ const r = await API.call('/messages/reps', { method:'POST', body: JSON.stringify({ repIds: ids, subject: fv(f,'subject'), body: fv(f,'body') }) });
+    closeModal(); toast(`Sent to ${r.sent} rep${r.sent===1?'':'s'}${r.missing && r.missing.length ? ` (${r.missing.length} had no email)` : ''}`); }
+  catch(ex){ btn.disabled = false; btn.textContent = 'Send'; toast(ex.message || 'Could not send'); }
+}
+
+/* ── Visit plan: which rings to visit next, by rep ── */
+function visitDue(r){ const v = lastVisitOf(r); return !v || days(v) < -180; }
+function openVisitPlan(){
+  const booked = new Set((S.visits||[]).filter(v => v.status === 'Scheduled' && v.date >= TODAY_S).map(v => v.ringId));
+  const list = S.rings.filter(r => r.status === 'active' && visitDue(r));
+  const byRep = {};
+  list.forEach(r => { (byRep[r.repId || ''] = byRep[r.repId || ''] || []).push(r); });
+  const reps = Object.keys(byRep).sort((a,b) => byRep[b].length - byRep[a].length);
+  const inMonth = new Date(Date.now() + 30*864e5).toISOString().slice(0,10);
+  openModal(`<h3>Visit plan</h3>
+    <p class="lead">${list.length} ring${list.length===1?' has':'s have'} not had a rep visit in six months (or ever). ${booked.size} visit${booked.size===1?' is':'s are'} already booked.
+      Pick a date to book one for the rep; it is saved as the ring's Next Rep Visit in Zoho and shows on their calendar.</p>
+    <input class="nv-search" placeholder="Find a ring or rep…" oninput="filterNeverVisited(this.value)">
+    <div class="nv-list">${reps.map(rid => { const rs = byRep[rid]; const nm = (rs[0].repName) || pname(rid) || 'No rep';
+      return `<div class="nv-grp" data-q="${esc(nm.toLowerCase())}">
+      <div class="nv-head"><span class="rp-av">${esc(repInitials(nm))}</span><strong>${esc(splitRepName(nm).name)}</strong>
+        <span class="tag later">${rs.length}</span></div>
+      ${rs.sort((a,b) => (lastVisitOf(a)||'').localeCompare(lastVisitOf(b)||'') || String(a.name).localeCompare(String(b.name), undefined, {numeric:true})).map(r => {
+        const nv = (S.visits||[]).find(v => v.ringId === r.id && v.status === 'Scheduled' && v.date >= TODAY_S);
+        return `<div class="row nv-row" data-q="${esc((r.name + ' ' + nm).toLowerCase())}">
+        <div class="row-main clicky" onclick="closeModal();openRing('${r.id}')"><div class="row-title">${esc(r.name)}</div>
+          <div class="row-sub">${lastVisitOf(r) ? 'Last visit ' + fmt(lastVisitOf(r)) : 'Never visited'}${r.meetDay ? ' · meets ' + esc(r.meetDay) : ''}</div></div>
+        ${nv ? `<span class="tag ok">Booked ${fmt(nv.date)}</span>`
+          : `<input type="date" class="vp-date" id="vp_${r.id}" value="${inMonth}" min="${TODAY_S}" aria-label="Visit date">
+             <button class="btn sm primary" onclick="bookVisit('${r.id}')">Book</button>`}</div>`; }).join('')}</div>`; }).join('')
+      || `<div class="empty">Every ring has had a visit in the last six months.</div>`}</div>
+    <div class="m-actions"><button class="btn primary" onclick="closeModal()">Done</button></div>`);
+}
+async function bookVisit(ringId){
+  const el = document.getElementById('vp_' + ringId); const date = el && el.value;
+  if(!date) return toast('Pick a date');
+  try{ await saveVisitPlan(ringId, date);
+    if(el){ const span = document.createElement('span'); span.className = 'tag ok'; span.textContent = 'Booked ' + fmt(date);
+      el.nextElementSibling && el.nextElementSibling.remove(); el.replaceWith(span); }
+    toast('Visit booked'); }
+  catch(e){ toast(e.message || 'Could not book it'); }
+}
+/** Book a visit: live, it is the ring's Next Rep Visit in Zoho */
+async function saveVisitPlan(ringId, date, extra){
+  const g = ring(ringId);
+  if(API.live) await API.call('/visits', { method:'POST', body: JSON.stringify({ ringId, date }) });
+  S.visits = (S.visits||[]).filter(v => !(v.ringId === ringId && v.status === 'Scheduled'));
+  S.visits.push({ id: 'next_' + ringId, ringId, repId: g ? g.repId : ui.me, date, time: (extra||{}).time || '',
+    location: (extra||{}).location || (g && g.meetPlace) || '', status: 'Scheduled', notes: (extra||{}).notes || '' });
+  if(g) g.nextRepVisit = date;
+  save();
+}
+
+/* ── Visit report, filed in the app when a visit is done ── */
+function openVisitReport(idOrRing){
+  const v = (S.visits||[]).find(x => x.id === idOrRing);
+  const ringId = v ? v.ringId : idOrRing;
+  const g = ring(ringId);
+  openModal(`<h3>Visit report${g ? ' · ' + esc(g.name) : ''}</h3>
+    <p class="lead">Saved on the ring in Zoho as a Ring Visit, and sets its Last Rep Visit date.</p>
+    <form onsubmit="submitVisitReport(event,'${ringId}','${v ? v.id : ''}')">
+      ${g ? '' : `<div class="field"><label>Growth Ring</label><select name="ringId" required><option value="">Choose…</option>
+        ${(isRep() ? myRings(ui.me) : S.rings).filter(r => r.status === 'active').slice()
+          .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }))
+          .map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select></div>`}
+      <div class="two">
+        <div class="field"><label>Date of the visit</label><input type="date" name="date" required max="${TODAY_S}" value="${v && v.date <= TODAY_S ? v.date : TODAY_S}"></div>
+        <div class="field"><label>How many attended</label><input name="attendance" placeholder="e.g. 9 of 11"></div></div>
+      <div class="field"><label>How did it go?</label><textarea name="went" required placeholder="Energy in the room, the facilitator, what the group is working on"></textarea></div>
+      <div class="field"><label>Concerns</label><textarea name="concerns" placeholder="Anything the office should know"></textarea></div>
+      <div class="field"><label>Follow-up</label><input name="followUp" placeholder="e.g. send Jane the onboarding pack"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" type="submit">File the report</button></div></form>`);
+}
+async function submitVisitReport(e, ringId, visitId){
+  e.preventDefault(); const f = e.target;
+  ringId = ringId || fv(f,'ringId');
+  if(!ringId) return toast('Choose the ring you visited');
+  const body = { ringId, date: fv(f,'date'), attendance: fv(f,'attendance'), went: fv(f,'went'), concerns: fv(f,'concerns'), followUp: fv(f,'followUp') };
+  const btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Saving…';
+  try{
+    if(API.live) await API.call('/visits/report', { method:'POST', body: JSON.stringify(body) });
+    const g = ring(ringId);
+    if(visitId) S.visits = S.visits.filter(v => v.id !== visitId);
+    S.visits.push({ id: 'rep_' + Date.now(), ringId, repId: g ? g.repId : ui.me, date: body.date, time: '', location: '', status: 'Completed',
+      notes: [body.went, body.concerns && 'Concerns: ' + body.concerns].filter(Boolean).join(' · ') });
+    if(g && (!g.lastRepVisit || body.date > g.lastRepVisit)) g.lastRepVisit = body.date;
+    save(); closeModal(); toast('Visit report filed'); render();
+  }catch(ex){ btn.disabled = false; btn.textContent = 'File the report'; toast(ex.message || 'Could not file the report'); }
+}
+
+/* ── A rep's own goals, on their Today screen ── */
+var myGoal = undefined;
+function myGoalCard(){
+  if(!API.live || !isRep()) return '';
+  if(myGoal === undefined){ myGoal = null;
+    API.call('/reps/my-goal').then(g => { myGoal = g && g.goal ? g.goal : false; }).catch(() => { myGoal = false; })
+      .finally(() => { if(ui.view === 'today') renderContent(); }); return ''; }
+  if(!myGoal) return '';
+  const qs = quarterStartS();
+  const have = {
+    calls: S.activities.filter(a => a.repId === ui.me && a.outcome && a.date && a.date >= qs && a.date <= TODAY_S).length,
+    visits: (S.visits||[]).filter(v => v.repId === ui.me && v.status === 'Completed' && v.date >= qs).length,
+    newMembers: newMembersFor(ui.me),
+  };
+  return `<div class="card">${goalBars(have, myGoal)}</div>`;
 }
 /* ══════════════ SUMMITS (Mel) ══════════════
  * Every Regional and Global Summit from Zoho: the ones coming up with their
@@ -7703,21 +8073,23 @@ function vVisits() {
       <div class="row-sub">${fmt(v.date)}${v.time ? ' at ' + esc(v.time) : ''} · ${v.location ? mapLink(v.location) : 'place to be set'}${isOffice() ? ' · ' + pname(v.repId) : ''}${v.notes ? ' · ' + esc(v.notes) : ''}</div></div>
       <div class="row-actions">
         ${tag(v.date)}
-        ${v.status === 'Scheduled' && v.repId === ui.me ? `<button class="btn sm primary" onclick="completeVisit('${v.id}')">Mark visited</button>` : ''}
+        ${v.status === 'Scheduled' && (v.repId === ui.me || (isOffice() && (can('manager') || can('visits')))) && v.date <= TODAY_S ? `<button class="btn sm primary" onclick="openVisitReport('${v.id}')">File visit report</button>` : ''}
         ${v.status !== 'Scheduled' ? `<span class="tag ok">${v.status}</span>` : ''}
       </div></div>`;
   };
 
   return `<div class="section-head"><div><h2>Growth Ring visit schedule</h2>
       <div class="sub">When you're next sitting in with each group.</div></div>
-      ${isRep() ? `<button class="btn primary" onclick="openVisit()">Schedule a visit</button>` : ''}</div>
+      <div class="btnrow" style="margin:0">${isOffice() && can('manager') ? `<button class="btn" onclick="openVisitPlan()">Visit plan</button>` : ''}
+        ${isRep() || (isOffice() && (can('manager') || can('visits'))) ? `<button class="btn" onclick="openVisitReport('')">File a visit report</button>
+        <button class="btn primary" onclick="openVisit()">Schedule a visit</button>` : ''}</div></div>
     <h3 class="sub-h">Coming up · ${upcoming.length}</h3>
     ${upcoming.map(row).join('') || emptyState('visits', 'No visits booked. Each active ring should see you once or twice a year.', isRep() ? ['Schedule a visit', 'openVisit()'] : null)}
     <h3 class="sub-h">Rings with no visit booked</h3>
     ${S.rings.filter(r => r.status === 'active' && (!repId || r.repId === repId) && !upcoming.some(v => v.ringId === r.id))
       .map(r => `<div class="row"><div class="row-main"><div class="row-title">${esc(r.name)}</div>
         <div class="row-sub">${r.meetDay ? r.meetDay + ' at ' + (r.meetTime || '') + ' · ' + (r.meetPlace || '') : 'meeting time not set'}</div></div>
-        ${isRep() ? `<button class="btn sm" onclick="openVisit('${r.id}')">Schedule</button>` : ''}</div>`).join('')
+        ${isRep() || (isOffice() && (can('manager') || can('visits'))) ? `<button class="btn sm" onclick="openVisit('${r.id}')">Schedule</button>` : ''}</div>`).join('')
       || `<div class="row-sub" style="padding:9px 0">Every active ring has a visit booked.</div>`}
     <h3 class="sub-h">Past visits</h3>
     ${past.map(row).join('') || `<div class="empty">No visits recorded yet.</div>`}`;
@@ -7990,15 +8362,16 @@ async function approveEntry(kind, id) {
 }
 
 function openVisit(ringId) {
-  const rs = myRings(ui.me).filter(r => r.status === 'active');
+  const rs = (isRep() ? myRings(ui.me) : S.rings).filter(r => r.status === 'active')
+    .slice().sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
   if (!rs.length) { toast('You need an approved ring first'); return; }
   openModal(`<h3>Schedule a Growth Ring visit</h3>
     <p class="lead">It'll show on your calendar and in the visit schedule.</p>
     <form onsubmit="submitVisit(event)">
       <div class="field"><label>Growth Ring</label><select name="ringId" required>
-        ${rs.map(r => `<option value="${r.id}" ${r.id === ringId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></div>
+        ${rs.map(r => `<option value="${r.id}" ${r.id === ringId ? 'selected' : ''}>${esc(r.name)}${isRep() ? '' : ' · ' + esc(splitRepName(r.repName || pname(r.repId)).name)}</option>`).join('')}</select></div>
       <div class="two">
-        <div class="field"><label>Date</label><input type="date" name="date" required value="${esc(onDate||'')}"></div>
+        <div class="field"><label>Date</label><input type="date" name="date" required min="${TODAY_S}"></div>
         <div class="field"><label>Time</label><input name="time" placeholder="7:00 PM"></div>
       </div>
       <div class="field"><label>Where</label><input name="location" placeholder="Where the group meets"></div>
@@ -8006,21 +8379,17 @@ function openVisit(ringId) {
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
       <button type="submit" class="btn primary">Schedule</button></div></form>`);
 }
-function submitVisit(e) {
+async function submitVisit(e) {
   e.preventDefault(); const f = e.target;
   const g = ring(fv(f, 'ringId'));
-  S.visits.push({
-    id: 'v' + (S.ids.vis++), ringId: g.id, repId: ui.me, date: fv(f, 'date'),
-    time: fv(f, 'time'), location: fv(f, 'location') || g.meetPlace || '', status: 'Scheduled', notes: fv(f, 'notes')
-  });
-  save(); queueWrite('visit'); logAudit(`Scheduled a visit to ${g.name}`); closeModal(); toast('Visit scheduled'); render();
+  const btn = f.querySelector('button[type=submit]'); if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    await saveVisitPlan(g.id, fv(f, 'date'), { time: fv(f, 'time'), location: fv(f, 'location'), notes: fv(f, 'notes') });
+  } catch (ex) { if (btn) { btn.disabled = false; btn.textContent = 'Schedule'; } toast(ex.message || 'Could not schedule it'); return; }
+  logAudit(`Scheduled a visit to ${g.name}`); closeModal(); toast('Visit scheduled'); render();
 }
-function completeVisit(id) {
-  const v = S.visits.find(x => x.id === id);
-  if (!v) return;
-  v.status = 'Completed'; save(); queueWrite('visit');
-  toast('Visit recorded — remember the Visit Report form'); render();
-}
+/* Marking a visit done is filing its report */
+function completeVisit(id) { openVisitReport(id); }
 
 function openEventForm(_unused, onDate) {
   // Clicking + on a day pre-fills that date, so the common case is one less step

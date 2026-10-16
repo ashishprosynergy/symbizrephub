@@ -2800,6 +2800,202 @@ r.post('/admin/books-disconnect', auth.authRequired, auth.requireAdmin, access.r
   res.json({ ok: true });
 }));
 
+/* ═══════════ MANAGING THE REPS ═══════════
+ * What Mel needs to run the team: early warnings, a visit plan, goals,
+ * check-in notes, moving rings between reps and messaging them. All behind
+ * the `manager` access, so a director has it without seeing the accounts.
+ */
+const manager = require('./manager');
+const mgrGuard = [auth.authRequired, auth.requireOffice, access.requirePerm('manager')];
+let snapCache = null;                  // { at, data } — the team picture is ~10 Zoho reads
+async function snapshot(fresh) {
+  if (!fresh && snapCache && Date.now() - snapCache.at < 5 * 60 * 1000) return snapCache.data;
+  const data = await manager.teamSnapshot();
+  snapCache = { at: Date.now(), data };
+  return data;
+}
+const dropSnapshot = () => { snapCache = null; };
+
+r.get('/manager/snapshot', ...mgrGuard, wrap(async (req, res) => {
+  const snap = await snapshot(!!req.headers['x-fresh'] || req.query.fresh === '1');
+  const me = (await q.allUsers()).find(u => u.id === req.user.id);
+  res.json({ ...snap, warnings: manager.warningsFrom(snap), digestEmail: me ? !!me.digest_email : false });
+}));
+
+r.put('/manager/digest', ...mgrGuard, wrap(async (req, res) => {
+  await q.setDigestEmail(req.user.id, !!req.body?.on);
+  await audit(req.user.id, 'manager.digestEmail', { on: !!req.body?.on }, req.ip);
+  res.json({ ok: true, on: !!req.body?.on });
+}));
+
+r.post('/manager/digest/run', ...mgrGuard, wrap(async (req, res) => {
+  const dryRun = req.body?.dryRun !== false;
+  const out = await manager.runManagerDigest({ dryRun });
+  await audit(req.user.id, 'manager.digestRun', { dryRun }, req.ip);
+  res.json({ dryRun, results: out });
+}));
+
+/* Quarterly goals: calls, visits and new members per rep */
+const QUARTER_RE = /^\d{4}-Q[1-4]$/;
+const goalNum = v => (v === '' || v == null) ? null : Math.max(0, Math.min(10000, parseInt(v, 10) || 0));
+r.get('/reps/goals', ...mgrGuard, wrap(async (req, res) => {
+  const quarter = QUARTER_RE.test(req.query.quarter || '') ? req.query.quarter : manager.quarterOf();
+  const rows = await q.goalsFor(quarter);
+  res.json({ quarter, goals: rows.map(g => ({ repId: g.rep_id, calls: g.calls, visits: g.visits, newMembers: g.new_members, setBy: g.set_by })) });
+}));
+
+r.put('/reps/goals/:repId', ...mgrGuard, wrap(async (req, res) => {
+  const b = req.body || {};
+  const quarter = QUARTER_RE.test(b.quarter || '') ? b.quarter : manager.quarterOf();
+  const goal = { calls: goalNum(b.calls), visits: goalNum(b.visits), newMembers: goalNum(b.newMembers) };
+  await q.setGoal(String(req.params.repId), quarter, goal, req.user.name || req.user.email);
+  await audit(req.user.id, 'rep.goalSet', { repId: req.params.repId, quarter, ...goal }, req.ip);
+  dropSnapshot();
+  res.json({ ok: true, quarter, ...goal });
+}));
+
+/* A rep's own goals, for their Today screen */
+r.get('/reps/my-goal', auth.authRequired, wrap(async (req, res) => {
+  const quarter = manager.quarterOf();
+  if (!req.user.zoho_owner_id) return res.json({ quarter, goal: null });
+  const g = (await q.goalsFor(quarter)).find(x => x.rep_id === req.user.zoho_owner_id);
+  res.json({ quarter, goal: g ? { calls: g.calls, visits: g.visits, newMembers: g.new_members } : null });
+}));
+
+/* Check-in notes, private to the office */
+const noteOut = n => ({ id: n.id, repId: n.rep_id, author: n.author, note: n.note,
+  nextCheckin: n.next_checkin ? String(n.next_checkin instanceof Date ? n.next_checkin.toISOString() : n.next_checkin).slice(0, 10) : null,
+  at: n.created_at });
+r.get('/reps/notes', ...mgrGuard, wrap(async (req, res) => {
+  res.json((await q.allRepNotes()).map(noteOut));
+}));
+r.get('/reps/:id/notes', ...mgrGuard, wrap(async (req, res) => {
+  res.json((await q.repNotes(String(req.params.id))).map(noteOut));
+}));
+r.post('/reps/:id/notes', ...mgrGuard, wrap(async (req, res) => {
+  const note = String(req.body?.note || '').trim().slice(0, 4000);
+  const next = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.nextCheckin || '') ? req.body.nextCheckin : null;
+  if (!note) return res.status(400).json({ error: 'Write a note first' });
+  const row = await q.addRepNote(String(req.params.id), req.user.name || req.user.email, note, next);
+  await audit(req.user.id, 'rep.noteAdded', { repId: req.params.id, nextCheckin: next }, req.ip);
+  dropSnapshot();
+  res.status(201).json(noteOut(row));
+}));
+r.delete('/reps/notes/:noteId', ...mgrGuard, wrap(async (req, res) => {
+  await q.deleteRepNote(parseInt(req.params.noteId, 10) || 0);
+  await audit(req.user.id, 'rep.noteDeleted', { id: req.params.noteId }, req.ip);
+  dropSnapshot();
+  res.json({ ok: true });
+}));
+
+/* Move a ring to another rep — saved on the ring in Zoho */
+r.post('/rings/:id/reassign', ...mgrGuard, writesAllowed, wrap(async (req, res) => {
+  const repZohoId = String(req.body?.repZohoId || '').replace(/[^0-9]/g, '');
+  if (!repZohoId) return res.status(400).json({ error: 'Choose the rep to move it to' });
+  const z = await zoho.getRecord(M.RING, req.params.id);
+  if (!z) return res.status(404).json({ error: 'Unknown Growth Ring' });
+  const from = fromZoho.ring(z);
+  if (from.repZohoId === repZohoId) return res.json({ ok: true, unchanged: true });
+  await zoho.updateRecords(M.RING, [{ id: req.params.id, Regional_Rep: { id: repZohoId } }]);
+  zoho.clearCache();
+  dropSnapshot();
+  await audit(req.user.id, 'ring.reassigned', { id: req.params.id, ring: from.name, from: from.repZohoId, to: repZohoId }, req.ip);
+  res.json({ ok: true, ringId: req.params.id, from: from.repZohoId, to: repZohoId });
+}));
+
+/* Message reps: one email, reps in BCC, replies go to the sender */
+async function repEmails() {
+  const rings = (await zoho.coql(queries.repsOnRings())).map(fromZoho.ring);
+  const ids = [...new Set(rings.map(x => x.repZohoId).filter(Boolean))];
+  const names = new Map(rings.map(x => [x.repZohoId, x.repName]));
+  const emails = new Map();
+  for (const batch of chunk(ids, 50)) {
+    const cs = await zoho.coql(queries.contactsByIds(batch)).catch(() => []);
+    cs.map(fromZoho.member).forEach(c => { if (c.email) emails.set(c.id, c.email); });
+  }
+  // A rep's Rep Hub sign-in email wins over Zoho's, it is the one they read
+  (await q.allUsers()).forEach(u => { if (u.zoho_owner_id && u.email && names.has(u.zoho_owner_id)) emails.set(u.zoho_owner_id, u.email); });
+  return ids.map(id => ({ id, name: names.get(id) || 'Rep', email: emails.get(id) || '' }));
+}
+
+r.get('/messages/reps', ...mgrGuard, wrap(async (req, res) => {
+  const [reps, history] = await Promise.all([repEmails(), q.recentRepMessages()]);
+  res.json({ reps, history: history.map(m => ({ id: m.id, by: m.sent_by, subject: m.subject, body: m.body,
+    recipients: String(m.recipients || '').split(',').filter(Boolean).length, at: m.created_at })) });
+}));
+
+r.post('/messages/reps', ...mgrGuard, wrap(async (req, res) => {
+  const b = req.body || {};
+  const subject = String(b.subject || '').trim().slice(0, 200);
+  const body = String(b.body || '').trim().slice(0, 20000);
+  if (!subject || !body) return res.status(400).json({ error: 'A subject and a message are both needed' });
+  const all = await repEmails();
+  const chosen = b.repIds === 'all' ? all : all.filter(x => (b.repIds || []).map(String).includes(x.id));
+  const to = [...new Set(chosen.map(x => x.email).filter(Boolean))];
+  if (!to.length) return res.status(400).json({ error: 'None of the chosen reps has an email address' });
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const html = `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;font-size:15px;line-height:1.55;color:#1E2A20;max-width:600px">
+    ${esc(body).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')}
+    <p style="color:#5A6455;margin-top:22px">${esc(req.user.name || '')}<br>Symbiz</p>
+    <p style="color:#8A9284;font-size:12px;margin-top:18px">Sent from <a href="${cfg.appUrl}" style="color:#2E5132">Rep Hub</a>. Reply to this email to answer ${esc((req.user.name || 'the sender').split(' ')[0])}.</p></div>`;
+  // Reps go in BCC so nobody's address is shared with the whole team
+  const sent = await reminders.sendEmail(req.user.email, subject, html, { userId: req.user.id, kind: 'rep-message', replyTo: req.user.email, bcc: to });
+  if (!sent.ok) return res.status(502).json({ error: sent.error || 'The email could not be sent' });
+  await q.addRepMessage(req.user.name || req.user.email, subject, body, chosen.map(x => x.id).join(','));
+  await audit(req.user.id, 'reps.messaged', { subject, count: to.length }, req.ip);
+  res.json({ ok: true, sent: to.length, missing: chosen.filter(x => !x.email).map(x => x.name) });
+}));
+
+/* Visits: plan one (the ring's Next Rep Visit) and file the report afterwards */
+async function ringForVisit(req, res) {
+  const z = await zoho.getRecord(M.RING, req.body?.ringId);
+  const ring = z ? fromZoho.ring(z) : null;
+  if (!ring) { res.status(400).json({ error: 'Unknown Growth Ring' }); return null; }
+  if (req.user.role === 'rep') {
+    if (!req.user.zoho_owner_id || ring.repZohoId !== req.user.zoho_owner_id) { res.status(403).json({ error: 'Not your ring' }); return null; }
+  } else if (!req.user.perms?.manager && !req.user.perms?.visits) {
+    res.status(403).json({ error: 'Your account does not have access to visits. Ask the owner.' }); return null;
+  }
+  return ring;
+}
+const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+
+r.post('/visits', auth.authRequired, writesAllowed, wrap(async (req, res) => {
+  const date = req.body?.date;
+  if (!isDate(date)) return res.status(400).json({ error: 'Pick a date for the visit' });
+  const ring = await ringForVisit(req, res); if (!ring) return;
+  await zoho.updateRecords(M.RING, [{ id: ring.id, Next_Rep_Visit: date }]);
+  zoho.clearCache(); dropSnapshot();
+  await audit(req.user.id, 'visit.planned', { ringId: ring.id, date, forRep: ring.repZohoId }, req.ip);
+  res.status(201).json({ ok: true, id: `next_${ring.id}`, ringId: ring.id, date, repZohoId: ring.repZohoId });
+}));
+
+r.post('/visits/report', auth.authRequired, writesAllowed, wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!isDate(b.date)) return res.status(400).json({ error: 'When was the visit?' });
+  const ring = await ringForVisit(req, res); if (!ring) return;
+  // The report, as one readable note on the visit record
+  const parts = [
+    b.attendance ? `Attendance: ${b.attendance}` : '',
+    b.went ? `How it went: ${b.went}` : '',
+    b.concerns ? `Concerns: ${b.concerns}` : '',
+    b.followUp ? `Follow-up: ${b.followUp}` : '',
+    b.notes || '',
+  ].filter(Boolean).map(s => String(s).trim().slice(0, 3000));
+  const repZohoId = req.user.role === 'rep' ? req.user.zoho_owner_id : ring.repZohoId;
+  const out = await zoho.insertRecords(M.ACTIVITY, [toZoho.activity({
+    type: 'Ring Visit', date: b.date, notes: parts.join('\n\n'), ringId: ring.id, repZohoId, outcome: 'Connected', nextDue: null,
+  })]);
+  const patch = { id: ring.id };
+  if (!ring.lastRepVisit || b.date > ring.lastRepVisit) patch.Last_Rep_Visit = b.date;
+  if (ring.nextRepVisit && ring.nextRepVisit <= b.date) patch.Next_Rep_Visit = null;
+  if (Object.keys(patch).length > 1) await zoho.updateRecords(M.RING, [patch]);
+  zoho.clearCache(); dropSnapshot();
+  const id = out[0]?.details?.id;
+  await audit(req.user.id, 'visit.reported', { id, ringId: ring.id, date: b.date }, req.ip);
+  res.status(201).json({ ok: true, id, ringId: ring.id, date: b.date });
+}));
+
 /* ═══════════ REMINDERS (manual trigger / preview) ═══════════ */
 r.post('/reminders/run', auth.authRequired, auth.requireOffice, access.requirePerm('reminders'), wrap(async (req, res) => {
   const kind = req.body?.kind || 'weekly';
