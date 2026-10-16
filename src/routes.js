@@ -1415,7 +1415,9 @@ r.post('/time/:id/approve', auth.authRequired, access.requirePerm('accounting'),
 }));
 
 r.get('/expenses', auth.authRequired, wrap(async (req, res) => {
-  const rows = seesAllClaims(req.user) ? await q.allExpenses() : await q.expensesFor(req.user.id);
+  let rows = seesAllClaims(req.user) ? await q.allExpenses() : await q.expensesFor(req.user.id);
+  // Whether a claim became a Zoho Books bill is shown only to Books access
+  if (!req.user.perms.books) rows = rows.map(({ books_bill_id, books_error, books_queued, ...x }) => x);
   res.json(rows);
 }));
 
@@ -1469,7 +1471,26 @@ r.get('/accounting/pending', auth.authRequired, access.requirePerm('accounting')
  * Books bills. Given ids (an approved batch), sends only those still
  * approved; without, sends everything approved. Returns { status, body }.
  */
-async function deliverToAccounting({ timeIds, expenseIds, actor, ip } = {}) {
+/** The key the background function checks, so only Rep Hub can start it. */
+const kickKey = () => crypto.createHmac('sha256', cfg.jwtSecret).update('books-background').digest('hex');
+/** Start the Zoho Books background run. Netlify answers 202 at once. */
+async function kickBooks(site) {
+  try {
+    const res = await fetch(`${site}/.netlify/functions/books-background`, {
+      method: 'POST', headers: { 'x-rephub-key': kickKey() }, signal: AbortSignal.timeout(3000) });
+    return res.status === 202 || res.ok;
+  } catch (e) {
+    console.error('[books] background start failed, the 15-minute job will do it:', e.message);
+    return true;   // queued either way; sync-flush finishes it
+  }
+}
+/** Where this site lives, when running on Netlify; null anywhere else. */
+function netlifySite(req) {
+  if (!process.env.NETLIFY && !process.env.URL && !process.env.AWS_LAMBDA_FUNCTION_NAME) return null;
+  return process.env.URL || siteUrl(req);
+}
+
+async function deliverToAccounting({ timeIds, expenseIds, actor, ip, site } = {}) {
   const [time, exp] = await Promise.all([q.allTime(), q.allExpenses()]);
   const inSet = ids => x => !ids || ids.map(Number).includes(Number(x.id));
   const t = time.filter(x => x.status === 'Approved').filter(inSet(timeIds));
@@ -1602,8 +1623,13 @@ async function deliverToAccounting({ timeIds, expenseIds, actor, ip } = {}) {
   let booksOut = null;
   if (booksOn && (await setting('booksAuto', 'on')) !== 'off' && e.length) {
     await q.queueBills(e.map(x => x.id));
-    booksOut = await books.makeBills({ budgetMs: 5000 })
-      .catch(err => ({ configured: true, made: 0, failed: 0, left: e.length, error: err.message }));
+    // On Netlify the bills are made by a background function, so pressing
+    // Send doesn't wait on Zoho Books (that was most of the delay). Anywhere
+    // else — tests, a local server — they are made here, as before.
+    const kicked = site ? await kickBooks(site) : false;
+    booksOut = kicked ? { configured: true, queued: e.length, background: true }
+      : await books.makeBills({ budgetMs: 5000 })
+        .catch(err => ({ configured: true, made: 0, failed: 0, left: e.length, error: err.message }));
   }
   await audit(actor?.id || null, 'accounting.sent', { time: t.length, expenses: e.length, books: booksOut }, ip || null);
   return { status: 200, body: { sent: true, to, time: t.length, expenses: e.length, books: booksOut } };
@@ -1634,10 +1660,17 @@ async function createBatch({ actor, period } = {}) {
 
 r.post('/accounting/send', auth.authRequired, access.requirePerm('accounting'), wrap(async (req, res) => {
   const out = req.user.role === 'admin'
-    ? await deliverToAccounting({ actor: req.user, ip: req.ip })
+    ? await deliverToAccounting({ actor: req.user, ip: req.ip, site: netlifySite(req) })
     : await createBatch({ actor: req.user });   // office staff: an admin with accounting access approves it
   if (req.user.role === 'admin' && out.status === 200) await q.supersedeBatches();   // nothing left waiting
+  if (!req.user.perms.books && out.body) delete out.body.books;      // Books detail is the owner's business
   res.status(out.status).json(out.body);
+}));
+
+/** Vendor names from Zoho Books, to suggest while typing an expense. */
+r.get('/books/vendors', auth.authRequired, wrap(async (req, res) => {
+  try { res.json(await books.vendorNames()); }
+  catch (e) { res.json([]); }        // suggestions are a nicety; never block the form
 }));
 
 /** The batch waiting for final approval (and the last one sent back), for both screens. */
@@ -1681,7 +1714,8 @@ r.post('/accounting/batches/:id/approve', auth.authRequired, auth.requireAdmin, 
   const { batch: b, error, status } = await pendingBatch(req.params.id);
   if (error) return res.status(status).json({ error });
   const out = await deliverToAccounting({ timeIds: JSON.parse(b.time_ids), expenseIds: JSON.parse(b.expense_ids),
-    actor: req.user, ip: req.ip });
+    actor: req.user, ip: req.ip, site: netlifySite(req) });
+  if (!req.user.perms.books && out.body) delete out.body.books;
   if (out.status === 200) {
     await q.decideBatch(b.id, 'approved', req.user.id, null);
     await audit(req.user.id, 'accounting.approved', { batch: b.id }, req.ip);
@@ -2193,8 +2227,15 @@ r.get('/admin/audit', auth.authRequired, access.requirePerm('system'), wrap(asyn
 const OFFICE_SETTINGS = {
   retryDays: '4', rescheduleDays: '7', dueWindow: String(cfg.reminders.dueWindowDays), announcement: '',
   accountingEmail: 'accounting@symbiz.org', accountingDay: '1',
-  booksAuto: 'on', booksPayee: 'rep', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
+  booksAuto: 'on', booksPayee: 'vendor', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
+  supportName: 'Ashish Raj', supportPhone: '540-212-9403',
 };
+
+/** Who to ring for help — shown on the sign-in screen, so no sign-in needed. */
+r.get('/support', wrap(async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json({ name: await setting('supportName', OFFICE_SETTINGS.supportName), phone: await setting('supportPhone', OFFICE_SETTINGS.supportPhone) });
+}));
 
 r.get('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
   const out = {};

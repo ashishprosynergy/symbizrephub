@@ -38,7 +38,8 @@ const booksStore = {
     { account_id: 'A1', account_name: 'Meals', account_type: 'expense' },
     { account_id: 'A2', account_name: 'Rep Reimbursements', account_type: 'expense' },
   ],
-  contacts: [], bills: [], attachments: [],
+  // Sheetz is already a vendor in Books; receipts say "SHEETZ #0421"
+  contacts: [{ contact_id: 'V0', contact_name: 'Sheetz', contact_type: 'vendor' }], bills: [], attachments: [],
 };
 
 const fakeZoho = http.createServer((req, res) => {
@@ -64,7 +65,8 @@ const fakeZoho = http.createServer((req, res) => {
       if (p.startsWith('/organizations/')) return json({ code: 0, organization: { name: 'Symbiz Books (test)' } });
       if (p === '/chartofaccounts') return json({ code: 0, chartofaccounts: booksStore.accounts });
       if (p === '/contacts' && req.method === 'GET') {
-        return json({ code: 0, contacts: booksStore.contacts.filter(c => c.contact_name === qs.get('contact_name')) });
+        return json({ code: 0, contacts: booksStore.contacts.filter(c => !qs.get('contact_name') || c.contact_name === qs.get('contact_name')),
+          page_context: { has_more_page: false } });
       }
       if (p === '/contacts' && req.method === 'POST') {
         const c = { contact_id: 'V' + (booksStore.contacts.length + 1), ...JSON.parse(body) };
@@ -741,7 +743,7 @@ describe('hours and expenses', () => {
     try {
       const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
       await invoke('POST', '/expenses', { token: repToken, body: { date: '2026-10-05', amount: 12.4, category: 'Meals',
-        vendor: 'Sheetz', description: 'Coffee before ring visit', receiptName: 'sheetz.png', receiptType: 'image/png', receiptData: png } });
+        vendor: 'SHEETZ #0421', description: 'Coffee before ring visit', receiptName: 'sheetz.png', receiptType: 'image/png', receiptData: png } });
       await invoke('POST', '/expenses', { token: repToken, body: { date: '2026-10-06', amount: 31, category: 'Mileage',
         vendor: 'Own car', description: '62 miles to Lancaster' } });
       for (const x of JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body)) {
@@ -753,14 +755,14 @@ describe('hours and expenses', () => {
       assert.equal(sent.books.made, 1, JSON.stringify(sent.books));     // Meals has an account
       assert.equal(sent.books.failed, 1);                               // Mileage has none yet
 
-      const meal = booksStore.bills.find(b => /Sheetz/.test(b.line_items[0].description));
+      const meal = booksStore.bills.find(b => /sheetz/i.test(b.line_items[0].description));
       assert.ok(meal, 'meal bill made');
       assert.match(meal.bill_number, /^RH-\d+$/);
       assert.equal(meal.line_items[0].account_id, 'A1');
       assert.equal(meal.line_items[0].rate, 12.4);
       assert.equal(meal.date, '2026-10-05');
       const payee = booksStore.contacts.find(c => c.contact_id === meal.vendor_id);
-      assert.equal(payee.contact_name, 'Test Rep', 'billed to the rep, who is being reimbursed');
+      assert.equal(payee.contact_id, 'V0', 'billed to the Sheetz vendor already in Books, not a new one or the rep');
       assert.ok(booksStore.attachments.some(a => a.billId === meal.bill_id && /multipart/.test(a.type)), 'receipt attached');
 
       // Nothing from the batch sent before Books was connected
@@ -783,7 +785,7 @@ describe('hours and expenses', () => {
       // And the app shows each expense's bill
       const rows = JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body);
       assert.ok(rows.filter(x => x.books_bill_id).length >= 2);
-      assert.ok(rows.some(x => x.vendor === 'Sheetz'));
+      assert.ok(rows.some(x => x.vendor === 'SHEETZ #0421'));
     } finally {
       cfg.books.orgId = ''; cfg.books.refreshToken = ''; reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
     }

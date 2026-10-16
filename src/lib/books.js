@@ -102,28 +102,61 @@ async function call(path, { method = 'GET', query = {}, json, form, _retry } = {
 
 /* ─────────── lookups, remembered for the run ─────────── */
 let accounts = null;
-async function accountId(name) {
-  if (!accounts) {
-    const out = await call('/chartofaccounts', { query: { filter_by: 'AccountType.Active', per_page: 200 } });
-    accounts = (out.chartofaccounts || []).map(a => ({ id: a.account_id, name: a.account_name, type: a.account_type }));
+/** Every page of the chart: Symbiz has more active accounts than one page holds. */
+async function loadAccounts() {
+  const all = [];
+  for (let page = 1; page <= 10; page++) {
+    const out = await call('/chartofaccounts', { query: { filter_by: 'AccountType.Active', per_page: 200, page } });
+    (out.chartofaccounts || []).forEach(a => all.push({ id: a.account_id, name: a.account_name, code: a.account_code || '', type: a.account_type }));
+    if (!(out.page_context && out.page_context.has_more_page)) break;
   }
+  return all;
+}
+/** An account by its exact name, or by the code at the front of it ("5310 …" finds code 5310). */
+async function accountId(name) {
+  if (!accounts) accounts = await loadAccounts();
   const want = String(name || '').trim().toLowerCase();
+  if (!want) return null;
   const hit = accounts.find(a => a.name.trim().toLowerCase() === want);
-  return hit ? hit.id : null;
+  if (hit) return hit.id;
+  const code = (want.match(/^(\d{3,6})\b/) || [])[1];
+  const byCode = code && accounts.filter(a => String(a.code) === code);
+  return byCode && byCode.length === 1 ? byCode[0].id : null;
 }
 
-const vendors = new Map();
-async function vendorId(name) {
-  const key = String(name).trim().toLowerCase();
-  if (vendors.has(key)) return vendors.get(key);
-  const found = await call('/contacts', { query: { contact_name: String(name).trim(), contact_type: 'vendor' } });
-  let c = (found.contacts || []).find(x => String(x.contact_name).trim().toLowerCase() === key);
-  if (!c) {
-    const made = await call('/contacts', { method: 'POST', json: { contact_name: String(name).trim(), contact_type: 'vendor' } });
-    c = made.contact;
+/* ── Vendors: Symbiz's own list in Books, so a receipt from "SHEETZ #123"
+   lands on the "Sheetz" vendor already there instead of making a new one. ── */
+let vendorList = null, vendorListAt = 0;
+async function listVendors() {
+  if (vendorList && Date.now() - vendorListAt < 10 * 60000) return vendorList;
+  const all = [];
+  for (let page = 1; page <= 10; page++) {
+    const out = await call('/contacts', { query: { contact_type: 'vendor', filter_by: 'Status.Active', per_page: 200, page } });
+    (out.contacts || []).forEach(c => all.push({ id: c.contact_id, name: String(c.contact_name || '').trim() }));
+    if (!(out.page_context && out.page_context.has_more_page)) break;
   }
-  vendors.set(key, c.contact_id);
-  return c.contact_id;
+  vendorList = all.filter(v => v.name); vendorListAt = Date.now();
+  return vendorList;
+}
+// "Sheetz #0421, Inc." and "sheetz" are the same shop
+const norm = s => String(s || '').toLowerCase().replace(/#\s*\d+/g, ' ').replace(/[^a-z0-9 ]/g, ' ')
+  .replace(/\b(inc|llc|ltd|co|corp|company|the|store)\b/g, ' ').replace(/\s+/g, ' ').trim();
+function matchVendor(list, name) {
+  const want = norm(name);
+  if (!want) return null;
+  return list.find(v => v.name.toLowerCase() === String(name).trim().toLowerCase())
+    || list.find(v => norm(v.name) === want)
+    || list.filter(v => norm(v.name) && (want.startsWith(norm(v.name) + ' ') || norm(v.name).startsWith(want + ' ')))
+           .sort((a, b) => norm(b.name).length - norm(a.name).length)[0]
+    || null;
+}
+async function vendorId(name) {
+  const list = await listVendors();
+  const hit = matchVendor(list, name);
+  if (hit) return hit.id;
+  const made = await call('/contacts', { method: 'POST', json: { contact_name: String(name).trim(), contact_type: 'vendor' } });
+  list.push({ id: made.contact.contact_id, name: String(name).trim() });
+  return made.contact.contact_id;
 }
 
 /** Zoho Books takes these for bill attachments; HEIC and others are refused. */
@@ -133,7 +166,7 @@ const ATTACHABLE = /^(image\/(jpe?g|png|gif|bmp)|application\/pdf)$/i;
  * Make (or find) the bill for one expense and attach its receipt.
  * Returns { billId, note } — note explains anything left undone.
  */
-async function billFor(x, { payee = 'rep', fallbackAccount = '', accountMap = {}, approvedBy = '', receipt = null } = {}) {
+async function billFor(x, { payee = 'vendor', fallbackAccount = '', accountMap = {}, approvedBy = '', receipt = null } = {}) {
   const number = `RH-${x.id}`;
   const existing = await call('/bills', { query: { bill_number: number } });
   const already = (existing.bills || []).find(b => b.bill_number === number);
@@ -197,7 +230,7 @@ async function makeBills({ budgetMs = 7000, limit = 25, includeFailed = false } 
   if (!(await configured())) return { configured: false, made: 0, failed: 0, left: 0 };
   const { q, setting } = require('../db');
   const started = Date.now();
-  const payee = await setting('booksPayee', 'rep');
+  const payee = await setting('booksPayee', 'vendor');
   const fallbackAccount = await setting('booksAccount', DEFAULT_FALLBACK);
   const accountMap = await accountMapSetting();
   const users = await q.everyUser();
@@ -252,5 +285,11 @@ async function accountMapSetting() {
   return { ...DEFAULT_ACCOUNTS, ...saved };
 }
 
-module.exports = { configured, connect, disconnect, makeBills, status, billFor, DEFAULT_FALLBACK,
-  _resetForTests: () => { token = { access: null, expiresAt: 0 }; accounts = null; vendors.clear(); } };
+/** Vendor names for the expense form's suggestions. */
+async function vendorNames() {
+  if (!(await configured())) return [];
+  return (await listVendors()).map(v => v.name).sort((a, b) => a.localeCompare(b));
+}
+
+module.exports = { configured, connect, disconnect, makeBills, status, billFor, vendorNames, matchVendor, DEFAULT_FALLBACK,
+  _resetForTests: () => { token = { access: null, expiresAt: 0 }; accounts = null; vendorList = null; } };

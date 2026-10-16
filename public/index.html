@@ -118,6 +118,69 @@
   .leader-row .bar{margin-top:4px;height:5px;}
   .leader-n{font-size:14px;min-width:22px;text-align:right;}
 
+  .maplink{display:inline-flex;align-items:center;gap:3px;color:var(--info);text-decoration:none;font-weight:500;}
+  .maplink:hover{text-decoration:underline;}
+  .maplink .ico{flex:none;}
+
+  /* Help line at the foot of every phone screen (the sidebar that carries it is hidden there) */
+  .mobile-help{display:none;}
+  @media (max-width:900px){
+    .mobile-help{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;
+      margin:0 15px calc(82px + env(safe-area-inset-bottom));
+      padding:14px 12px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-muted);text-align:center;}
+    .content{padding-bottom:18px !important;}
+    .mobile-help a{color:var(--primary);font-weight:600;text-decoration:none;}
+  }
+  /* Whatever Netlify injects bottom-right (badge, "Powered by Netlify") sat
+     over the phone tab bar. On a phone it is hidden; elsewhere it stays. */
+  @media (max-width:900px){ .nf-badge{display:none !important;} }
+
+  /* Rep manager */
+  .mgr-hero{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:18px 20px;margin-bottom:12px;
+    border:1px solid var(--line);border-radius:16px;
+    background:radial-gradient(120% 140% at 100% 0%, var(--primary-soft) 0%, transparent 55%), var(--surface);}
+  .mgr-hero-text{min-width:0;flex:1;}
+  .mgr-hero-line{margin-top:8px;font-size:14px;color:var(--ink-muted);line-height:1.5;}
+  .gauge{position:relative;width:118px;height:118px;flex:none;}
+  .gauge svg{transform:rotate(-90deg);}
+  .g-bg{fill:none;stroke:var(--line-soft);stroke-width:11;}
+  .g-fg{fill:none;stroke-width:11;stroke-linecap:round;transition:stroke-dasharray .8s cubic-bezier(.2,.8,.2,1);}
+  .g-in{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  .g-n{font-family:var(--serif);font-size:27px;line-height:1;}
+  .g-l{font-size:10.5px;color:var(--ink-muted);margin-top:3px;text-align:center;line-height:1.2;}
+  @media (max-width:560px){ .mgr-hero{padding:15px;} .gauge,.gauge svg{width:92px;height:92px;} .g-n{font-size:22px;} }
+  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:9px;margin-bottom:12px;}
+  @media (max-width:760px){ .kpis{grid-template-columns:repeat(3,1fr);} }
+  .kpi{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:11px 12px;border:1px solid var(--line);
+    border-radius:12px;background:var(--surface);color:var(--ink);font:inherit;text-align:left;cursor:pointer;
+    transition:transform .15s,box-shadow .15s,border-color .15s;}
+  .kpi:hover:not([disabled]){transform:translateY(-1px);box-shadow:0 6px 16px rgba(20,30,15,.08);border-color:var(--primary);}
+  .kpi-ic{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;margin-bottom:4px;
+    background:var(--line-soft);color:var(--ink-muted);}
+  .kpi-green .kpi-ic{background:var(--primary-soft);color:var(--primary);}
+  .kpi-rust .kpi-ic{background:var(--rust-soft);color:var(--rust);} .kpi-rust .kpi-n{color:var(--rust);}
+  .kpi-amber .kpi-ic{background:var(--accent-soft);color:var(--accent);}
+  .kpi-n{font-family:var(--serif);font-size:24px;line-height:1.1;}
+  .kpi-l{font-size:11.5px;color:var(--ink-muted);}
+  .mgr-tools{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0 10px;}
+  .mgr-search{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .mgr-search input{font:inherit;font-size:14px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;
+    background:var(--surface);color:var(--ink);width:180px;}
+  .mgr-search input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);}
+  @media (max-width:560px){ .mgr-search,.mgr-search input{width:100%;} .mgr-search .sel{flex:1;} }
+  .mgr-card{border-left:4px solid var(--line);transition:transform .15s,box-shadow .15s;}
+  .mgr-card:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(20,30,15,.08);}
+  .mgr-card[hidden]{display:none;}
+  .mgr-rust{border-left-color:var(--rust);} .mgr-amber{border-left-color:var(--accent);} .mgr-green{border-left-color:var(--primary);}
+  .mgr-av{background:var(--primary-soft);color:var(--primary);}
+  .mgr-rust .mgr-av{background:var(--rust-soft);color:var(--rust);} .mgr-amber .mgr-av{background:var(--accent-soft);color:var(--accent);}
+  .mgr-spark{display:flex;align-items:center;gap:8px;margin:10px 0 8px;font-size:11px;color:var(--ink-faint);}
+  .spark{overflow:visible;} .sp-area{fill:var(--primary-soft);} .sp-line{fill:none;stroke:var(--primary);stroke-width:1.8;stroke-linejoin:round;}
+  .sp-dot{fill:var(--primary);}
+  .mgr-rust .sp-line{stroke:var(--rust);} .mgr-rust .sp-dot{fill:var(--rust);} .mgr-rust .sp-area{fill:var(--rust-soft);}
+  .leader-row.clicky{border-radius:8px;cursor:pointer;} .leader-row.clicky:hover .leader-name{text-decoration:underline;}
+  .empty[hidden]{display:none;}
+
   /* Loading placeholders */
   @keyframes skel{0%{background-position:100% 0}100%{background-position:0 0}}
   .skel-row{display:flex;gap:12px;align-items:center;padding:13px 0;border-bottom:1px solid var(--line-soft);}
@@ -126,6 +189,9 @@
   .skel-dot{width:32px;height:32px;border-radius:50%;flex:none;}
   .skel-line{height:12px;border-radius:6px;}
   .skel-line.sm{height:9px;margin-top:8px;}
+  .skel-card{height:172px;margin-bottom:11px;background:linear-gradient(90deg,var(--surface) 0%,var(--surface-2) 50%,var(--surface) 100%);
+    background-size:300% 100%;animation:skel 1.3s ease-in-out infinite;}
+  .dash-pair .skel-card{margin:0;}
 
   /* Empty lists: a calm box with a mark, not a stray grey line */
   .empty{text-align:center;padding:26px 18px;border:1px dashed var(--line);border-top:1px dashed var(--line);
@@ -1262,7 +1328,7 @@ function seed(){
       defaultFacFreq:'Quarterly', defaultMemFreq:'Annual', defaultCapacity:8,
       retryDays:4, rescheduleDays:7, dueWindow:21,
       accountingEmail:'accounting@symbiz.org', accountingDay:'1',
-      supportPhone:'', supportName:'the office',
+      supportPhone:'540-212-9403', supportName:'Ashish Raj',
       links:{f_exit:'',f_visit:'',f_conv:'',f_reimb:'',d_rep:'',d_summit:'',doc_job:'',doc_manual:''}
     },
     ids:{ring:1,mem:1,act:1,req:1,fac:1,meet:1,note:1,ev:1,reg:1,vis:1,time:1,exp:1}
@@ -1658,6 +1724,15 @@ function icon(name, size){
     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 }
 
+/* A place, as a link that opens Google Maps (the Maps app on a phone).
+   Clicks don't bubble, so a link inside a clickable row only opens the map. */
+function mapLink(place){
+  const p = String(place || '').trim();
+  if(!p || /^(tbd|to be set|place to be set|online|zoom|virtual)$/i.test(p)) return esc(p);
+  return `<a class="maplink" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p)}" target="_blank"
+    rel="noopener" onclick="event.stopPropagation()" title="Open in Google Maps">${icon('pin',13)}${esc(p)}</a>`;
+}
+
 /* Placeholder rows while a screen's data is on its way, so the page fills
    in place instead of jumping from "Loading…" to a full list. */
 function skeleton(rows){
@@ -1689,7 +1764,7 @@ function trendCard(title, counts, note){
       class="${i===n-1?'now':''}"><title>${c} ${i===n-1?'this week':(n-1-i)+' week'+(n-1-i===1?'':'s')+' ago'}</title></rect>`; }).join('');
   return `<div class="trend card">
     <div class="trend-head"><div><div class="trend-t">${esc(title)}</div>
-      <div class="trend-n">${now}<span> this week</span></div></div>
+      <div class="trend-n"><span class="cu" data-n="${now}" style="font:inherit;color:inherit;margin:0">${now}</span><span> this week</span></div></div>
       <span class="trend-d ${diff>0?'up':diff<0?'down':''}">${diff>0?'▲ '+diff:diff<0?'▼ '+(-diff):'same'} vs last week</span></div>
     <svg class="trend-bars" viewBox="0 0 100 100" preserveAspectRatio="none" role="img"
       aria-label="${esc(title)}: ${counts.join(', ')} over the last ${n} weeks">${bars}</svg>
@@ -1982,7 +2057,8 @@ function vToday(){
       <div class="stat click" onclick="setView('requests')"><div class="n">${reqs}</div><div class="l">Open requests</div></div>
       <div class="stat click" onclick="setView('unaffiliated')"><div class="n">${(S.membersNoRing||[]).filter(m=>m.status==='active').length}</div><div class="l">Members with no ring<br><span style="font-size:10px;opacity:.7">network-wide</span></div></div>
     </div>
-    ${S.activities.some(a=>a.repId===ui.me) ? trendCard('Your calls and meetings', weeklyCounts(S.activities.filter(a=>a.repId===ui.me))) : ''}
+    ${S.activities.some(a=>a.repId===ui.me) ? trendCard('Your calls and meetings', weeklyCounts(S.activities.filter(a=>a.repId===ui.me)))
+      : (loading || loadingDetail) ? `<div class="card skel-card"></div>` : ''}
     ${(()=>{ const t=getTimer();
       return t?`<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
         <div><strong>Timer running — ${timerLabel(t)}</strong>${esc(t.category)}${t.note?' · '+esc(t.note):''}</div>
@@ -1992,7 +2068,7 @@ function vToday(){
     ${(()=>{ const next=calendarItems(ui.me).filter(i=>days(i.date)>=0&&days(i.date)<=21).slice(0,3);
       return next.length?`<h3 class="sub-h">On your calendar</h3>`+next.map(i=>`<div class="row ${i.kind==='event'?'clicky':''}" ${i.kind==='event'?`onclick="openEvent('${i.id}')"`:''}>
         <div class="row-main"><div class="row-title">${esc(i.title)}</div>
-        <div class="row-sub">${fmt(i.date)}${i.time?' at '+esc(i.time):''} · ${esc(i.sub)}</div></div>
+        <div class="row-sub">${fmt(i.date)}${i.time?' at '+esc(i.time):''}${i.sub?' · '+esc(i.sub):''}${i.where?' · '+mapLink(i.where):''}</div></div>
         <span class="tag ${i.kind==='event'?'info':i.kind==='visit'?'ok':'later'}">${days(i.date)===0?'today':'in '+days(i.date)+'d'}</span></div>`).join(''):''; })()}
     <div class="section-head"><div><h2>Who to contact</h2><div class="sub">Facilitators and members, soonest first.</div></div></div>
     ${body}
@@ -2385,7 +2461,8 @@ function vOfficeDash(){
         <div class="n" style="color:var(--rust)">${inactive}</div><div class="l">Inactive members</div></div>
     </div>
     ${(() => {
-      if(!S.activities.length) return '';
+      // Hold the chart's space while activity loads, so the page doesn't jump when it arrives
+      if(!S.activities.length) return (loading || loadingDetail) ? `<div class="dash-pair"><div class="card skel-card"></div><div class="card skel-card"></div></div>` : '';
       const counts = weeklyCounts(S.activities);
       // Who logged the most this month, so the office sees effort, not just totals
       const month = TODAY_S.slice(0,7), by = {};
@@ -2448,7 +2525,7 @@ function vOfficeDash(){
           <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
             <div style="flex:1;min-width:180px">
               <div class="row-title clicky" onclick="openEvent('${e.id}')">${esc(e.title)}</div>
-              <div class="row-sub">${fmt(e.date)}${e.time?' · '+esc(e.time):''}${e.location?' · '+esc(e.location):''}</div>
+              <div class="row-sub">${fmt(e.date)}${e.time?' · '+esc(e.time):''}${e.location?' · '+mapLink(e.location):''}</div>
             </div>
             <span class="tag info">${days(e.date)===0?'today':days(e.date)===1?'tomorrow':'in '+days(e.date)+' days'}</span>
           </div>
@@ -2551,7 +2628,7 @@ async function approveBatchInApp(id){
     S.timeEntries = t.map(adapt.timeEntry); S.expenses = x.map(adapt.expense); S.acctBatches = b; save();
     openModal(`<h3>Sent to accounting</h3>
       <p class="lead">${out.time} time entr${out.time === 1 ? 'y' : 'ies'} and ${out.expenses} expense${out.expenses === 1 ? '' : 's'} emailed to ${esc(out.to)}.</p>
-      ${out.books ? `<div class="callout ${out.books.failed || out.books.error ? 'rust' : 'ok'}"><strong>Zoho Books</strong>
+      ${out.books && can('books') ? booksResult(out.books) || `<div class="callout ${out.books.failed || out.books.error ? 'rust' : 'ok'}"><strong>Zoho Books</strong>
         ${out.books.error ? esc(out.books.error) : `${out.books.made} bill${out.books.made === 1 ? '' : 's'} made${out.books.left ? `; ${out.books.left} more within 15 minutes` : ''}.
         ${out.books.failed ? `${out.books.failed} could not be made — see Settings → Zoho Books.` : ''}`}</div>` : ''}
       <div class="m-actions"><button class="btn primary" onclick="closeModal();render()">Done</button></div>`);
@@ -3294,7 +3371,7 @@ function vSettings(){
                  onchange="setSetting('supportPhone',this.value)">
           <div class="hint">Shown on the sign-in screen and printed forms, so a rep who is stuck knows who to ring.</div></div>
         <div class="field"><label>Who they are calling</label>
-          <input value="${esc(s.supportName||'the office')}" placeholder="the office"
+          <input value="${esc(s.supportName||'Ashish Raj')}" placeholder="Ashish Raj"
                  onchange="setSetting('supportName',this.value)"></div>
       </div>
       <div class="two">
@@ -3394,8 +3471,8 @@ function booksCard(){
           <option value="off" ${s.booksAuto==='off'?'selected':''}>No — email only</option></select></div>
       <div class="field"><label>Bill is made out to</label>
         <select onchange="setSetting('booksPayee', this.value)">
-          <option value="rep" ${(s.booksPayee||'rep')==='rep'?'selected':''}>The rep (they are reimbursed)</option>
-          <option value="vendor" ${s.booksPayee==='vendor'?'selected':''}>The vendor on the receipt</option></select></div>
+          <option value="vendor" ${(s.booksPayee||'vendor')==='vendor'?'selected':''}>The vendor on the receipt (matched to Books)</option>
+          <option value="rep" ${s.booksPayee==='rep'?'selected':''}>The rep (they are reimbursed)</option></select></div>
     </div>
     <div class="field" style="margin-bottom:6px"><label>Which account each expense goes to</label></div>
     <div class="acct-map">
@@ -3624,6 +3701,26 @@ async function forgetDevice(id){
   renderContent();
 }
 
+/* After sending: bills being made in the background say so; other results fall through */
+function booksResult(b){
+  if(!b || !b.background) return '';
+  return `<div class="callout ok"><strong>Zoho Books</strong>${b.queued} bill${b.queued===1?' is':'s are'} being made now, with
+    receipts attached. They appear in Zoho Books within a minute or two; anything that fails shows under Settings → Zoho Books.</div>`;
+}
+
+/* Vendor names from Zoho Books, suggested in the expense form. Fetched once
+   per session, the first time the form opens. */
+var booksVendors = null;
+function loadVendorSuggestions(){
+  if(booksVendors || !API.live) return;
+  booksVendors = [];
+  API.call('/books/vendors').then(v => {
+    booksVendors = Array.isArray(v) ? v : [];
+    const dl = document.getElementById('vendorList');
+    if(dl) dl.innerHTML = booksVendors.map(n => `<option value="${esc(n)}">`).join('');
+  }).catch(() => {});
+}
+
 function setBooksFallback(acct){ setSetting('booksAccount', acct); toast('Anything else → ' + acct); }
 function setBooksAccount(cat, acct){
   const map = { ...((booksInfo && booksInfo.accountMap) || {}), [cat]: acct };
@@ -3647,9 +3744,14 @@ async function retryBooks(btn){
 
 // Settings the server acts on. These used to be kept only in this browser,
 // so the server never saw (for one) the accounting address typed in here.
-const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount'];
+const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount',
+  'supportName','supportPhone'];
 async function setSetting(k,v){
   S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`);
+  if(k === 'supportName' || k === 'supportPhone'){
+    try{ localStorage.setItem('rephub_support', JSON.stringify({ name: S.settings.supportName || SUPPORT_DEFAULT.name,
+      phone: S.settings.supportPhone || SUPPORT_DEFAULT.phone })); }catch(e){}
+  }
   if(API.live && isOffice() && SERVER_SETTINGS.includes(k)){
     try{ await API.saveSettings({[k]:v}); toast('Setting saved'); }
     catch(e){ toast(e.message || 'Could not save that setting'); }
@@ -3872,134 +3974,10 @@ async function submitLead(ev){
   }catch(e){ err.style.display='block'; err.textContent=e.message||'Could not send that'; }
 }
 
-/* ── the office decides ── */
-async function approvePending(id){
-  try{
-    const out = await API.approvePending(id);
-    toast('Approved and written to Zoho');
-    S.pending = await API.pending(); save(); render();
-  }catch(e){
-    openModal(`<h3>Zoho wouldn't accept that</h3>
-      <p class="lead">${esc(e.message)}</p>
-      <div class="callout">The request is still waiting, so nothing has been lost. Fix the detail in Zoho
-        or send it back to the rep with a reason.</div>
-      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
-  }
-}
-function openRejectPending(id, summary){
-  openModal(`<h3>Send this back?</h3>
-    <p class="lead">${esc(summary)}</p>
-    <form onsubmit="submitRejectPending(event, ${id})">
-      <div class="field"><label>What should the rep change?</label>
-        <textarea name="reason" rows="2" required placeholder="Already registered, name spelled differently…"></textarea></div>
-      <div id="rejErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
-      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
-      <button type="submit" class="btn danger">Send it back</button></div></form>`);
-}
-async function submitRejectPending(ev, id){
-  ev.preventDefault();
-  const reason = ev.target.elements.namedItem('reason').value;
-  const err = document.getElementById('rejErr');
-  try{
-    await API.rejectPending(id, reason);
-    closeModal(); toast('Sent back to the rep');
-    S.pending = await API.pending(); save(); render();
-  }catch(e){ err.style.display='block'; err.textContent=e.message; }
-}
-
-function pendingRows(list, canDecide){
-  const label = { registration:'Registration', cancellation:'Cancellation', lead:'New lead' };
-  return list.map(p=>`<div class="row">
-    <div class="row-main">
-      <div class="row-title">${esc(p.summary||label[p.kind]||p.kind)}</div>
-      <div class="row-sub">${esc(label[p.kind]||p.kind)} · ${esc(p.rep_name||'')} · ${fmt(String(p.created_at).slice(0,10))}
-        ${p.status==='rejected'&&p.note?` · <span style="color:var(--rust)">sent back: ${esc(p.note)}</span>`:''}
-        ${p.status==='approved'&&p.zoho_id?` · <span style="color:var(--primary)">in Zoho</span>`:''}
-        ${p.status==='pending'&&p.error?` · <span style="color:var(--rust)">last try failed: ${esc(p.error)}</span>`:''}</div>
-    </div>
-    <div class="row-actions">
-      ${p.status==='pending'
-        ? (canDecide
-            ? `<button class="btn sm primary" onclick="approvePending(${p.id})">Approve</button>
-               <button class="btn sm" onclick="openRejectPending(${p.id},'${esc(p.summary||'')}')">Send back</button>`
-            : `<span class="tag soon">waiting on the office</span>`)
-        : `<span class="tag ${p.status==='approved'?'ok':'later'}">${p.status==='approved'?'approved':'sent back'}</span>`}
-    </div></div>`).join('');
-}
-
-/* ══════════════════ THE REP MANAGER'S VIEW ══════════════════
- * Built for Mel. The office Overview answers "how is the network doing";
- * this answers "how are my reps doing" — who is behind, who is carrying too
- * much, and which groups nobody has been to see.
- */
-function repScorecard(){
-  const reps = [...new Set(S.rings.map(r=>r.repId).filter(Boolean))];
-  return reps.map(id=>{
-    const rings = S.rings.filter(r=>r.repId===id);
-    const name = (rings[0] && rings[0].repName) || pname(id);
-    const due = S.activities.filter(a=>a.repId===id && a.nextDue);
-    const overdue = due.filter(a=>days(a.nextDue)<0);
-    const soon = due.filter(a=>days(a.nextDue)>=0 && days(a.nextDue)<=14);
-    const logged = S.activities.filter(a=>a.repId===id && a.date && days(a.date)>=-30 && a.outcome);
-    const members = rings.reduce((n,r)=>n+(r.serverMemberCount||ringMembers(r.id).length),0);
-    const neverVisited = rings.filter(r=>!r.lastRepVisit).length;
-    const noRhythm = rings.filter(r=>r.status==='active' && !r.meetingRhythm).length;
-    const hrs = S.timeEntries.filter(t=>t.loginId===id||t.repId===id)
-      .reduce((n,t)=>n+Number(t.hours||0),0);
-    return { id, name, rings:rings.length, members, overdue:overdue.length,
-             soon:soon.length, logged:logged.length, neverVisited, noRhythm, hrs };
-  }).sort((a,b)=> b.overdue-a.overdue || b.rings-a.rings);
-}
-
-/** Open or close one of the numbers on a rep's card. */
-function toggleMgr(repId, key){
-  const k = repId + key;
-  ui.mgrOpen = (ui.mgrOpen === k) ? null : k;
-  renderContent();
-}
-
-/** What sits behind a number on the manager screen. */
-function mgrDetail(repId, key){
-  const rings = S.rings.filter(r=>r.repId===repId);
-  const ringIds = new Set(rings.map(r=>r.id));
-  const line = (title, sub, go) => `<div class="row clicky" onclick="${go||''}">
-    <div class="row-main"><div class="row-title">${esc(title)}</div>
-      <div class="row-sub">${esc(sub||'')}</div></div></div>`;
-
-  if(key==='unvisited'){
-    const list = rings.filter(r=>!r.lastRepVisit);
-    return list.length ? list.map(r=>line(r.name, `${r.facName||'no facilitator'} · never visited`, `openRing('${r.id}')`)).join('')
-      : `<div class="empty">Every ring has been visited.</div>`;
-  }
-  const acts = S.activities.filter(a=>a.repId===repId || ringIds.has(a.ringId));
-  if(key==='overdue'){
-    const list = acts.filter(a=>a.nextDue && days(a.nextDue)<0).sort((a,b)=>a.nextDue.localeCompare(b.nextDue));
-    return list.length ? list.map(a=>line(a.who||a.ringName||a.type,
-      `${a.type} · ${Math.abs(days(a.nextDue))} days overdue`, a.ringId?`openRing('${a.ringId}')`:'')).join('')
-      : `<div class="empty">Nothing overdue.</div>`;
-  }
-  if(key==='soon'){
-    const list = acts.filter(a=>a.nextDue && days(a.nextDue)>=0 && days(a.nextDue)<=14)
-      .sort((a,b)=>a.nextDue.localeCompare(b.nextDue));
-    return list.length ? list.map(a=>line(a.who||a.ringName||a.type,
-      `${a.type} · due ${fmt(a.nextDue)}`, a.ringId?`openRing('${a.ringId}')`:'')).join('')
-      : `<div class="empty">Nothing due in the next fortnight.</div>`;
-  }
-  if(key==='logged'){
-    const list = acts.filter(a=>a.date && days(a.date)>=-30 && a.outcome)
-      .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-    return list.length ? list.map(a=>line(a.who||a.ringName||a.type,
-      `${a.type} · ${a.outcome} · ${fmt(a.date)}`, a.ringId?`openRing('${a.ringId}')`:'')).join('')
-      : `<div class="callout rust" style="margin:0"><strong>Nothing logged in 30 days</strong>
-         Either they aren't using the app, or the calls aren't happening.</div>`;
-  }
-  return '';
-}
 
 function vManager(){
   const cards = repScorecard();
-  if(!cards.length) return `<div class="section-head"><div><h2>Rep manager</h2>
-    <div class="sub">How each rep is doing.</div></div></div>
+  if(!cards.length) return `<div class="hello"><h2>Rep manager</h2><div class="sub">How each rep is doing.</div></div>
     ${emptyState('reps', 'No rings are assigned to anyone yet.')}`;
 
   const totalRings  = cards.reduce((n,c)=>n+c.rings,0);
@@ -4021,57 +3999,106 @@ function vManager(){
 
   const groups = { behind:[], quiet:[], loaded:[], ok:[] };
   cards.forEach(c => groups[stateOf(c).k].push(c));
+  const health = Math.round(groups.ok.length / cards.length * 100);
   const filter = ui.mgrFilter || 'all';
-  const shown = filter === 'all' ? cards : (groups[filter] || cards);
+  const q = (ui.mgrQ || '').trim().toLowerCase();
+  const sort = ui.mgrSort || 'status';
+  const order = { behind:0, quiet:1, loaded:2, ok:3 };
+  const shown = (filter === 'all' ? cards : (groups[filter] || cards))
+    .filter(c => !q || c.name.toLowerCase().includes(q))
+    .slice().sort((a,b) => sort === 'name' ? a.name.localeCompare(b.name)
+      : sort === 'load' ? b.rings - a.rings
+      : sort === 'active' ? b.logged - a.logged
+      : (order[stateOf(a).k] - order[stateOf(b).k]) || b.overdue - a.overdue || b.rings - a.rings);
 
   const seg = (k,label,n,tone) => `<button class="seg seg-${tone} ${filter===k?'on':''}"
     onclick="ui.mgrFilter='${k}';ui.mgrOpen=null;renderContent()">
     <span class="seg-n">${n}</span><span class="seg-l">${label}</span></button>`;
+  const kpi = (n, label, ic, tone, go) => `<button class="kpi kpi-${tone}" ${go?`onclick="${go}"`:'disabled'}>
+    <span class="kpi-ic">${icon(ic,18)}</span><span class="kpi-n cu" data-n="${n}">${n}</span><span class="kpi-l">${label}</span></button>`;
 
-  return `<div class="section-head"><div><h2>Rep manager</h2>
-    <div class="sub">Who is behind, who is carrying too much, and which groups nobody has visited.</div></div>
-    <button class="btn" onclick="ui.report='rep-coverage';exportReport()">Export CSV</button></div>
+  // Team activity, week by week, and who did the most this month
+  const teamWeeks = weeklyCounts(S.activities.filter(a => a.outcome));
+  const top = cards.slice().sort((a,b)=>b.logged-a.logged).filter(c=>c.logged).slice(0,5);
+  const most = top.length ? top[0].logged : 1;
+  const tone = health >= 70 ? 'var(--primary)' : health >= 40 ? 'var(--accent)' : 'var(--rust)';
 
-    <div class="mgr-top">
-      <div class="mgr-fig"><div class="mgr-n">${cards.length}</div><div class="mgr-l">reps</div></div>
-      <div class="mgr-fig"><div class="mgr-n">${totalRings}</div><div class="mgr-l">rings</div></div>
-      <div class="mgr-fig"><div class="mgr-n">${totalMembers}</div><div class="mgr-l">members</div></div>
-      <div class="mgr-fig"><div class="mgr-n" style="color:${totalOverdue?'var(--rust)':'inherit'}">${totalOverdue}</div><div class="mgr-l">calls overdue</div></div>
-      <div class="mgr-fig"><div class="mgr-n" style="color:${totalLogged?'var(--primary)':'var(--rust)'}">${totalLogged}</div><div class="mgr-l">logged in 30d</div></div>
-      <div class="mgr-fig"><div class="mgr-n" style="color:${unvisited?'var(--rust)':'inherit'}">${unvisited}</div><div class="mgr-l">rings never visited</div></div>
+  return `<div class="mgr-hero">
+      <div class="mgr-hero-text">
+        <div class="hello" style="margin:0"><h2>${greeting()}</h2>
+          <div class="sub">${todayLong()} · here's how your ${cards.length} rep${cards.length===1?' is':'s are'} doing</div></div>
+        <div class="mgr-hero-line">${groups.behind.length
+          ? `<strong style="color:var(--rust)">${groups.behind.length} behind</strong> on calls · `
+          : `<strong style="color:var(--primary)">Nobody is behind</strong> · `}${totalLogged} call${totalLogged===1?'':'s'} logged in 30 days${unvisited?` · ${unvisited} ring${unvisited===1?'':'s'} never visited`:''}</div>
+        <div class="btnrow" style="margin-top:12px">
+          <button class="btn sm" onclick="ui.report='rep-coverage';exportReport()">Export CSV</button>
+          <button class="btn sm" onclick="setView('coverage')">Coverage map</button></div>
+      </div>
+      <div class="gauge" title="${groups.ok.length} of ${cards.length} reps are on top of it">
+        <svg viewBox="0 0 120 120" width="118" height="118"><circle cx="60" cy="60" r="50" class="g-bg"/>
+          <circle cx="60" cy="60" r="50" class="g-fg" style="stroke:${tone};stroke-dasharray:${(health/100*314.16).toFixed(1)} 314.16"/></svg>
+        <div class="g-in"><span class="g-n" style="color:${tone}"><span class="cu" data-n="${health}">${health}</span>%</span><span class="g-l">team on track</span></div>
+      </div>
     </div>
 
-    <div class="segs">
-      ${seg('all','Everyone',cards.length,'neutral')}
-      ${groups.behind.length?seg('behind','Behind',groups.behind.length,'rust'):''}
-      ${groups.quiet.length?seg('quiet','Nothing logged',groups.quiet.length,'amber'):''}
-      ${groups.loaded.length?seg('loaded','Heavy load',groups.loaded.length,'amber'):''}
-      ${groups.ok.length?seg('ok','On top of it',groups.ok.length,'green'):''}
+    <div class="kpis">
+      ${kpi(cards.length,'reps','user','neutral',"ui.mgrFilter='all';renderContent()")}
+      ${kpi(totalRings,'rings','ring','neutral',"setView('allrings')")}
+      ${kpi(totalMembers,'members','users','neutral',"setView('members')")}
+      ${kpi(totalOverdue,'calls overdue','phone',totalOverdue?'rust':'neutral',"ui.mgrFilter='behind';renderContent()")}
+      ${kpi(totalLogged,'logged in 30d','check',totalLogged?'green':'rust',"ui.mgrSort='active';renderContent()")}
+      ${kpi(unvisited,'never visited','pin',unvisited?'amber':'neutral',"ui.report='missing-detail';setView('reports')")}
+    </div>
+
+    <div class="dash-pair">${trendCard('Calls and meetings logged · whole team', teamWeeks)}
+      <div class="card leader"><div class="trend-t">Most active · last 30 days</div>
+        ${top.length ? top.map(c => `<div class="leader-row clicky" onclick="previewAsRep('${esc(c.id)}','${esc(c.name)}')">
+          <span class="rp-av">${esc(repInitials(c.name))}</span>
+          <div style="flex:1;min-width:0"><div class="leader-name">${esc(splitRepName(c.name).name)}</div>
+            <div class="bar"><span style="width:${Math.round(c.logged/most*100)}%"></span></div></div>
+          <strong class="leader-n">${c.logged}</strong></div>`).join('')
+        : `<div class="row-sub" style="margin-top:10px">Nobody has logged a call in 30 days yet.</div>`}</div>
     </div>
 
     ${heavy.length?`<div class="callout rust"><strong>${heavy.length===1?'One rep is':`${heavy.length} reps are`} carrying well above average</strong>
       ${heavy.map(c=>`${esc(c.name)} has ${c.rings} against an average of ${Math.round(avg)}`).join('; ')}.
       <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="setView('coverage')">Look at coverage</button></div></div>`:''}
-
     ${silent.length===cards.length?`<div class="callout"><strong>Nobody has logged anything yet</strong>
-      That is expected before the reps start using the app. It becomes a worry after the first fortnight.</div>`
-      :silent.length?`<div class="callout"><strong>${silent.length} rep${silent.length===1?' has':'s have'} logged nothing in 30 days</strong>
-      ${silent.slice(0,5).map(c=>esc(c.name)).join(', ')}${silent.length>5?` and ${silent.length-5} more`:''}.</div>`:''}
+      That is expected before the reps start using the app. It becomes a worry after the first fortnight.</div>`:''}
+
+    <div class="mgr-tools">
+      <div class="segs" style="margin:0">
+        ${seg('all','Everyone',cards.length,'neutral')}
+        ${groups.behind.length?seg('behind','Behind',groups.behind.length,'rust'):''}
+        ${groups.quiet.length?seg('quiet','Nothing logged',groups.quiet.length,'amber'):''}
+        ${groups.loaded.length?seg('loaded','Heavy load',groups.loaded.length,'amber'):''}
+        ${groups.ok.length?seg('ok','On top of it',groups.ok.length,'green'):''}
+      </div>
+      <div class="mgr-search">
+        <input id="mgrQ" placeholder="Find a rep…" value="${esc(ui.mgrQ||'')}" oninput="ui.mgrQ=this.value;mgrRefilter()">
+        <select class="sel" onchange="ui.mgrSort=this.value;renderContent()" aria-label="Sort reps">
+          ${[['status','Needs attention first'],['active','Most active'],['load','Most rings'],['name','A–Z']]
+            .map(([k,l])=>`<option value="${k}" ${sort===k?'selected':''}>${l}</option>`).join('')}</select>
+      </div>
+    </div>
 
     <div class="mgr-grid">
     ${shown.map(c=>{
       const st = stateOf(c);
       const pct = maxRings ? Math.round((c.rings/maxRings)*100) : 0;
       const open = ui.mgrOpen && ui.mgrOpen.startsWith(c.id);
-      return `<div class="mgr-card ${open?'open':''}">
+      return `<div class="mgr-card mgr-${st.tone} ${open?'open':''}" data-name="${esc(c.name.toLowerCase())}">
         <div class="mgr-head">
-          <div class="av">${initials(c.name)}</div>
+          <div class="av mgr-av">${initials(splitRepName(c.name).name)}</div>
           <div style="flex:1;min-width:0">
             <div class="row-title" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
-              ${esc(c.name)}<span class="pill pill-${st.tone}">${st.label}</span></div>
+              ${esc(splitRepName(c.name).name)}${splitRepName(c.name).num?`<span class="rp-num">#${esc(splitRepName(c.name).num)}</span>`:''}</div>
             <div class="row-sub">${c.rings} ring${c.rings===1?'':'s'} · ${c.members} member${c.members===1?'':'s'}</div>
           </div>
+          <span class="pill pill-${st.tone}">${st.label}</span>
         </div>
+        <div class="mgr-spark" title="Calls logged, last 8 weeks: ${c.weeks.join(', ')}">
+          ${sparkline(c.weeks)}<span>${c.weeks.reduce((s,x)=>s+x,0)} in 8 wks</span></div>
         <div class="load"><span style="width:${pct}%;background:${c.rings>avg*1.5?'var(--rust)':'var(--primary)'}"></span></div>
         <div class="row-sub" style="margin:3px 0 10px">${c.rings>avg*1.5?'Above':c.rings<avg*0.6?'Below':'About'} average load</div>
         <div class="mgr-nums">
@@ -4092,7 +4119,44 @@ function vManager(){
       </div>`;
     }).join('')}
     </div>
-    ${!shown.length?`<div class="empty">Nobody in that group.</div>`:''}`;
+    <div class="empty" id="mgrNone" ${shown.length?'hidden':''}>Nobody matches that.</div>`;
+}
+/* Typing in "Find a rep" hides cards in place, so the box keeps focus */
+function mgrRefilter(){
+  const q = (ui.mgrQ || '').trim().toLowerCase();
+  let n = 0;
+  document.querySelectorAll('.mgr-card').forEach(c => { const hit = !q || c.dataset.name.includes(q); c.hidden = !hit; if(hit) n++; });
+  const none = document.getElementById('mgrNone'); if(none) none.hidden = n > 0;
+}
+/* A rep's last 8 weeks as a tiny line */
+function sparkline(counts){
+  const w = 96, h = 26, max = Math.max(1, ...counts), step = w / (counts.length - 1);
+  const pts = counts.map((c,i) => `${(i*step).toFixed(1)},${(h - 3 - c/max*(h-6)).toFixed(1)}`);
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true">
+    <polygon points="0,${h} ${pts.join(' ')} ${w},${h}" class="sp-area"/>
+    <polyline points="${pts.join(' ')}" class="sp-line"/>
+    <circle cx="${w}" cy="${pts[pts.length-1].split(',')[1]}" r="2.6" class="sp-dot"/></svg>`;
+}
+/* Numbers count up the first time a screen opens; later redraws stay still */
+var countedFor = null;
+function animateCounts(root){
+  const key = screenKey();
+  if(countedFor === key) return;
+  countedFor = key;
+  if(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const els = root.querySelectorAll('.cu');
+  if(!els.length) return;
+  let t0 = null; const dur = 650;
+  const targets = [...els].map(el => [el, parseInt(el.dataset.n, 10) || 0]);
+  const finish = () => targets.forEach(([el, n]) => { el.textContent = n; });
+  const tick = now => {
+    if(t0 === null) t0 = now;                       // start on the first frame, never "before" it
+    const p = Math.max(0, Math.min(1, (now - t0) / dur)), e = 1 - Math.pow(1 - p, 3);
+    targets.forEach(([el, n]) => { if(el.isConnected) el.textContent = Math.round(n * e); });
+    if(p < 1) requestAnimationFrame(tick); else finish();
+  };
+  requestAnimationFrame(tick);
+  setTimeout(finish, dur + 300);                     // a background tab may never run the frames
 }
 
 /* ── the office decides ── */
@@ -4169,8 +4233,9 @@ function repScorecard(){
     const noRhythm = rings.filter(r=>r.status==='active' && !r.meetingRhythm).length;
     const hrs = S.timeEntries.filter(t=>t.loginId===id||t.repId===id)
       .reduce((n,t)=>n+Number(t.hours||0),0);
+    const weeks = weeklyCounts(S.activities.filter(a=>a.repId===id && a.outcome));
     return { id, name, rings:rings.length, members, overdue:overdue.length,
-             soon:soon.length, logged:logged.length, neverVisited, noRhythm, hrs };
+             soon:soon.length, logged:logged.length, neverVisited, noRhythm, hrs, weeks };
   }).sort((a,b)=> b.overdue-a.overdue || b.rings-a.rings);
 }
 
@@ -4722,15 +4787,47 @@ function openPreviewPicker(){
  * "sign in with Google" button would have served one person and shut out ten.
  */
 /** Who a rep calls when they're stuck. Set in Settings, not hardcoded. */
-function supportLine(){
-  let phone = '', who = 'the office';
-  try{
-    const raw = localStorage.getItem(KEY);
-    if(raw){ const st = JSON.parse(raw); phone = (st.settings||{}).supportPhone || ''; who = (st.settings||{}).supportName || who; }
-  }catch(e){}
-  if(!phone) return `Trouble signing in? Contact ${esc(who)}.`;
-  return `Trouble signing in? Call ${esc(who)} on <a href="tel:${esc(phone.replace(/[^0-9+]/g,''))}">${esc(phone)}</a>.`;
+/* Who to ring for help. The server's answer wins (it is the same on every
+   device); until it arrives, the last one seen, then the built-in default. */
+const SUPPORT_DEFAULT = { name: 'Ashish Raj', phone: '540-212-9403' };
+function supportContact(){
+  let c = { ...SUPPORT_DEFAULT };
+  try{ const s = JSON.parse(localStorage.getItem('rephub_support') || 'null'); if(s && s.phone) c = s; }catch(e){}
+  return c;
 }
+function loadSupport(){
+  fetch('/api/support').then(r => r.ok ? r.json() : null).then(s => {
+    if(!s || !s.phone) return;
+    try{ localStorage.setItem('rephub_support', JSON.stringify(s)); }catch(e){}
+    document.querySelectorAll('[data-support]').forEach(el => { el.innerHTML = el.dataset.support === 'line' ? supportLine() : supportFoot(); });
+  }).catch(() => {});
+}
+const telHref = p => 'tel:' + String(p).replace(/[^0-9+]/g, '');
+function supportLine(){
+  const c = supportContact();
+  return `<span data-support="line">Trouble signing in? Call ${esc(c.name)} on <a href="${telHref(c.phone)}">${esc(c.phone)}</a>.</span>`;
+}
+function supportFoot(){
+  const c = supportContact();
+  return `${icon('phone',14)} Need help? <strong>${esc(c.name)}</strong> · <a href="${telHref(c.phone)}">${esc(c.phone)}</a>`;
+}
+
+/* Netlify adds its own badge to the page; find it and let CSS keep it off the tab bar */
+function tameInjected(){
+  const ours = '.tabbar,.toasts,.overlay,.sheet,.loading-pill,.tourbar,#app';
+  [...document.body.children].forEach(el => {
+    if(el.dataset && el.dataset.tamed || /^(SCRIPT|STYLE|LINK|NOSCRIPT)$/.test(el.tagName) || el.matches(ours)) return;
+    const cs = getComputedStyle(el);
+    const desc = (el.id + ' ' + el.className + ' ' + (el.getAttribute('href') || '') + ' ' + (el.src || '') + ' ' +
+      (el.textContent || '').slice(0, 120)).toLowerCase();
+    const fixedish = cs.position === 'fixed' || cs.position === 'sticky' ||
+      [...el.children].some(c => getComputedStyle(c).position === 'fixed');
+    if(fixedish && (desc.includes('netlify') || el.shadowRoot || el.tagName === 'IFRAME' || el.tagName.includes('-'))){
+      el.dataset.tamed = '1'; el.classList.add('nf-badge');
+    }
+  });
+}
+try{ new MutationObserver(tameInjected).observe(document.body, { childList: true }); setTimeout(tameInjected, 1500); }catch(e){}
 
 /**
  * Choosing a password, from an invitation or a reset.
@@ -5053,9 +5150,12 @@ async function resendTwoStep(btn){
 async function finishSignIn(out){
   API.setToken(out.token);
   signInAs(out.user);
-  await refreshMode();
-  await loadFromServer();
+  // Into the app at once, with placeholders; the data fills in behind. The
+  // sign-in button used to wait for every list in the CRM to load first.
+  loading = true;
   render();
+  refreshMode().then(() => renderContent()).catch(() => {});
+  loadFromServer().catch(() => {});
 }
 
 async function doSignup(e){
@@ -5276,11 +5376,7 @@ async function doLogin(e){
       return;
     }
     if(out.device) saveDevice(out.device);
-    API.setToken(out.token);
-    signInAs(out.user);
-    await refreshMode();
-    await loadFromServer();
-    render();
+    await finishSignIn(out);
   }catch(ex){
     const m = String(ex.message || '');
     // Signed up but never confirmed: a fresh code has just been sent
@@ -5732,7 +5828,7 @@ function renderContent(){
 }
 var renderRetry = null;
 function renderContentSafe(el){
-  try { renderContentInner(el); renderRetry = null; }
+  try { renderContentInner(el); renderRetry = null; animateCounts(el); }
   catch(e){
     console.error('[render]', e);
     // A hiccup while data is still arriving should not flash an error
@@ -5858,6 +5954,7 @@ function render(){
             <div class="top-right" id="topRight"></div></div>
           <div id="banners"></div>
           <div class="content" id="content"></div>
+          <div class="mobile-help" data-support="foot">${supportFoot()}</div>
         </div></div>
         <div class="tabbar" id="tabbar"></div>`;
       shellFor = who;
@@ -5896,6 +5993,7 @@ function fillShell(){
 // the money formatter — and a refresh on those screens showed
 // "This screen could not load" until the data arrived.
 queueMicrotask(render);
+loadSupport();
 
 /* ══════════════════ NEW: helpers for calendar + money ══════════════════ */
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -5993,13 +6091,13 @@ function calendarItems(repId, range) {
   const mine = r => !repId || r.repId === repId;
   myEvents(repId).forEach(e => out.push({
     kind: 'event', date: e.date, time: e.time, title: e.title, repId: e.repId || null,
-    sub: `${e.type} · ${e.location}`, id: e.id, regs: e.registrationCount || eventRegs(e.id).length,
+    sub: e.type, where: e.location, id: e.id, regs: e.registrationCount || eventRegs(e.id).length,
     go: `openEvent('${e.id}')`
   }));
   myVisits(repId).filter(v => v.status === 'Scheduled').forEach(v => {
     const g = ring(v.ringId);
     out.push({ kind: 'visit', date: v.date, time: v.time, title: `Visit — ${g ? g.name : ''}`,
-               sub: v.location, id: v.id, repId: v.repId || (g ? g.repId : null), ringId: v.ringId,
+               sub: '', where: v.location, id: v.id, repId: v.repId || (g ? g.repId : null), ringId: v.ringId,
                go: g ? `openRing('${g.id}')` : '' });
   });
   // Meetings a rep has actually recorded. These were being saved and then
@@ -6150,7 +6248,7 @@ function vCalendar() {
         <div class="ag-time">${i.time ? esc(i.time) : 'All day'}</div>
         <div class="ag-body">
           <div class="row-title">${esc(i.title)}</div>
-          ${i.sub ? `<div class="row-sub">${esc(i.sub)}</div>` : ''}
+          ${i.sub || i.where ? `<div class="row-sub">${esc(i.sub||'')}${i.sub && i.where ? ' · ' : ''}${mapLink(i.where)}</div>` : ''}
           <div class="btnrow" style="margin-top:7px">${actions(i)}</div>
         </div></div>`).join('')}
     </div>`).join('')
@@ -6279,7 +6377,7 @@ function vEventDetail() {
       <span class="tag info">${days(e.date) < 0 ? 'past' : 'in ' + days(e.date) + 'd'}</span>
     </div>
     <div class="card">
-      <div class="kv"><span class="k">Where</span><span>${esc(e.location)}</span></div>
+      <div class="kv"><span class="k">Where</span><span>${mapLink(e.location) || '—'}</span></div>
       <div class="kv"><span class="k">Region</span><span>${esc(e.region)}</span></div>
       <div class="kv"><span class="k">Rep</span><span>${pname(e.repId)}</span></div>
       <div class="kv"><span class="k">Registered</span><span>${regs.length} (${heads} expected including guests)</span></div>
@@ -6581,7 +6679,7 @@ function vTimesheet() {
     <div class="row-actions">
       ${isExp && t.receipt ? `<button class="btn sm" onclick="viewReceipt('${t.id}')">Receipt</button>`
         : isExp ? `<span class="tag ${t.receiptDropped ? 'overdue' : 'later'}">${t.receiptDropped ? 'receipt failed' : 'no receipt'}</span>` : ''}
-      ${isExp && isOffice() && t.billId ? `<span class="tag ok" title="Bill ${esc(t.billId)} in Zoho Books">Bill in Books</span>` : ''}
+      ${isExp && can('books') && t.billId ? `<span class="tag ok" title="Bill ${esc(t.billId)} in Zoho Books">Bill in Books</span>` : ''}
       <span class="tag ${t.status === 'Approved' || t.status === 'Reimbursed' ? 'ok' : t.status === 'Draft' ? 'later' : 'soon'}">${t.status}</span>
       ${isOffice() && t.status === 'Submitted' ? `<button class="btn sm primary" onclick="approveEntry('${isExp ? 'exp' : 'time'}','${t.id}')">Approve</button>` : ''}
     </div></div>`;
@@ -6670,7 +6768,7 @@ function vVisits() {
     const g = ring(v.ringId);
     return `<div class="row">
       <div class="row-main"><div class="row-title">${g ? esc(g.name) : 'Unknown ring'}</div>
-      <div class="row-sub">${fmt(v.date)}${v.time ? ' at ' + esc(v.time) : ''} · ${esc(v.location || 'place to be set')}${isOffice() ? ' · ' + pname(v.repId) : ''}${v.notes ? ' · ' + esc(v.notes) : ''}</div></div>
+      <div class="row-sub">${fmt(v.date)}${v.time ? ' at ' + esc(v.time) : ''} · ${v.location ? mapLink(v.location) : 'place to be set'}${isOffice() ? ' · ' + pname(v.repId) : ''}${v.notes ? ' · ' + esc(v.notes) : ''}</div></div>
       <div class="row-actions">
         ${tag(v.date)}
         ${v.status === 'Scheduled' && v.repId === ui.me ? `<button class="btn sm primary" onclick="completeVisit('${v.id}')">Mark visited</button>` : ''}
@@ -6771,7 +6869,7 @@ async function sendToAccounting() {
       openModal(`<h3>Sent</h3>
         <p class="lead">${out.time} time entr${out.time === 1 ? 'y' : 'ies'} and ${out.expenses} expense${out.expenses === 1 ? '' : 's'}
           emailed to ${esc(out.to || to)}, and marked as sent so nothing is claimed twice.</p>
-        ${out.books ? (out.books.error
+        ${out.books && can('books') ? booksResult(out.books) || (out.books.error
           ? `<div class="callout rust"><strong>Zoho Books bills not made yet</strong>${esc(out.books.error)} They will be retried; see Settings → Zoho Books.</div>`
           : `<div class="callout ${out.books.failed ? 'rust' : 'ok'}"><strong>Zoho Books</strong>
               ${out.books.made} bill${out.books.made === 1 ? '' : 's'} made with receipts attached${out.books.left ? `; ${out.books.left} more within 15 minutes` : ''}.
@@ -6861,6 +6959,7 @@ async function submitTime(e) {
 
 function openExpense() {
   pendingReceipt = null;
+  loadVendorSuggestions();
   openModal(`<h3>Add an expense</h3>
     <p class="lead">Attach the receipt to the reimbursement form and send it in as usual.</p>
     <form onsubmit="submitExpense(event)">
@@ -6871,7 +6970,8 @@ function openExpense() {
       <div class="two">
         <div class="field"><label>Category</label><select name="category">${EXPENSE_CATEGORIES.map(c => `<option>${c}</option>`).join('')}</select></div>
         <div class="field"><label>Vendor / paid to</label>
-          <input name="vendor" required maxlength="120" placeholder="e.g. Sheetz, Staples, Hampton Inn" autocomplete="off"></div>
+          <input name="vendor" required maxlength="120" placeholder="e.g. Sheetz, Staples, Hampton Inn" autocomplete="off" list="vendorList">
+          <datalist id="vendorList">${(booksVendors||[]).map(n => `<option value="${esc(n)}">`).join('')}</datalist></div>
       </div>
       <div class="field"><label>What was it for?</label><textarea name="description" required placeholder="Mileage to which group, supplies for which event"></textarea></div>
       <div class="field"><label>Receipt</label>
@@ -7666,8 +7766,7 @@ function blankFormPDF(which) {
       on the device and sent when you're back in range. You can also print a call sheet to carry.</p>
 
       <h2 style="font-size:14px;margin:18px 0 6px">If you're stuck</h2>
-      <p style="font-size:12.5px;line-height:1.7">Contact the office — the number is on the sign-in
-      screen.</p>
+      <p style="font-size:12.5px;line-height:1.7">Call ${esc(supportContact().name)} on ${esc(supportContact().phone)}.</p>
 
       <p style="font-size:11px;color:#777;margin-top:24px">
         Working version held in the Rep Hub, replaced by Symbiz's own manual once the office adds
