@@ -1213,14 +1213,19 @@ r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
  * already logged in Rep_Visit_Trackings.
  */
 r.get('/visits', auth.authRequired, wrap(async (req, res) => {
-  const { rings, ringIds } = await scopeRings(req.user, req.query.as);
+  const [{ rings, ringIds }, planRows] = await Promise.all([scopeRings(req.user, req.query.as), q.visitPlans().catch(() => [])]);
+  const plans = new Map(planRows.map(p => [p.ring_id, p]));
   const out = [];
 
   rings.forEach(r => {
+    // The date lives on the ring in Zoho; the time, place and notes typed in Rep Hub
+    const plan = plans.get(r.id);
+    const same = plan && String(plan.visit_date instanceof Date ? plan.visit_date.toISOString() : plan.visit_date).slice(0, 10) === String(r.nextRepVisit || '').slice(0, 10);
     if (r.nextRepVisit) out.push({
       id: `next_${r.id}`, ringId: r.id, ringName: r.name, repZohoId: r.repZohoId,
       date: r.nextRepVisit, status: 'Scheduled', source: 'ring',
-      location: r.regionName || '', notes: '',
+      time: same ? plan.visit_time || '' : '', location: same && plan.location ? plan.location : (r.regionName || ''),
+      notes: same ? plan.notes || '' : '',
     });
     if (r.lastRepVisit) out.push({
       id: `last_${r.id}`, ringId: r.id, ringName: r.name, repZohoId: r.repZohoId,
@@ -1434,9 +1439,17 @@ async function summitEvents(fresh) {
 const summitGuard = [auth.authRequired, auth.requireOffice, access.requirePerm('summits')];
 
 r.get('/summits', ...summitGuard, wrap(async (req, res) => {
-  const [events, counts, notes] = await Promise.all([summitEvents(req.query.fresh === '1'), q.summitTaskCounts(), q.allSummitNotes()]);
-  const c = new Map(counts.map(x => [x.event_id, x])), n = new Set(notes.filter(x => x.notes).map(x => x.event_id));
-  res.json(events.map(e => ({ ...e, tasksDone: c.get(e.id)?.done || 0, tasksTotal: c.get(e.id)?.total || 0, hasNotes: n.has(e.id) })));
+  const [events, rows, notes] = await Promise.all([summitEvents(req.query.fresh === '1'), q.summitTaskRows(), q.allSummitNotes()]);
+  const byEvent = new Map();
+  rows.forEach(t => { if (!byEvent.has(t.event_id)) byEvent.set(t.event_id, []); byEvent.get(t.event_id).push(t); });
+  const n = new Set(notes.filter(x => x.notes).map(x => x.event_id)), t0 = today();
+  res.json(events.map(e => {
+    const ts = byEvent.get(e.id) || [];
+    const open = ts.filter(t => !t.done).map(t => ({ title: t.title, owner: t.owner, due: t.due_offset == null ? null : addDays(e.date, t.due_offset) }));
+    const next = open.filter(t => t.due).sort((a, b) => a.due.localeCompare(b.due))[0] || open[0] || null;
+    return { ...e, tasksDone: ts.length - open.length, tasksTotal: ts.length, hasNotes: n.has(e.id),
+      tasksLate: open.filter(t => t.due && t.due < t0).length, nextTask: next };
+  }));
 }));
 
 r.get('/summits/:id', ...summitGuard, wrap(async (req, res, next) => {
@@ -3165,6 +3178,9 @@ r.post('/visits', auth.authRequired, writesAllowed, wrap(async (req, res) => {
   if (!isDate(date)) return res.status(400).json({ error: 'Pick a date for the visit' });
   const ring = await ringForVisit(req, res); if (!ring) return;
   await zoho.updateRecords(M.RING, [{ id: ring.id, Next_Rep_Visit: date }]);
+  const b = req.body || {};
+  await q.setVisitPlan(ring.id, { date, time: String(b.time || '').slice(0, 40), location: String(b.location || '').slice(0, 300),
+    notes: String(b.notes || '').slice(0, 2000) }, req.user.name || req.user.email);
   zoho.clearCache(); dropSnapshot();
   await audit(req.user.id, 'visit.planned', { ringId: ring.id, date, forRep: ring.repZohoId }, req.ip);
   res.status(201).json({ ok: true, id: `next_${ring.id}`, ringId: ring.id, date, repZohoId: ring.repZohoId });
@@ -3188,7 +3204,7 @@ r.post('/visits/report', auth.authRequired, writesAllowed, wrap(async (req, res)
   })]);
   const patch = { id: ring.id };
   if (!ring.lastRepVisit || b.date > ring.lastRepVisit) patch.Last_Rep_Visit = b.date;
-  if (ring.nextRepVisit && ring.nextRepVisit <= b.date) patch.Next_Rep_Visit = null;
+  if (ring.nextRepVisit && ring.nextRepVisit <= b.date) { patch.Next_Rep_Visit = null; await q.dropVisitPlan(ring.id).catch(() => {}); }
   if (Object.keys(patch).length > 1) await zoho.updateRecords(M.RING, [patch]);
   zoho.clearCache(); dropSnapshot();
   const id = out[0]?.details?.id;

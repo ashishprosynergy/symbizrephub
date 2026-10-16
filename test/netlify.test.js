@@ -1259,6 +1259,9 @@ describe("ring meetings, membership levels and the member map", () => {
     assert.equal(again.history[0].notes, 'Start registration earlier', "last year's notes show on this year's summit");
     const list2 = JSON.parse((await invoke('GET', '/summits', { token })).body);
     assert.equal(list2.find(s => s.id === 'SU1').tasksDone, 1);
+    const su1 = list2.find(s => s.id === 'SU1');
+    assert.equal(typeof su1.tasksLate, 'number');
+    assert.ok(su1.nextTask && su1.nextTask.title, 'the next task to do is named');
   });
 
   test('the standard checklist can be replaced with Symbiz\'s own, and a summit with nothing done can start again from it', async () => {
@@ -1507,10 +1510,16 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
   });
 
   test('the office books a visit for a rep, then files the report', async () => {
-    const plan = await invoke('POST', '/visits', { token: office, body: { ringId: 'GRM1', date: '2026-11-03' } });
+    const plan = await invoke('POST', '/visits', { token: office, body: { ringId: 'GRM1', date: '2026-11-03', time: '7:00 PM', location: 'Shady Maple Farm Market, 1324 Main Street, East Earl', notes: 'Bring forms' } });
     assert.equal(plan.statusCode, 201);
     const g = store.Growth_Ring_Groups.find(x => x.id === 'GRM1');
     assert.equal(g.Next_Rep_Visit, '2026-11-03');
+    // The place, time and notes are kept in Rep Hub and come back with the visit
+    const listed = JSON.parse((await invoke('GET', '/visits', { token: office })).body);
+    const v = (Array.isArray(listed) ? listed : []).find(x => x.ringId === 'GRM1' && x.status === 'Scheduled');
+    const row = (await db.q.visitPlans()).find(p => p.ring_id === 'GRM1');
+    assert.equal(row.location, 'Shady Maple Farm Market, 1324 Main Street, East Earl'); assert.equal(row.visit_time, '7:00 PM');
+    assert.ok(v, 'the planned visit is listed'); assert.equal(v.location, 'Shady Maple Farm Market, 1324 Main Street, East Earl'); assert.equal(v.time, '7:00 PM');
     // a rep cannot book someone else's ring
     assert.equal((await invoke('POST', '/visits', { token: rep, body: { ringId: 'GRM1', date: '2026-11-03' } })).statusCode, 403);
 

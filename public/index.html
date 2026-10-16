@@ -157,6 +157,19 @@
   .chk-title{font-size:14px;}
   .chk-row.done .chk-title{text-decoration:line-through;color:var(--ink-faint);}
   .chk-late{color:var(--rust);font-weight:600;}
+  .summit-prog{margin-bottom:14px}
+  .sp-row{padding:10px 0;border-top:1px solid var(--line-soft)}
+  .sp-row:first-of-type{border-top:0}
+  .sp-num{white-space:nowrap}
+  .place-wrap{position:relative}
+  .place-list{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:50;background:var(--surface);border:1px solid var(--line);
+    border-radius:10px;box-shadow:0 10px 28px rgba(20,30,15,.16);max-height:280px;overflow:auto;padding:4px}
+  .place-opt{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;text-align:left;border:0;background:none;
+    padding:8px 10px;border-radius:7px;cursor:pointer;font:inherit;color:var(--ink)}
+  .place-opt.on,.place-opt:hover{background:var(--primary-soft)}
+  .po-l{font-size:14px} .po-s{font-size:11.5px;color:var(--ink-muted);text-transform:capitalize}
+  .place-foot{font-size:11px;color:var(--ink-faint);padding:6px 10px 4px}
+  .gmap-link{color:var(--primary);font-weight:600}
   .tpl-head,.tpl-row{display:grid;grid-template-columns:120px 70px 1fr 34px;gap:6px;align-items:center}
   .tpl-head{font-size:11.5px;color:var(--ink-muted);font-weight:600;margin-bottom:4px;padding-right:2px}
   .tpl-rows{max-height:46vh;overflow:auto;display:flex;flex-direction:column;gap:6px}
@@ -2750,6 +2763,7 @@ function vOfficeDash(){
             <div class="bar"><span style="width:${Math.round(n/most*100)}%"></span></div></div>
             <strong class="leader-n">${n}</strong></div>`).join('')}</div>` : ''}</div>`;
     })()}
+    ${summitProgressCard()}
     ${(() => {
       const rated = rings.map(r=>({r, h:ringHealth(r)})).filter(x=>x.h!==null);
       const risky = rated.filter(x=>x.h<50);
@@ -4979,10 +4993,88 @@ async function bookVisit(ringId){
     toast('Visit booked'); }
   catch(e){ toast(e.message || 'Could not book it'); }
 }
-/** Book a visit: live, it is the ring's Next Rep Visit in Zoho */
+/* ── Place search: type keywords ("shady maple east earl") and pick a real
+   address, or just type your own. Suggestions are the ring's own past
+   meeting places first, then OpenStreetMap's place search (Photon: free,
+   no key). "Check on Google Maps" opens whatever is in the box. ── */
+function placeField(name, value, label, ringId){
+  const q = encodeURIComponent(value || '');
+  return `<div class="field place-field"><label>${esc(label)}</label>
+    <div class="place-wrap">
+      <input name="${name}" value="${esc(value || '')}" data-ring="${esc(ringId || '')}" autocomplete="off" spellcheck="false"
+        placeholder="Search a place, e.g. Shady Maple East Earl, or type an address"
+        oninput="placeSearch(this)" onfocus="placeSearch(this)" onkeydown="placeKeys(event,this)" onblur="setTimeout(()=>placeClose(this),180)">
+      <div class="place-list" role="listbox" hidden></div></div>
+    <div class="hint">Pick a suggestion or type it yourself. <a class="gmap-link" target="_blank" rel="noopener"
+      href="https://www.google.com/maps/search/?api=1&query=${q}" onclick="this.href='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(this.closest('.place-field').querySelector('input').value||'')">Check on Google Maps ↗</a></div></div>`;
+}
+/** The ring's own places: where it has met, and its meeting place in Zoho */
+function placeLocalList(ringId){
+  const g = ringId ? ring(ringId) : null, seen = new Set(), out = [];
+  const add = (label, sub) => { const k = label.toLowerCase().trim(); if(!label || seen.has(k) || /^(online|zoom|virtual|tbd)$/i.test(label)) return; seen.add(k); out.push({ label, sub }); };
+  (S.meetings || []).filter(m => m.ringId === ringId && m.place).sort((a,b) => String(b.date).localeCompare(String(a.date)))
+    .forEach(m => add(m.place, 'Where ' + (g ? g.name : 'this ring') + ' met, ' + fmt(m.date)));
+  if(g && g.meetPlace) add(g.meetPlace, 'Meeting place in Zoho');
+  return out.slice(0, 4);
+}
+var placeTimer = null, placeAbort = null, placeCache = new Map();
+function placeRender(input, items){
+  const list = input.parentNode.querySelector('.place-list');
+  if(!items.length){ list.hidden = true; list.innerHTML = ''; return; }
+  list.innerHTML = items.map((x, i) => `<button type="button" class="place-opt ${i===0?'on':''}" role="option" data-v="${esc(x.label)}"
+      onmousedown="event.preventDefault();placePick(this)"><span class="po-l">${esc(x.label)}</span>${x.sub ? `<span class="po-s">${esc(x.sub)}</span>` : ''}</button>`).join('')
+    + `<div class="place-foot">Places from OpenStreetMap · or keep typing your own</div>`;
+  list.hidden = false;
+}
+function placeLocal(input){
+  const v = input.value.trim().toLowerCase();
+  return placeLocalList(input.dataset.ring).filter(x => !v || x.label.toLowerCase().includes(v));
+}
+function placeSearch(input){
+  clearTimeout(placeTimer);
+  const v = input.value.trim(), local = placeLocal(input);
+  if(v.length < 3){ placeRender(input, local); return; }
+  if(placeCache.has(v.toLowerCase())){ placeRender(input, [...local, ...placeCache.get(v.toLowerCase())].slice(0, 7)); return; }
+  placeRender(input, local);
+  placeTimer = setTimeout(async () => {
+    if(placeAbort) placeAbort.abort();
+    placeAbort = new AbortController();
+    try{
+      // Weighted towards Lancaster County, where most rings meet
+      const r = await fetch('https://photon.komoot.io/api/?limit=6&lang=en&lat=40.04&lon=-76.3&q=' + encodeURIComponent(v), { signal: placeAbort.signal });
+      const j = await r.json();
+      const found = (j.features || []).filter(f => !f.properties.countrycode || ['US','CA'].includes(f.properties.countrycode)).map(f => {
+        const p = f.properties;
+        const street = [p.housenumber, p.street].filter(Boolean).join(' ');
+        const town = [p.city || p.town || p.village || p.district || p.county, p.state, p.postcode].filter(Boolean).join(', ').replace(/, (\d{5})$/, ' $1');
+        const label = [p.name && p.name !== p.street ? p.name : '', street, town].filter(Boolean).join(', ');
+        return { label, sub: p.osm_value && p.osm_value !== 'yes' ? p.osm_value.replace(/_/g, ' ') : '' };
+      }).filter(x => x.label);
+      placeCache.set(v.toLowerCase(), found);
+      if(document.activeElement === input && input.value.trim() === v) placeRender(input, [...placeLocal(input), ...found].slice(0, 7));
+    }catch(e){ /* offline or slow: typing your own still works */ }
+  }, 280);
+}
+function placePick(btn){
+  const input = btn.closest('.place-wrap').querySelector('input');
+  input.value = btn.dataset.v; placeClose(input);
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+function placeClose(input){ const l = input.parentNode.querySelector('.place-list'); if(l) l.hidden = true; }
+function placeKeys(e, input){
+  const list = input.parentNode.querySelector('.place-list');
+  if(!list || list.hidden) return;
+  const opts = [...list.querySelectorAll('.place-opt')]; let i = opts.findIndex(o => o.classList.contains('on'));
+  if(e.key === 'ArrowDown' || e.key === 'ArrowUp'){ e.preventDefault(); i = (i + (e.key === 'ArrowDown' ? 1 : -1) + opts.length) % opts.length;
+    opts.forEach((o, k) => o.classList.toggle('on', k === i)); opts[i].scrollIntoView({ block: 'nearest' }); }
+  else if(e.key === 'Enter' && i >= 0 && opts.length){ e.preventDefault(); placePick(opts[i]); }
+  else if(e.key === 'Escape'){ placeClose(input); }
+}
+
+/** Book a visit: live, the date is the ring's Next Rep Visit in Zoho, and the time, place and notes are kept in Rep Hub */
 async function saveVisitPlan(ringId, date, extra){
   const g = ring(ringId);
-  if(API.live) await API.call('/visits', { method:'POST', body: JSON.stringify({ ringId, date }) });
+  if(API.live) await API.call('/visits', { method:'POST', body: JSON.stringify({ ringId, date, ...(extra || {}) }) });
   S.visits = (S.visits||[]).filter(v => !(v.ringId === ringId && v.status === 'Scheduled'));
   S.visits.push({ id: 'next_' + ringId, ringId, repId: g ? g.repId : ui.me, date, time: (extra||{}).time || '',
     location: (extra||{}).location || (g && g.meetPlace) || '', status: 'Scheduled', notes: (extra||{}).notes || '' });
@@ -5060,7 +5152,31 @@ function loadSummits(force){
       try{ localStorage.setItem('rephub_summits', JSON.stringify(v)); }catch(e){}
       if(force) toast('Summits are up to date with Zoho'); })
     .catch(e => { if(!summitList || force) toast(e.message || 'Could not refresh'); if(!summitList) summitList = { error: e.message }; })
-    .finally(() => { summitBusy = false; if(ui.view === 'summits') renderContent(); });
+    .finally(() => { summitBusy = false; if(ui.view === 'summits' || ui.view === 'dash') renderContent(); });
+}
+/* On the Overview: how far planning has got for each summit coming up */
+function summitProgressCard(){
+  if(!API.live || !isOffice() || !can('summits')) return '';
+  loadSummits();
+  if(!Array.isArray(summitList)) return '';
+  const ahead = summitList.filter(s => s.date >= TODAY_S).sort((a,b) => a.date.localeCompare(b.date)).slice(0, 4);
+  if(!ahead.length) return '';
+  return `<div class="card summit-prog"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <div class="trend-t" style="margin:0">Summit planning</div>
+      <button class="btn sm ghost" onclick="setView('summits')">All summits ›</button></div>
+    ${ahead.map(s => { const pct = s.tasksTotal ? Math.round(s.tasksDone / s.tasksTotal * 100) : 0, d = days(s.date);
+      const tone = s.tasksLate ? 'var(--rust)' : pct >= 80 ? 'var(--primary)' : 'var(--accent)';
+      const nt = s.nextTask;
+      return `<div class="sp-row clicky" onclick="openSummit('${s.id}')">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
+          <div style="min-width:0"><span class="row-title">${esc(s.name)}</span>
+            <span class="row-sub"> · ${fmt(s.date)} · ${d === 0 ? 'today' : d === 1 ? 'tomorrow' : 'in ' + d + ' days'}</span></div>
+          <div class="sp-num">${s.tasksTotal ? `<strong>${pct}%</strong> <span class="row-sub">${s.tasksDone} of ${s.tasksTotal} done</span>` : '<span class="row-sub">Checklist not opened yet</span>'}</div></div>
+        <div class="load" style="margin:6px 0 4px"><span style="width:${pct}%;background:${tone}"></span></div>
+        <div class="row-sub">${s.tasksLate ? `<strong style="color:var(--rust)">${s.tasksLate} task${s.tasksLate===1?'':'s'} late</strong> · ` : ''}${nt
+          ? `Next: ${esc(nt.title)}${nt.due ? ' — ' + (nt.due < TODAY_S ? 'was due ' : 'due ') + fmtShort(nt.due) : ''}${nt.owner ? ' · ' + esc(nt.owner) : ' · nobody assigned'}`
+          : (s.tasksTotal ? 'Everything is done' : 'Open it to start the checklist')}</div></div>`; }).join('')}
+  </div>`;
 }
 function loadSummitMine(){
   if(!API.live || !can('summits')) return;
@@ -7245,7 +7361,7 @@ const adapt = {
   visit(v){
     return {
       id: v.id, ringId: v.ringId, repId: v.repZohoId || null,
-      date: v.date, time: '', location: v.location || '',
+      date: v.date, time: v.time || '', location: v.location || '',
       status: v.status || 'Scheduled', notes: v.notes || '',
     };
   },
@@ -8813,13 +8929,13 @@ function openVisit(ringId) {
   openModal(`<h3>Schedule a Growth Ring visit</h3>
     <p class="lead">It'll show on your calendar and in the visit schedule.</p>
     <form onsubmit="submitVisit(event)">
-      <div class="field"><label>Growth Ring</label><select name="ringId" required>
+      <div class="field"><label>Growth Ring</label><select name="ringId" required onchange="const w=this.form.elements.location;w.dataset.ring=this.value;placeLocal(w)">
         ${rs.map(r => `<option value="${r.id}" ${r.id === ringId ? 'selected' : ''}>${esc(r.name)}${isRep() ? '' : ' · ' + esc(splitRepName(r.repName || pname(r.repId)).name)}</option>`).join('')}</select></div>
       <div class="two">
         <div class="field"><label>Date</label><input type="date" name="date" required min="${TODAY_S}"></div>
         <div class="field"><label>Time</label><input name="time" placeholder="7:00 PM"></div>
       </div>
-      <div class="field"><label>Where</label><input name="location" placeholder="Where the group meets"></div>
+      ${placeField('location', '', 'Where', ringId || (rs[0] && rs[0].id) || '')}
       <div class="field"><label>Notes</label><textarea name="notes" placeholder="Anything to prepare"></textarea></div>
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
       <button type="submit" class="btn primary">Schedule</button></div></form>`);

@@ -265,6 +265,7 @@ CREATE TABLE IF NOT EXISTS rep_notes (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS visit_plans (ring_id TEXT PRIMARY KEY, visit_date DATE NOT NULL, visit_time TEXT, location TEXT, notes TEXT, set_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS rep_messages (
   id          SERIAL PRIMARY KEY,
   sent_by     TEXT,
@@ -405,6 +406,16 @@ const q = {
 
   /* ── summits ── */
   summitTasks: eventId => query('SELECT * FROM summit_tasks WHERE event_id = $1 ORDER BY position, id', [eventId]),
+  /** Every summit task, small enough to read whole: for progress and what is late */
+  summitTaskRows: () => query('SELECT event_id, title, due_offset, done, owner FROM summit_tasks ORDER BY position, id'),
+  /** Where and when a planned visit is: Zoho only holds the date */
+  visitPlans: () => query('SELECT * FROM visit_plans'),
+  setVisitPlan: (ringId, f, by) => query(
+    `INSERT INTO visit_plans (ring_id, visit_date, visit_time, location, notes, set_by, updated_at) VALUES ($1,$2,$3,$4,$5,$6, now())
+     ON CONFLICT (ring_id) DO UPDATE SET visit_date = EXCLUDED.visit_date, visit_time = EXCLUDED.visit_time, location = EXCLUDED.location,
+       notes = EXCLUDED.notes, set_by = EXCLUDED.set_by, updated_at = now()`,
+    [ringId, f.date, f.time || null, f.location || null, f.notes || null, by || null]),
+  dropVisitPlan: ringId => query('DELETE FROM visit_plans WHERE ring_id = $1', [ringId]),
   summitTaskCounts: () => query('SELECT event_id, count(*)::int AS total, sum(CASE WHEN done THEN 1 ELSE 0 END)::int AS done FROM summit_tasks GROUP BY event_id'),
   addSummitTask: t => query(
     `INSERT INTO summit_tasks (event_id,title,stage,due_offset,owner,owner_id,position) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
