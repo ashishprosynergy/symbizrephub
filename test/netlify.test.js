@@ -1553,6 +1553,22 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.equal((await db.q.allUsers()).filter(x => x.zoho_owner_id === 'REPM').length, 1);
   });
 
+  test('undo: unused rep accounts can be removed and invited again; used ones are never touched', async () => {
+    assert.equal((await invoke('POST', '/admin/users/remove-unused', { token: rep, body: {} })).statusCode, 403);
+    const made = (await db.q.allUsers()).find(x => x.zoho_owner_id === 'REPM');
+    assert.ok(made && !made.last_login_at, 'the invited rep has not signed in');
+    const admin = J(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse' } })).token;
+    assert.equal((await invoke('POST', '/admin/users/remove-unused', { token: office, body: {} })).statusCode, 403, 'needs the accounts permission');
+    const r = J(await invoke('POST', '/admin/users/remove-unused', { token: admin, body: { ids: [made.id, 'rep1'] } }));
+    assert.deepEqual(r.removed.map(x => x.id), [made.id], 'the rep who has signed in (rep1) is kept');
+    assert.ok(!(await db.q.allUsers()).some(x => x.zoho_owner_id === 'REPM'));
+    assert.ok(await db.q.userByEmail('rep@test.org'), 'signed-in rep untouched');
+    // Back to "not invited", and invitable again
+    assert.equal(J(await invoke('GET', '/reps/onboarding', { token: office })).find(x => x.id === 'REPM').status, 'none');
+    await invoke('POST', '/reps/invite', { token: office, body: { repIds: ['REPM'] } });
+    assert.equal((await db.q.allUsers()).filter(x => x.zoho_owner_id === 'REPM').length, 1);
+  });
+
   test('the Monday email previews who it goes to and lists the warnings', async () => {
     const res = await invoke('POST', '/manager/digest/run', { token: office, body: { dryRun: true } });
     assert.equal(res.statusCode, 200);

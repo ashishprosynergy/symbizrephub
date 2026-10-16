@@ -3512,15 +3512,50 @@ async function inviteAllReps(){
   if(!Array.isArray(zohoReps)) return;
   const todo = zohoReps.filter(r=>!r.hasAccount && r.email);
   if(!todo.length){ toast('Every rep with an email already has an account'); return; }
-  openModal(`<h3>Create ${todo.length} accounts</h3>
-    <p class="lead">One for each rep found in Zoho who doesn't have one yet. Each is emailed a welcome with a link to choose their own password.</p>
+  openModal(`<h3>Invite ${todo.length} reps</h3>
+    <p class="lead">Each rep found in Zoho without an account gets a welcome email from Rep Hub: what it is, how to sign in, and a link to choose their own password (good for 7 days). Replies come to you.</p>
     <div class="card flat" style="max-height:200px;overflow:auto">
       ${todo.map(r=>`<div class="kv"><span>${esc(r.name)}</span><span class="row-sub">${esc(r.email)}</span></div>`).join('')}
     </div>
     <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
-    <button class="btn primary" onclick="runInviteAll()">Create them all</button></div>`);
+    <button class="btn primary" onclick="closeModal();repsInvite(${esc(JSON.stringify(todo.map(r=>r.contactId)))}, null)">Send ${todo.length} invitations</button></div>`);
 }
 
+/** Send the welcome invitation (making the account if needed), from the Reps screen */
+async function repsInvite(ids, btn){
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+  else openModal(`<h3>Sending invitations…</h3><p class="lead">${ids.length} rep${ids.length===1?'':'s'}. This takes a few seconds.</p>`);
+  try{
+    const r = await API.call('/reps/invite', { method:'POST', body: JSON.stringify({ repIds: ids }) });
+    const failed = r.results.filter(x => !x.sent);
+    const msg = `${r.sent} invitation${r.sent===1?'':'s'} sent${failed.length ? `; ${failed.length} not sent` : ''}`;
+    if(btn){ toast(failed.length && !r.sent ? 'Not sent: ' + (failed[0].skipped || failed[0].error) : msg); }
+    else openModal(`<h3>${esc(msg)}</h3>
+      <p class="lead">Each rep has a welcome email with a link to choose their password. This screen shows who has signed in.</p>
+      ${failed.length ? `<div class="callout rust"><strong>Not sent</strong>${failed.map(x => esc(x.name) + ': ' + esc(x.skipped || x.error || '')).join('<br>')}</div>` : ''}
+      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Done</button></div>`);
+    onboard = null; loadUsers(true);
+  }catch(e){
+    if(btn){ btn.disabled = false; btn.textContent = 'Try again'; toast(e.message || 'Could not send'); }
+    else openModal(`<h3>Couldn't send</h3><p class="lead">${esc(e.message)}</p><div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
+  }
+}
+function undoUnusedAccounts(){
+  const unused = (zohoReps || []).filter(r => r.account && !r.account.last_login_at && r.account.role === 'rep');
+  openModal(`<h3>Remove ${unused.length} unused account${unused.length===1?'':'s'}?</h3>
+    <p class="lead">These reps have never signed in. Their accounts are removed and the links already emailed to them stop working.
+      They go back to "Invite" on this screen, ready to be sent the welcome invitation. Accounts anyone has signed in with are never touched.</p>
+    <div class="pick-list">${unused.map(r => `<div class="pick" style="cursor:default"><span>${esc(r.name)}<span class="row-sub"> · ${esc(r.account.email)}</span></span></div>`).join('')}</div>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn danger" onclick="runUndoUnused(this, ${esc(JSON.stringify(unused.map(r => r.account.id)))})">Remove ${unused.length===1?'it':'them'}</button></div>`);
+}
+async function runUndoUnused(btn, ids){
+  btn.disabled = true; btn.textContent = 'Removing…';
+  try{ const r = await API.call('/admin/users/remove-unused', { method:'POST', body: JSON.stringify({ ids }) });
+    closeModal(); toast(`Removed ${r.removed.length} unused account${r.removed.length===1?'':'s'}. They can be invited now.`);
+    onboard = null; loadUsers(true); }
+  catch(e){ btn.disabled = false; btn.textContent = 'Try again'; toast(e.message || 'Could not remove'); }
+}
 async function runInviteAll(){
   const todo = zohoReps.filter(r=>!r.hasAccount && r.email);
   openModal(`<h3>Creating accounts…</h3><p class="lead" id="invProg">0 of ${todo.length} done</p>
@@ -3646,9 +3681,15 @@ function vTeam(){
         ${esc(zohoReps.error)}<br>Connect Zoho first, or add people with "Add someone".</div>` : ''}
       ${Array.isArray(zohoReps) && zohoReps.length ? `
         <div class="row-sub" style="margin-bottom:10px">Everyone named as Regional Rep on an active Growth Ring.
-          Creating an account from here links them to their rings automatically — no ids to copy.</div>
+          Inviting a rep emails them a welcome with a link to choose their own password; their account is linked to their rings automatically.</div>
+        ${(() => { const unused = zohoReps.filter(r => r.account && !r.account.last_login_at && r.account.role === 'rep');
+          return unused.length ? `<div class="callout info" style="margin-bottom:10px"><strong>${unused.length} account${unused.length===1?' was':'s were'} made but ${unused.length===1?'has':'have'} not been used yet</strong>
+            ${unused.length===1?'That rep has':'Those reps have'} not signed in. You can send ${unused.length===1?'them':'each'} the welcome invitation now, or remove ${unused.length===1?'the account':'these accounts'} and start again.
+            <div class="btnrow" style="margin-top:9px">
+              <button class="btn sm primary" onclick="repsInvite(${esc(JSON.stringify(unused.map(r=>r.contactId)))}, this)">Send ${unused.length===1?'the invitation':'all '+unused.length+' the invitation'}</button>
+              <button class="btn sm" onclick="undoUnusedAccounts()">Undo: remove ${unused.length===1?'it':'these '+unused.length}</button></div></div>` : ''; })()}
         ${zohoReps.filter(r=>!r.hasAccount && r.email).length > 1 ? `<div class="btnrow" style="margin-bottom:10px">
-          <button class="btn primary" onclick="inviteAllReps()">Create accounts for all
+          <button class="btn primary" onclick="inviteAllReps()">Invite all
             ${zohoReps.filter(r=>!r.hasAccount && r.email).length} remaining</button></div>` : ''}
         ${zohoReps.map(r=>`<div class="row">
           <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
@@ -3660,9 +3701,12 @@ function vTeam(){
           <div class="row-actions">
             <button class="btn sm" onclick="previewAsRep('${esc(r.contactId)}','${esc(r.name)}')">See their view</button>
             ${r.hasAccount
-              ? `<span class="tag ok">has an account</span>`
+              ? (r.account && r.account.last_login_at
+                  ? `<span class="tag ok">signed in ${fmt(String(r.account.last_login_at).slice(0,10))}</span>`
+                  : `<span class="tag soon">not signed in yet</span>
+                     <button class="btn sm" onclick="repsInvite(['${esc(r.contactId)}'], this)">Send invitation</button>`)
               : r.email
-                ? `<button class="btn sm primary" onclick="inviteRep('${esc(r.contactId)}')">Create account</button>`
+                ? `<button class="btn sm primary" onclick="repsInvite(['${esc(r.contactId)}'], this)">Invite</button>`
                 : `<span class="tag overdue">no email</span>`}
           </div></div>`).join('')}
       ` : ''}

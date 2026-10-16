@@ -3043,9 +3043,32 @@ async function repOnboarding() {
       lastLogin: u && u.last_login_at ? new Date(u.last_login_at).toISOString() : null, invitedAt: at };
   }).sort((a, b) => a.name.localeCompare(b.name));
 }
-r.get('/reps/onboarding', ...mgrGuard, wrap(async (req, res) => { res.json(await repOnboarding()); }));
+/* Inviting is open to whoever manages reps (Rep manager) or manages accounts (Reps screen) */
+function inviteGuard(req, res, next) {
+  if (!req.user.perms || !(req.user.perms.manager || req.user.perms.users)) {
+    return res.status(403).json({ error: 'Your account does not have access to inviting reps. Ask the owner.' });
+  }
+  next();
+}
+const inviteGuards = [auth.authRequired, auth.requireOffice, inviteGuard];
+r.get('/reps/onboarding', ...inviteGuards, wrap(async (req, res) => { res.json(await repOnboarding()); }));
 
-r.post('/reps/invite', ...mgrGuard, wrap(async (req, res) => {
+/* Undo: remove rep accounts that were made but never used, so the reps can be
+   invited afresh. An account anyone has signed in with is never touched. */
+r.post('/admin/users/remove-unused', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
+  const want = Array.isArray(req.body?.ids) ? new Set(req.body.ids.map(String)) : null;
+  const unused = (await q.allUsers()).filter(u => u.role === 'rep' && !u.last_login_at && u.zoho_owner_id && u.id !== req.user.id
+    && (!want || want.has(u.id)));
+  for (const u of unused) {
+    await q.dropTokensFor(u.id);
+    await q.hardDelete(u.id);
+  }
+  await audit(req.user.id, 'users.removedUnused', { count: unused.length, emails: unused.map(u => u.email) }, req.ip);
+  dropSnapshot();
+  res.json({ removed: unused.map(u => ({ id: u.id, name: u.name, email: u.email })) });
+}));
+
+r.post('/reps/invite', ...inviteGuards, wrap(async (req, res) => {
   const want = req.body?.repIds;
   const list = (await repOnboarding()).filter(x => want === 'all' ? x.status !== 'active' : (want || []).map(String).includes(x.id));
   const users = await q.allUsers();
