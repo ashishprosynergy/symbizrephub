@@ -157,7 +157,16 @@
   .chk-title{font-size:14px;}
   .chk-row.done .chk-title{text-decoration:line-through;color:var(--ink-faint);}
   .chk-late{color:var(--rust);font-weight:600;}
-  .chk-owner{width:110px;font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--line-soft);border-radius:7px;background:var(--surface-2);color:var(--ink);}
+  .map-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--ink-muted);margin:2px 0 8px;}
+  .map-legend .lg{display:inline-flex;align-items:center;gap:5px}
+  .map-legend b{color:var(--ink)}
+  .ring-pin{background:none;border:0}
+  .ring-pin span{display:inline-block;transform:translate(-50%,-50%);background:#fff;color:#2E5132;border:2px solid #2E5132;border-radius:7px;
+    padding:1px 6px;font:700 11.5px/1.4 'Work Sans',sans-serif;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.25)}
+  .mp-near{margin-top:4px;font-size:12px;background:#F4E7C9;border-radius:6px;padding:4px 6px}
+  .chk-owner.linked{border-color:var(--primary);background:var(--primary-soft);font-weight:600;}
+  .my-tasks{margin-bottom:14px;border-left:4px solid var(--accent);}
+  .chk-owner{width:130px;font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--line-soft);border-radius:7px;background:var(--surface-2);color:var(--ink);}
   .chk-add{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;}
   .chk-add input{font:inherit;font-size:13.5px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);}
   .chk-add input[name=title],.chk-add input[name=label],.chk-add input[name=url]{flex:1;min-width:180px;}
@@ -2156,6 +2165,10 @@ function allNotifications(){
     risky.slice(0,5).forEach(x=>
       out.push({k:'risk:'+x.r.id, t:`${x.r.name} is at risk`, s:`Health ${x.h} · ${x.r.repName||pname(x.r.repId)}`, go:()=>setView('allrings')}));
     if(risky.length>5) out.push({k:'risk-more:'+risky.length, t:`${risky.length-5} more rings at risk`, s:'See the Rings screen', go:()=>setView('allrings')});
+    // Summit tasks given to me, due within a week or already late
+    if(can('summits')) ((summitMine && summitMine.tasks) || []).filter(t => t.due && days(t.due) <= 7).forEach(t => out.push({
+      k:'summit-task:'+t.id+':'+t.due, t: days(t.due) < 0 ? `Summit task late: ${t.title}` : `Summit task due ${days(t.due) === 0 ? 'today' : 'in ' + days(t.due) + ' days'}: ${t.title}`,
+      s: t.summit, go:()=>openSummit(t.eventId)}));
     // Early warnings about the reps, for whoever manages them
     if(can('manager')){
       loadMgr();
@@ -4839,18 +4852,30 @@ function myGoalCard(){
 /* ══════════════ SUMMITS (Mel) ══════════════
  * Every Regional and Global Summit from Zoho: the ones coming up with their
  * planning checklist, and the history of past ones with what was learned. */
-var summitList = null, summitBusy = false, summitDetail = null, summitDetailId = null;
+// The last list is kept on the device, so the screen opens at once and updates quietly
+var summitList = (() => { try{ return JSON.parse(localStorage.getItem('rephub_summits') || 'null'); }catch(e){ return null; } })();
+var summitFresh = false, summitBusy = false, summitDetail = null, summitDetailId = null;
+var summitMine = null;          // { team, tasks } — the tasks given to me, and who can be given one
 function loadSummits(force){
-  if(summitBusy || (summitList && !force) || !API.live) return;
+  if(summitBusy || (summitFresh && !force) || !API.live || !can('summits')) return;
   summitBusy = true;
   if(force && ui.view === 'summits') renderContent();          // show "Refreshing…" at once
-  API.call('/summits').then(v => { summitList = v; if(force) toast('Summits are up to date with Zoho'); })
+  loadSummitMine();
+  API.call('/summits' + (force ? '?fresh=1' : '')).then(v => { summitList = v; summitFresh = true;
+      try{ localStorage.setItem('rephub_summits', JSON.stringify(v)); }catch(e){}
+      if(force) toast('Summits are up to date with Zoho'); })
     .catch(e => { if(!summitList || force) toast(e.message || 'Could not refresh'); if(!summitList) summitList = { error: e.message }; })
     .finally(() => { summitBusy = false; if(ui.view === 'summits') renderContent(); });
+}
+function loadSummitMine(){
+  if(!API.live || !can('summits')) return;
+  API.call('/summits/mine').then(v => { summitMine = v; if(ui.view === 'summits' || ui.view === 'summitDetail') renderContent(); fillShell(); })
+    .catch(() => {});
 }
 function openSummit(id){
   goingTo(); ui.view = 'summitDetail'; ui.summitId = id;
   if(summitDetailId !== id){ summitDetail = null; summitDetailId = id; }
+  if(!summitMine) loadSummitMine();
   render();
   API.call('/summits/' + id).then(v => { summitDetail = v; }).catch(e => { summitDetail = { error: e.message }; })
     .finally(() => { if(ui.view === 'summitDetail' && ui.summitId === id) renderContent(); });
@@ -4869,7 +4894,13 @@ function vSummits(){
   const pct = s => s.tasksTotal ? Math.round(s.tasksDone / s.tasksTotal * 100) : 0;
   const byYear = {};
   past.forEach(s => (byYear[s.date.slice(0,4)] = byYear[s.date.slice(0,4)] || []).push(s));
-  return head + `
+  const myTasks = (summitMine && summitMine.tasks) || [];
+  return head + (myTasks.length ? `<div class="card my-tasks"><div class="trend-t">Your summit tasks · ${myTasks.length}</div>
+      ${myTasks.slice(0, 8).map(t => { const late = t.due && t.due < TODAY_S;
+        return `<div class="row clicky" onclick="openSummit('${t.eventId}')"><div class="row-main">
+          <div class="row-title">${esc(t.title)}</div><div class="row-sub">${esc(t.summit)} · ${fmt(t.summitDate)}</div></div>
+          ${t.due ? `<span class="tag ${late ? 'overdue' : days(t.due) <= 7 ? 'soon' : 'later'}">${late ? 'was due ' : 'due '}${fmtShort(t.due)}</span>` : ''}</div>`; }).join('')}
+      ${myTasks.length > 8 ? `<div class="row-sub" style="padding:6px 0">and ${myTasks.length - 8} more</div>` : ''}</div>` : '') + `
     <h3 class="sub-h">Coming up · ${ahead.length}</h3>
     ${ahead.length ? `<div class="summit-grid">${ahead.map(s => { const d = days(s.date);
       return `<div class="card summit-card clicky" onclick="openSummit('${s.id}')">
@@ -4897,12 +4928,24 @@ function vSummits(){
 function vSummitDetail(){
   const back = `<button class="back" onclick="setView('summits')">‹ All summits</button>`;
   const D = summitDetail;
-  if(!D) return back + skeleton(6);
+  if(!D){
+    // The heading is known from the list already: show it while the checklist loads
+    const s = Array.isArray(summitList) ? summitList.find(x => x.id === ui.summitId) : null;
+    return back + (s ? `<div class="summit-hero card"><div style="min-width:0;flex:1"><h2 style="font-size:22px">${esc(s.name)}</h2>
+      <div class="row-sub" style="font-size:13.5px;margin-top:4px">${fmt(s.date)}${s.time ? ' · ' + esc(s.time) : ''} · ${mapLink(summitPlace(s))}</div></div>
+      <div class="summit-stats"><div><span class="kpi-n">${s.registered ?? 0}</span><span class="kpi-l">registered</span></div></div></div>
+      <h3 class="sub-h">Planning checklist</h3>` : '') + skeleton(5);
+  }
   if(D.error) return back + `<div class="callout rust"><strong>Could not open this summit</strong>${esc(D.error)}</div>`;
   const s = D.summit, done = D.tasks.filter(t => t.done).length, total = D.tasks.length;
   const dueOf = t => t.due_offset == null ? null : addDays(s.date, t.due_offset);
-  const stages = [...new Set(D.tasks.map(t => t.stage || 'Other'))];
+  const meId = (me() || {}).id;
+  const onlyMine = !!ui.summitMineOnly;
+  const tasksShown = onlyMine ? D.tasks.filter(t => t.owner_id === meId) : D.tasks;
+  const stages = [...new Set(tasksShown.map(t => t.stage || 'Other'))];
   const pastEvent = s.date < TODAY_S;
+  const team = (summitMine && summitMine.team) || [];
+  const mineCount = D.tasks.filter(t => t.owner_id === meId && !t.done).length;
   return back + `
     <div class="summit-hero card">
       <div style="min-width:0;flex:1"><h2 style="font-size:22px">${esc(s.name)}</h2>
@@ -4917,21 +4960,30 @@ function vSummitDetail(){
       </div>
     </div>
 
-    <h3 class="sub-h">Planning checklist</h3>
+    <datalist id="summitTeam">${team.map(p => `<option value="${esc(p.name)}">`).join('')}</datalist>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <h3 class="sub-h" style="margin-bottom:6px">Planning checklist</h3>
+      <div class="chips" style="margin:0">
+        <button class="chip ${onlyMine ? '' : 'on'}" onclick="ui.summitMineOnly=false;renderContent()">Everything</button>
+        <button class="chip ${onlyMine ? 'on' : ''}" onclick="ui.summitMineOnly=true;renderContent()">Mine${mineCount ? ' · ' + mineCount : ''}</button></div></div>
+    <div class="row-sub" style="margin:0 0 8px">Pick who does each task. Someone from the team gets an email and sees it in their notifications; you can also type any name, like a volunteer.</div>
     <div class="load" style="margin:-2px 0 10px"><span style="width:${total ? Math.round(done/total*100) : 0}%"></span></div>
+    ${onlyMine && !tasksShown.length ? `<div class="empty">Nothing on this summit is yours yet.</div>` : ''}
     ${stages.map(st => `<div class="card chk-stage"><div class="chk-head">${esc(st)}</div>
-      ${D.tasks.filter(t => (t.stage || 'Other') === st).map(t => { const due = dueOf(t), late = !t.done && due && due < TODAY_S;
+      ${tasksShown.filter(t => (t.stage || 'Other') === st).map(t => { const due = dueOf(t), late = !t.done && due && due < TODAY_S;
         return `<div class="chk-row ${t.done ? 'done' : ''}">
           <input type="checkbox" ${t.done ? 'checked' : ''} onchange="summitTask(${t.id},{done:this.checked})" aria-label="Done">
           <div class="chk-main"><div class="chk-title">${esc(t.title)}</div>
             <div class="row-sub">${due ? `<span class="${late ? 'chk-late' : ''}">${late ? 'Was due ' : 'Due '}${fmtShort(due)}</span>` : 'No date'}
               ${t.done && t.done_by ? ` · done by ${esc(t.done_by)}` : ''}</div></div>
-          <input class="chk-owner" placeholder="Who" value="${esc(t.owner || '')}" onchange="summitTask(${t.id},{owner:this.value})">
+          <input class="chk-owner ${t.owner_id ? 'linked' : ''}" list="summitTeam" placeholder="Who?" value="${esc(t.owner || '')}"
+            title="${t.owner_id ? 'On the team: they were emailed' : 'Pick someone from the team, or type a name'}"
+            onchange="summitTask(${t.id}, whoFrom(this.value))">
           <button class="btn sm ghost" title="Remove" onclick="summitTaskDelete(${t.id})">✕</button></div>`; }).join('')}</div>`).join('')}
     <form class="card chk-add" onsubmit="event.preventDefault();summitTaskAdd(this)">
       <input name="title" placeholder="Add a task…" required>
       <input name="dueOffset" type="number" placeholder="Days before (−) / after" title="Days before the summit (negative) or after it">
-      <input name="owner" placeholder="Who">
+      <input name="owner" list="summitTeam" placeholder="Who?">
       <button class="btn sm primary" type="submit">Add</button></form>
 
     <h3 class="sub-h">Forms and documents</h3>
@@ -4969,19 +5021,31 @@ async function summitCall(path, opts, what){
   try{ return await API.call('/summits/' + ui.summitId + path, opts); }
   catch(e){ toast(e.message || 'Could not save ' + (what || 'that')); return null; }
 }
+/** A typed "Who": a team member's name becomes that person; anything else stays a name */
+function whoFrom(text){
+  const v = String(text || '').trim();
+  const p = ((summitMine && summitMine.team) || []).find(x => String(x.name).toLowerCase() === v.toLowerCase());
+  return p ? { ownerId: p.id, owner: p.name } : { ownerId: null, owner: v };
+}
 async function summitTask(id, change){
   const tasks = await summitCall('/tasks/' + id, { method: 'PATCH', body: JSON.stringify(change) }, 'the task');
-  if(tasks && summitDetail){ summitDetail.tasks = tasks; summitList = null; renderContent(); }
+  if(tasks && summitDetail){
+    const before = summitDetail.tasks.find(t => t.id === id), after = tasks.find(t => t.id === id);
+    summitDetail.tasks = tasks; summitFresh = false; renderContent();
+    if(change.ownerId && after && after.owner_id && (!before || before.owner_id !== after.owner_id) && after.owner_id !== (me()||{}).id)
+      toast(`${after.owner} has been emailed about it`);
+    if('ownerId' in change || 'done' in change) loadSummitMine();
+  }
 }
 async function summitTaskAdd(form){
   const f = form.elements;
-  const tasks = await summitCall('/tasks', { method: 'POST', body: JSON.stringify({ title: f.title.value, dueOffset: f.dueOffset.value, owner: f.owner.value }) });
-  if(tasks){ summitDetail.tasks = tasks; summitList = null; renderContent(); toast('Task added'); }
+  const tasks = await summitCall('/tasks', { method: 'POST', body: JSON.stringify({ title: f.title.value, dueOffset: f.dueOffset.value, ...whoFrom(f.owner.value) }) });
+  if(tasks){ summitDetail.tasks = tasks; summitFresh = false; renderContent(); toast('Task added'); loadSummitMine(); }
 }
 async function summitTaskDelete(id){
   if(!confirm('Remove this task?')) return;
   const tasks = await summitCall('/tasks/' + id, { method: 'DELETE' });
-  if(tasks){ summitDetail.tasks = tasks; summitList = null; renderContent(); }
+  if(tasks){ summitDetail.tasks = tasks; summitFresh = false; renderContent(); loadSummitMine(); }
 }
 async function summitLinkAdd(form){
   const f = form.elements;
@@ -4994,7 +5058,7 @@ async function summitLinkDelete(id){
 }
 async function summitNotesSave(text){
   const ok = await summitCall('/notes', { method: 'PUT', body: JSON.stringify({ notes: text }) }, 'the notes');
-  if(ok){ summitDetail.notes = text; summitList = null; const n = document.getElementById('summitNotesSaved'); if(n) n.textContent = 'Saved'; }
+  if(ok){ summitDetail.notes = text; summitFresh = false; const n = document.getElementById('summitNotesSaved'); if(n) n.textContent = 'Saved'; }
 }
 
 /* ══════════════ MEMBER MAP (Mel) ══════════════
@@ -5080,6 +5144,15 @@ function vMemberMap(){
       <div class="chips" style="margin:0">${chip('mapTier','','All levels')}${Object.keys(TIER_COLOURS).map(t => chip('mapTier', t, esc(t), TIER_COLOURS[t])).join('')}</div>
       <div class="chips" style="margin:0">${chip('mapRing','','Everyone')}${chip('mapRing','in','In a ring')}${chip('mapRing','out','Not in a ring')}</div>
     </div>
+    <div class="map-tools">
+      <div class="chips" style="margin:0"><span class="row-sub" style="align-self:center">Colour by</span>
+        <button class="chip ${(ui.mapColour||'level')==='level'?'on':''}" data-mc="level" onclick="setMapColour('level')">Level</button>
+        <button class="chip ${ui.mapColour==='rep'?'on':''}" data-mc="rep" onclick="setMapColour('rep')">Rep</button></div>
+      <div class="chips" style="margin:0">
+        <button class="chip ${ui.mapRings?'on':''}" id="mapRingsChip" onclick="toggleMapRings()">${icon('ring',13)} Growth Rings</button>
+        <button class="chip" onclick="exportMapCSV()">Export these</button></div>
+    </div>
+    <div class="map-legend" id="mapLegend"></div>
     <div class="map-meta" id="mapMeta"></div>
     <div class="map-tabs">${['map','list'].map(v => `<button class="chip ${(ui.mapPane||'map')===v?'on':''}" onclick="ui.mapPane='${v}';document.querySelector('.map-wrap').dataset.pane='${v}';this.parentNode.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c===this));if('${v}'==='map'&&leafletMap)setTimeout(()=>leafletMap.invalidateSize(),50)">${v==='map'?'Map':'List'}</button>`).join('')}</div>
     <div class="map-wrap" data-pane="${ui.mapPane||'map'}">
@@ -5093,15 +5166,112 @@ function setMapFilter(key, val){
   document.querySelectorAll(`.chip[data-mk="${key}"]`).forEach(c => c.classList.toggle('on', (c.dataset.mv || '') === (val || '')));
   drawMemberMap(true);
 }
+/* Pins coloured by membership level, or by rep to see territories */
+const REP_COLOURS = ['#2E5132','#AD7E21','#2C5A6E','#A2452C','#6B4E9B','#3E8E7E','#C2185B','#5D6D1E','#1F6FB2','#8D5524','#00897B','#7B1FA2'];
+var mapRepColour = new Map();
+function pinColour(m){
+  if(ui.mapColour === 'rep'){
+    if(!m.repId) return '#9AA394';
+    if(!mapRepColour.has(m.repId)) mapRepColour.set(m.repId, REP_COLOURS[mapRepColour.size % REP_COLOURS.length]);
+    return mapRepColour.get(m.repId);
+  }
+  return TIER_COLOURS[m.tier] || '#5A6455';
+}
+function setMapColour(mode){
+  ui.mapColour = mode === 'rep' ? 'rep' : null;
+  document.querySelectorAll('.chip[data-mc]').forEach(c => c.classList.toggle('on', c.dataset.mc === (mode || 'level')));
+  (mapData.members || []).forEach(m => { const mk = mapMarkers.get(m.id); if(mk) mk.setStyle({ fillColor: pinColour(m) }); });
+  document.querySelectorAll('#mapList .map-item').forEach(el => { const m = mapById.get(el.dataset.id); const d = el.querySelector('.d-dot'); if(m && d) d.style.background = pinColour(m); });
+  mapLegend();
+}
+function mapLegend(){
+  const el = document.getElementById('mapLegend'); if(!el || !mapData) return;
+  const shown = mapShown();
+  if(ui.mapColour === 'rep'){
+    const by = new Map(); shown.forEach(m => { const k = m.repId || ''; by.set(k, (by.get(k) || 0) + 1); });
+    el.innerHTML = [...by.entries()].sort((a,b) => b[1]-a[1]).map(([id, n]) => { const m = shown.find(x => (x.repId||'') === id);
+      return `<span class="lg"><span class="d-dot" style="background:${pinColour(m)}"></span>${esc(id ? splitRepName(m.rep).name : 'No rep')} <b>${n}</b></span>`; }).join('');
+  } else {
+    el.innerHTML = Object.keys(TIER_COLOURS).map(t => { const n = shown.filter(m => m.tier === t).length;
+      return n ? `<span class="lg"><span class="d-dot" style="background:${TIER_COLOURS[t]}"></span>${esc(t)} <b>${n}</b></span>` : ''; }).join('');
+  }
+}
+
+/* Growth Rings on the map: each ring sits at the middle of its members */
+var mapRingCentres = null, mapRingLayer = null;
+function ringCentres(){
+  if(mapRingCentres && mapRingCentres.for === mapData) return mapRingCentres.list;
+  const by = new Map();
+  (mapData.members || []).forEach(m => { if(m.lat == null) return; (m.rings || []).forEach(r => {
+    if(!by.has(r)) by.set(r, { name: r, lat: 0, lng: 0, n: 0, reps: new Map() });
+    const c = by.get(r); c.lat += m.lat; c.lng += m.lng; c.n++; if(m.rep) c.reps.set(m.rep, (c.reps.get(m.rep) || 0) + 1); }); });
+  const list = [...by.values()].map(c => ({ name: c.name, lat: c.lat / c.n, lng: c.lng / c.n, n: c.n,
+    rep: [...c.reps.entries()].sort((a,b) => b[1]-a[1]).map(x => x[0])[0] || '' }));
+  mapRingCentres = { for: mapData, list };
+  return list;
+}
+const milesBetween = (a, b) => { const R = 3958.8, r = x => x * Math.PI / 180;
+  const h = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lng - a.lng) / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h)); };
+/** For someone not in a ring: the closest rings, to help place them */
+function nearestRings(m, k){ return ringCentres().map(c => ({ ...c, mi: milesBetween(m, c) })).sort((a,b) => a.mi - b.mi).slice(0, k || 3); }
+function toggleMapRings(){
+  ui.mapRings = !ui.mapRings;
+  const c = document.getElementById('mapRingsChip'); if(c) c.classList.toggle('on', ui.mapRings);
+  drawRingLayer();
+}
+function drawRingLayer(){
+  if(!leafletMap) return;
+  if(mapRingLayer){ leafletMap.removeLayer(mapRingLayer); mapRingLayer = null; }
+  if(!ui.mapRings) return;
+  mapRingLayer = L.layerGroup(ringCentres().map(c => {
+    const g = S.rings.find(r => String(r.name) === String(c.name));
+    return L.marker([c.lat, c.lng], { icon: L.divIcon({ className: 'ring-pin', html: `<span>${esc(c.name)}</span>`, iconSize: null }), zIndexOffset: 1000 })
+      .bindPopup(() => `<div class="map-pop"><strong>Growth Ring ${esc(c.name)}</strong>
+        <div class="mp-sub">${c.n} member${c.n===1?'':'s'} on the map${c.rep ? ' · ' + esc(splitRepName(c.rep).name) : ''}</div>
+        <div class="mp-sub">Placed at the middle of its members' addresses</div>
+        ${g ? `<div class="mp-actions"><a href="#" onclick="event.preventDefault();openRing('${g.id}')">Open ring</a></div>` : ''}</div>`);
+  })).addTo(leafletMap);
+}
+
 function mapPopup(m){
   const addr = encodeURIComponent(m.address);
+  const near = !(m.rings||[]).length && m.lat != null ? nearestRings(m, 3).filter(c => c.mi <= 40) : [];
   return `<div class="map-pop"><strong>${esc(m.name)}</strong>${m.tier ? ` <span class="tag tier tier-${esc(m.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(m.tier)}</span>` : ''}
     ${m.business ? `<div>${esc(m.business)}</div>` : ''}<div class="mp-sub">${esc(m.address)}</div>
-    ${(m.rings||[]).length ? `<div class="mp-sub">Ring ${esc(m.rings.join(', '))}${m.rep ? ' · ' + esc(splitRepName(m.rep).name) : ''}</div>` : '<div class="mp-sub" style="color:#A2452C">Not in a Growth Ring</div>'}
+    ${(m.rings||[]).length ? `<div class="mp-sub">Ring ${esc(m.rings.join(', '))}${m.rep ? ' · ' + esc(splitRepName(m.rep).name) : ''}</div>`
+      : `<div class="mp-sub" style="color:#A2452C">Not in a Growth Ring</div>
+         ${near.length ? `<div class="mp-near">Closest rings: ${near.map(c => `<b>${esc(c.name)}</b> ${c.mi < 1 ? '&lt;1' : Math.round(c.mi)} mi${c.rep ? ' (' + esc(splitRepName(c.rep).name.split(' ')[0]) + ')' : ''}`).join(' · ')}</div>` : ''}`}
     <div class="mp-actions">
       <a href="https://www.google.com/maps/dir/?api=1&destination=${addr}" target="_blank" rel="noopener">Directions</a>
       ${m.phone ? `<a href="tel:${esc(m.phone.replace(/[^0-9+]/g,''))}">Call</a>` : ''}
-      ${S.members.some(x => x.id === m.id) ? `<a href="#" onclick="event.preventDefault();openMember('${m.id}')">Open member</a>` : ''}</div></div>`;
+      ${memberIds().has(m.id) ? `<a href="#" onclick="event.preventDefault();openMember('${m.id}')">Open member</a>` : ''}</div></div>`;
+}
+var memberIdSet = null, memberIdSetFor = null;
+function memberIds(){ if(memberIdSetFor !== S.members){ memberIdSet = new Set(S.members.map(x => x.id)); memberIdSetFor = S.members; } return memberIdSet; }
+
+/* Pins and list rows are made once per set of data and then only shown or
+   hidden. Rebuilding 500 pins and rows on every keystroke was the lag. */
+var mapBuiltFor = null, mapById = new Map();
+function buildMapPins(){
+  if(mapBuiltFor === mapData) return false;
+  mapMarkers = new Map(); mapById = new Map(); mapRepColour = new Map();
+  (mapData.members || []).forEach(m => {
+    mapById.set(m.id, m);
+    if(m.lat == null) return;
+    const mk = L.circleMarker([m.lat, m.lng], { radius: 8, color: '#fff', weight: 2, fillColor: pinColour(m), fillOpacity: .95 })
+      .bindPopup(() => mapPopup(m), { maxWidth: 280 });        // the card is written when it is opened
+    mapMarkers.set(m.id, mk);
+  });
+  const list = document.getElementById('mapList');
+  if(list) list.innerHTML = (mapData.members || []).slice().sort((a,b) => String(a.name).localeCompare(String(b.name), undefined, {numeric:true})).map(m =>
+    `<button class="map-item ${m.lat == null ? 'unplaced' : ''}" data-id="${esc(m.id)}" onclick="focusMapMember('${m.id}')">
+      <span class="d-dot" style="background:${pinColour(m)}"></span>
+      <span class="mi-main"><span class="mi-name">${esc(m.name)}</span>
+        <span class="mi-sub">${esc([m.business, (m.address||'').split(',').slice(-3, -1).join(',').trim()].filter(Boolean).join(' · ') || '—')}</span></span>
+      ${m.lat == null ? '<span class="mi-tag">not placed</span>' : ''}</button>`).join('') + `<div class="empty" id="mapNone" style="margin:10px" hidden>Nobody matches.</div>`;
+  mapBuiltFor = mapData;
+  return true;
 }
 async function drawMemberMap(fit){
   const slot = document.getElementById('mapSlot');
@@ -5115,41 +5285,41 @@ async function drawMemberMap(fit){
   if(!document.body.contains(mapEl)) return;
   if(!leafletMap){
     leafletMap = L.map(mapEl, { scrollWheelZoom: true, zoomControl: true, preferCanvas: true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(leafletMap);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, keepBuffer: 4, updateWhenZooming: false,
+      attribution: '&copy; OpenStreetMap contributors' }).addTo(leafletMap);
     mapCluster = null;
   } else {
     leafletMap.invalidateSize();
   }
+  // A new screen draws the list area afresh, so the rows need making again
+  const list = document.getElementById('mapList');
+  if(list && !list.firstChild) mapBuiltFor = null;
   // 'enter' = the screen was just drawn: fit to the pins only the first time,
   // and otherwise keep the place you left it. true = a filter changed: refit.
   fit = fit === 'enter' ? firstTime : (firstTime || fit === true);
-  if(mapCluster) leafletMap.removeLayer(mapCluster);
-  mapCluster = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 45, spiderfyOnMaxZoom: true,
-    iconCreateFunction: c => L.divIcon({ html: `<span>${c.getChildCount()}</span>`, className: 'map-cluster', iconSize: [36, 36] }) });
-  mapMarkers = new Map();
-  const shown = mapShown(), placed = shown.filter(m => m.lat != null);
-  placed.forEach(m => {
-    const mk = L.circleMarker([m.lat, m.lng], { radius: 8, color: '#fff', weight: 2, fillColor: TIER_COLOURS[m.tier] || '#5A6455', fillOpacity: .95 })
-      .bindPopup(mapPopup(m));
-    mapCluster.addLayer(mk); mapMarkers.set(m.id, mk);
-  });
-  leafletMap.addLayer(mapCluster);
+  buildMapPins();
+  if(!mapCluster){
+    mapCluster = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 45, spiderfyOnMaxZoom: true, chunkedLoading: true,
+      iconCreateFunction: c => L.divIcon({ html: `<span>${c.getChildCount()}</span>`, className: 'map-cluster', iconSize: [36, 36] }) });
+    leafletMap.addLayer(mapCluster);
+  }
+  const shown = mapShown(), ids = new Set(shown.map(m => m.id));
+  const placed = shown.filter(m => m.lat != null);
+  // Only the pin set changes, in one batch
+  mapCluster.clearLayers();
+  mapCluster.addLayers(placed.map(m => mapMarkers.get(m.id)).filter(Boolean));
   if(fit){
     if(placed.length) leafletMap.fitBounds(placed.map(m => [m.lat, m.lng]), { padding: [28, 28], maxZoom: 12 });
     else leafletMap.setView([40.04, -76.3], 7);   // Lancaster County, PA
   }
+  drawRingLayer();
   const meta = document.getElementById('mapMeta');
   if(meta) meta.innerHTML = `<strong>${shown.length}</strong> member${shown.length===1?'':'s'}${placed.length < shown.length ? ` · ${placed.length} on the map` : ''}
     ${mapData.pending ? ` · ${mapData.pending} address${mapData.pending===1?'':'es'} still being placed — press Refresh in a few minutes` : ''}
     ${mapData.noAddress ? ` · ${mapData.noAddress} with no address in Zoho` : ''}`;
-  const list = document.getElementById('mapList');
-  if(list) list.innerHTML = shown.length ? shown.slice().sort((a,b) => String(a.name).localeCompare(String(b.name), undefined, {numeric:true})).map(m =>
-    `<button class="map-item ${m.lat == null ? 'unplaced' : ''}" onclick="focusMapMember('${m.id}')">
-      <span class="d-dot" style="background:${TIER_COLOURS[m.tier] || '#8A9284'}"></span>
-      <span class="mi-main"><span class="mi-name">${esc(m.name)}</span>
-        <span class="mi-sub">${esc([m.business, (m.address||'').split(',').slice(-3, -1).join(',').trim()].filter(Boolean).join(' · ') || '—')}</span></span>
-      ${m.lat == null ? '<span class="mi-tag">not placed</span>' : ''}</button>`).join('')
-    : `<div class="empty" style="margin:10px">Nobody matches.</div>`;
+  if(list){ list.querySelectorAll('.map-item').forEach(el => { el.hidden = !ids.has(el.dataset.id); });
+    const none = document.getElementById('mapNone'); if(none) none.hidden = shown.length > 0; }
+  mapLegend();
 }
 /* From the list to the pin: zoom in, open its card */
 function focusMapMember(id){
@@ -5160,6 +5330,15 @@ function focusMapMember(id){
     document.querySelectorAll('.map-tabs .chip').forEach((c, i) => c.classList.toggle('on', i === 0));
     setTimeout(() => leafletMap.invalidateSize(), 50); }
   mapCluster.zoomToShowLayer(mk, () => mk.openPopup());
+}
+/** The members currently shown, as a spreadsheet: for mailings and visit planning */
+function exportMapCSV(){
+  const shown = mapShown();
+  if(!shown.length) return toast('Nobody to export');
+  downloadCSV(`members-on-map-${TODAY_S}.csv`, [['Member','Business','Level','Address','Phone','Growth Ring','Rep','Closest ring if none','Miles'],
+    ...shown.map(m => { const n = !(m.rings||[]).length && m.lat != null ? nearestRings(m, 1)[0] : null;
+      return [m.name, m.business || '', m.tier || '', m.address || '', m.phone || '', (m.rings||[]).join(', '), m.rep ? splitRepName(m.rep).name : '',
+        n ? n.name : '', n ? Math.round(n.mi) : '']; })]);
 }
 
 /* A pie (donut) chart with a legend you can tap. segs: [{label, value, color, go}] */
@@ -5827,8 +6006,9 @@ function openFac(id){ goingTo(); ui.facId=id; ui.view='facDetail'; closeSheet();
 function login(id){ ui.me=id; ui.view=PEOPLE.find(p=>p.id===id).role==='rep'?'today':'dash'; render(); }
 function logout(){ placeByScreen = {};
   elevation = { token: null, until: 0 }; keepElevation(); accessStatus = null; accessData = null; myDevices = null; ui.twoStep = null;
-  try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); localStorage.removeItem('rephub_retention'); localStorage.removeItem('rephub_map'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
-  retentionData = null; retentionFresh = false; summitList = null; summitDetail = null; mapData = null; mapFresh = false;
+  try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); localStorage.removeItem('rephub_retention'); localStorage.removeItem('rephub_map'); localStorage.removeItem('rephub_summits'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
+  retentionData = null; retentionFresh = false; summitList = null; summitFresh = false; summitMine = null; summitDetail = null; mapData = null; mapFresh = false;
+  mgrData = null; myGoal = undefined;
   serverUsers = null; zohoReps = null; usersLoadedAt = 0;
   API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
 
@@ -6967,6 +7147,7 @@ async function loadFromServer(){
   render();
   // Warm the slower screens in the background, so they open at once
   if(isOffice() && can('reports')) setTimeout(() => loadRetention(), 1500);
+  if(isOffice() && can('summits')) setTimeout(() => loadSummits(), 2500);
 }
 /* How fresh the data is, and a way to bring it up to date with Zoho now */
 function syncButton(){

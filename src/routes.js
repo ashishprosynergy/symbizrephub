@@ -1400,20 +1400,19 @@ r.get('/summits', ...summitGuard, wrap(async (req, res) => {
   res.json(events.map(e => ({ ...e, tasksDone: c.get(e.id)?.done || 0, tasksTotal: c.get(e.id)?.total || 0, hasNotes: n.has(e.id) })));
 }));
 
-r.get('/summits/:id', ...summitGuard, wrap(async (req, res) => {
-  const events = await summitEvents();
-  const e = events.find(x => x.id === req.params.id);
+r.get('/summits/:id', ...summitGuard, wrap(async (req, res, next) => {
+  if (req.params.id === 'mine') return next();     // "my tasks", declared further down
+  let events = await summitEvents();
+  let e = events.find(x => x.id === req.params.id);
+  // Added in Zoho since the list was last read: look again before saying no
+  if (!e) { events = await summitEvents(true); e = events.find(x => x.id === req.params.id); }
   if (!e) return res.status(404).json({ error: 'That summit was not found in Zoho' });
-  let tasks = await q.summitTasks(e.id);
+  let [tasks, links, notes, allNotes] = await Promise.all([q.summitTasks(e.id), q.summitLinks(e.id), q.summitNotes(e.id), q.allSummitNotes()]);
   if (!tasks.length) {
-    // First time it is opened: start from the standard checklist
-    for (let i = 0; i < SUMMIT_CHECKLIST.length; i++) {
-      const [stage, dueOffset, title] = SUMMIT_CHECKLIST[i];
-      await q.addSummitTask({ eventId: e.id, title, stage, dueOffset, position: i });
-    }
+    // First time it is opened: start from the standard checklist, in one write
+    await q.addSummitTasks(e.id, SUMMIT_CHECKLIST.map(([stage, dueOffset, title], i) => ({ title, stage, dueOffset, position: i })));
     tasks = await q.summitTasks(e.id);
   }
-  const [links, notes, allNotes] = await Promise.all([q.summitLinks(e.id), q.summitNotes(e.id), q.allSummitNotes()]);
   const notesBy = new Map(allNotes.map(x => [x.event_id, x.notes]));
   // History: earlier summits in the same state (or of the same kind), with what was learned
   const history = events.filter(x => x.id !== e.id && x.date < e.date && (x.state === e.state || (!e.state && x.type === e.type)))
@@ -1422,25 +1421,75 @@ r.get('/summits/:id', ...summitGuard, wrap(async (req, res) => {
     notesAt: notes ? notes.updated_at : null, history });
 }));
 
+/* Who can be given a summit task: the office people who can see Summits.
+   Anyone else (a volunteer, the venue) can still be typed in by name. */
+async function summitTeam() {
+  const users = (await q.allUsers()).filter(u => u.role !== 'rep');
+  const out = [];
+  for (const u of users) if ((await access.permsFor(u)).summits) out.push({ id: u.id, name: u.name, email: u.email });
+  return out.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+/** "Who": a person from the team (by id), or any name typed in */
+async function resolveOwner(b) {
+  if (b.ownerId) {
+    const p = (await summitTeam()).find(x => x.id === String(b.ownerId));
+    if (p) return { owner: p.name, ownerId: p.id, person: p };
+  }
+  const name = String(b.owner || '').trim().slice(0, 120);
+  return { owner: name || null, ownerId: null, person: null };
+}
+/** Tell someone a task is theirs, unless they gave it to themselves */
+async function tellOwner(person, task, eventId, req) {
+  if (!person || person.id === req.user.id || !person.email) return;
+  const e = (await summitEvents()).find(x => x.id === eventId);
+  const due = e && task.dueOffset != null ? addDays(e.date, task.dueOffset) : null;
+  const esc2 = v => String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  reminders.sendEmail(person.email, `Summit task for you: ${task.title}`,
+    `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;font-size:15px;color:#1E2A20;max-width:520px">
+      <p>${esc2((person.name || '').split(' ')[0] || 'Hello')},</p>
+      <p>${esc2(req.user.name || 'The office')} has given you a task for <strong>${esc2(e ? e.name : 'a summit')}</strong>${e ? ' (' + esc2(e.date) + ')' : ''}:</p>
+      <p style="font-size:16px;background:#F2F5EC;border-radius:8px;padding:12px 14px"><strong>${esc2(task.title)}</strong>${due ? '<br><span style="color:#5A6455">Due ' + esc2(due) + '</span>' : ''}</p>
+      <p><a href="${cfg.appUrl}" style="background:#2E5132;color:#fff;padding:9px 15px;border-radius:7px;text-decoration:none">Open Summits in Rep Hub</a></p>
+      <p style="color:#8A9284;font-size:12px">It also shows in your notifications as the due date gets close.</p></div>`,
+    { userId: person.id, kind: 'summit-task', replyTo: req.user.email }).catch(() => {});
+}
+
+r.get('/summits/mine', ...summitGuard, wrap(async (req, res) => {
+  const [team, mine, events] = await Promise.all([summitTeam(), q.summitTasksFor(req.user.id), summitEvents()]);
+  const byId = new Map(events.map(e => [e.id, e]));
+  res.json({ team, tasks: mine.filter(t => byId.has(t.event_id)).map(t => { const e = byId.get(t.event_id);
+    return { id: t.id, title: t.title, eventId: e.id, summit: e.name, summitDate: e.date,
+      due: t.due_offset == null ? null : addDays(e.date, t.due_offset) }; })
+    .sort((a, b) => String(a.due || a.summitDate).localeCompare(String(b.due || b.summitDate))) });
+}));
+
 r.post('/summits/:id/tasks', ...summitGuard, wrap(async (req, res) => {
   const title = String(req.body?.title || '').trim().slice(0, 300);
   if (!title) return res.status(400).json({ error: 'What needs doing?' });
   const n = (await q.summitTasks(req.params.id)).length;
   const dueOffset = req.body?.dueOffset === '' || req.body?.dueOffset == null ? null : parseInt(req.body.dueOffset, 10);
-  await q.addSummitTask({ eventId: req.params.id, title, stage: 'Added', dueOffset: isNaN(dueOffset) ? null : dueOffset,
-    owner: String(req.body?.owner || '').slice(0, 120) || null, position: n + 100 });
+  const who = await resolveOwner(req.body || {});
+  const task = { eventId: req.params.id, title, stage: 'Added', dueOffset: isNaN(dueOffset) ? null : dueOffset,
+    owner: who.owner, ownerId: who.ownerId, position: n + 100 };
+  await q.addSummitTask(task);
+  tellOwner(who.person, task, req.params.id, req);
   res.json(await q.summitTasks(req.params.id));
 }));
 r.patch('/summits/:id/tasks/:taskId', ...summitGuard, wrap(async (req, res) => {
   const cur = (await q.summitTasks(req.params.id)).find(t => String(t.id) === String(req.params.taskId));
   if (!cur) return res.status(404).json({ error: 'No such task' });
   const b = req.body || {};
+  const changingWho = b.owner !== undefined || b.ownerId !== undefined;
+  const who = changingWho ? await resolveOwner(b) : { owner: cur.owner, ownerId: cur.owner_id, person: null };
   await q.updateSummitTask(cur.id, req.params.id, {
     title: b.title != null ? String(b.title).slice(0, 300) : null,
-    owner: b.owner !== undefined ? (String(b.owner || '').slice(0, 120) || null) : cur.owner,
+    owner: who.owner, ownerId: who.ownerId,
     dueOffset: b.dueOffset !== undefined ? (b.dueOffset === '' || b.dueOffset == null ? null : parseInt(b.dueOffset, 10)) : cur.due_offset,
     done: b.done !== undefined ? !!b.done : cur.done, doneBy: req.user.name,
   });
+  if (changingWho && who.ownerId && who.ownerId !== cur.owner_id) {
+    tellOwner(who.person, { title: cur.title, dueOffset: cur.due_offset }, req.params.id, req);
+  }
   res.json(await q.summitTasks(req.params.id));
 }));
 r.delete('/summits/:id/tasks/:taskId', ...summitGuard, wrap(async (req, res) => {

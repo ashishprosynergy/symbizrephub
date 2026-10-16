@@ -1261,6 +1261,38 @@ describe("ring meetings, membership levels and the member map", () => {
     assert.equal(list2.find(s => s.id === 'SU1').tasksDone, 1);
   });
 
+  test('summit "Who": a team member is linked and sees the task as theirs; anyone else is a typed name', async () => {
+    store.Symbiz_Events.push({ id: 'SU2', Name: 'NC Regional Summit 2027', Event_Type: 'Regional Summit',
+      Event_Date_and_Time: '2027-05-01T18:00:00-04:00', Event_State: 'NC' });
+    const d = JSON.parse((await invoke('GET', '/summits/SU2', { token })).body);
+    // The standard checklist arrives whole and in order, from one write
+    assert.equal(d.tasks.length, 20);
+    assert.deepEqual(d.tasks.map(t => t.position), [...Array(20).keys()]);
+
+    const mine = JSON.parse((await invoke('GET', '/summits/mine', { token })).body);
+    assert.ok(Array.isArray(mine.team) && mine.team.some(p => p.id === 'adm1'), 'office people are on the team list');
+    assert.ok(!mine.team.some(p => p.id === 'rep1'), 'reps cannot see Summits, so are not offered');
+
+    const t = d.tasks[3];
+    const after = JSON.parse((await invoke('PATCH', `/summits/SU2/tasks/${t.id}`, { token, body: { ownerId: 'adm1' } })).body);
+    const got = after.find(x => x.id === t.id);
+    assert.equal(got.owner_id, 'adm1'); assert.equal(got.owner, 'Test Admin');
+
+    const adminToken = JSON.parse((await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse' } })).body).token;
+    const theirs = JSON.parse((await invoke('GET', '/summits/mine', { token: adminToken })).body);
+    const task = theirs.tasks.find(x => x.id === t.id);
+    assert.ok(task, 'the task shows as theirs');
+    assert.equal(task.summit, 'NC Regional Summit 2027');
+    const want = new Date(Date.UTC(2027, 4, 1) + t.due_offset * 864e5).toISOString().slice(0, 10);
+    assert.equal(task.due, want, 'due date worked out from the summit date');
+
+    // A name that is not on the team stays a plain name, with nobody linked
+    const typed = JSON.parse((await invoke('PATCH', `/summits/SU2/tasks/${t.id}`, { token, body: { ownerId: null, owner: 'Venue manager' } })).body)
+      .find(x => x.id === t.id);
+    assert.equal(typed.owner, 'Venue manager'); assert.equal(typed.owner_id, null);
+    assert.ok(!JSON.parse((await invoke('GET', '/summits/mine', { token: adminToken })).body).tasks.some(x => x.id === t.id));
+  });
+
   test('retention is worked out from membership start and end dates', async () => {
     store.Deals.push({ id: 'D3', Contact_Name: { id: 'C10', name: 'Gone Member #10' }, Membership_Tier: 'Sapling',
       Stage: 'Inactive', Start_Date: '2024-02-01', Expiry_Date: `${new Date().getFullYear()}-03-31`, Reason_For_Loss__s: 'Other' });

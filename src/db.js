@@ -243,6 +243,7 @@ CREATE TABLE IF NOT EXISTS summit_notes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_summit_tasks ON summit_tasks (event_id, position);
+ALTER TABLE summit_tasks ADD COLUMN IF NOT EXISTS owner_id TEXT;
 
 CREATE TABLE IF NOT EXISTS rep_goals (
   rep_id      TEXT NOT NULL,
@@ -403,14 +404,25 @@ const q = {
   summitTasks: eventId => query('SELECT * FROM summit_tasks WHERE event_id = $1 ORDER BY position, id', [eventId]),
   summitTaskCounts: () => query('SELECT event_id, count(*)::int AS total, sum(CASE WHEN done THEN 1 ELSE 0 END)::int AS done FROM summit_tasks GROUP BY event_id'),
   addSummitTask: t => query(
-    `INSERT INTO summit_tasks (event_id,title,stage,due_offset,owner,position) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-    [t.eventId, t.title, t.stage || null, t.dueOffset ?? null, t.owner || null, t.position || 0]),
+    `INSERT INTO summit_tasks (event_id,title,stage,due_offset,owner,owner_id,position) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    [t.eventId, t.title, t.stage || null, t.dueOffset ?? null, t.owner || null, t.ownerId || null, t.position || 0]),
+  /** A whole checklist in one statement: one trip to the database, not twenty */
+  addSummitTasks: (eventId, list) => {
+    const vals = [], params = [];
+    list.forEach((t, i) => { const b = i * 5;
+      vals.push(`($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5})`);
+      params.push(eventId, t.title, t.stage || null, t.dueOffset ?? null, t.position || 0); });
+    return query(`INSERT INTO summit_tasks (event_id,title,stage,due_offset,position) VALUES ${vals.join(',')}`, params);
+  },
+  /** Open tasks given to one person, across every summit */
+  summitTasksFor: userId => query('SELECT * FROM summit_tasks WHERE owner_id = $1 AND done = FALSE ORDER BY event_id, position', [userId]),
   updateSummitTask: (id, eventId, f) => query(
     `UPDATE summit_tasks SET title = COALESCE($3,title), owner = $4, due_offset = $5, done = $6,
        done_by = CASE WHEN $6 THEN COALESCE(done_by,$7) ELSE NULL END,
-       done_at = CASE WHEN $6 THEN COALESCE(done_at, now()) ELSE NULL END
+       done_at = CASE WHEN $6 THEN COALESCE(done_at, now()) ELSE NULL END,
+       owner_id = $8
      WHERE id = $1 AND event_id = $2`,
-    [id, eventId, f.title ?? null, f.owner ?? null, f.dueOffset ?? null, !!f.done, f.doneBy || null]),
+    [id, eventId, f.title ?? null, f.owner ?? null, f.dueOffset ?? null, !!f.done, f.doneBy || null, f.ownerId || null]),
   deleteSummitTask: (id, eventId) => query('DELETE FROM summit_tasks WHERE id = $1 AND event_id = $2', [id, eventId]),
   summitLinks: eventId => query('SELECT * FROM summit_links WHERE event_id = $1 ORDER BY id', [eventId]),
   addSummitLink: (eventId, label, url, by) => query(
