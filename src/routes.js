@@ -317,20 +317,43 @@ async function sendCode(user, req, purpose = 'otp') {
    Off until the owner pastes keys into Access & security. Fails OPEN when
    the keys are wrong or Google can't be reached, and says so in the
    activity log: a typo in a key must never lock every director out. */
+let captchaCache = null;
 async function captchaKeys() {
-  return { site: await setting('captcha_site_key', ''), secret: await setting('captcha_secret', '') };
+  if (captchaCache && Date.now() - captchaCache.at < 60000) return captchaCache.keys;
+  const keys = { site: await setting('captcha_site_key', ''), secret: await setting('captcha_secret', ''),
+    // v3 = invisible "score" keys (Google's default); v2 = the "I'm not a robot" box
+    type: (await setting('captcha_type', '')) || 'v3',
+    // Has a real check ever passed with these keys? Until one has, a wrong key
+    // or key type must not stop anyone signing in.
+    proven: (await setting('captcha_proven', '')) === '1' };
+  captchaCache = { at: Date.now(), keys };
+  return keys;
 }
 async function humanCheck(req, res) {
-  const { secret } = await captchaKeys();
+  const { secret, proven } = await captchaKeys();
   if (!secret) return true;
   const token = String(req.body?.captcha || '');
-  if (!token) { res.status(400).json({ error: 'Tick "I\'m not a robot" first.', captcha: true }); return false; }
+  if (!token) {
+    if (!proven) {
+      // The keys have never worked (wrong type, wrong domain…). Let people in
+      // and leave a note, rather than lock everyone out — as happened once.
+      await audit(null, 'captcha.unproven', { path: req.path }, req.ip);
+      return true;
+    }
+    res.status(400).json({ error: 'Tick "I\'m not a robot" first.', captcha: true }); return false;
+  }
   try {
     const r2 = await fetch(process.env.RECAPTCHA_VERIFY_URL || 'https://www.google.com/recaptcha/api/siteverify', {
       method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ secret, response: token, remoteip: req.ip || '' }), signal: AbortSignal.timeout(5000) });
     const out = await r2.json();
-    if (out.success) return true;
+    // v3 tokens carry a score: 1 is surely a person, 0 surely a bot
+    if (out.success && (typeof out.score !== 'number' || out.score >= 0.3)) {
+      if (!proven) { await q.setSetting('captcha_proven', '1'); captchaCache = null; }
+      return true;
+    }
+    if (out.success) { res.status(400).json({ error: 'That looked automated. Wait a moment and try again.', captcha: true }); return false; }
+    if (!proven) { await audit(null, 'captcha.unproven', { codes: out['error-codes'] || [] }, req.ip); return true; }
     const codes = out['error-codes'] || [];
     if (codes.some(c => /secret/.test(c))) {
       await audit(null, 'captcha.misconfigured', { codes }, req.ip);
@@ -345,7 +368,8 @@ async function humanCheck(req, res) {
 }
 r.get('/auth/captcha', wrap(async (req, res) => {
   res.set('Cache-Control', 'public, max-age=60');
-  res.json({ siteKey: (await captchaKeys()).site || null });
+  const k = await captchaKeys();
+  res.json({ siteKey: k.site || null, type: k.type });
 }));
 
 /** "Chrome on Windows", from a user-agent string, for emails and the device list. */
@@ -620,6 +644,17 @@ r.post('/auth/login', wrap(async (req, res) => {
   }
   if (out.twoStep) {
     // Like Google's 2-Step Verification: the password alone is not enough
+    if (!cfg.mail.enabled) {
+      // Email is not set up on this site at all. Demanding a code nobody can
+      // receive would lock every director out, so fall back to the password.
+      await audit(out.user.id, 'login.twoStepSkipped', { reason: 'mail not configured' }, req.ip);
+      return res.json(await auth.finishLogin(out.user, req.ip));
+    }
+    // The app asks for the code screen straight away and has the email sent
+    // by a second call, so nobody stares at "Signing in…" while Gmail answers.
+    if (req.body?.sendLater) {
+      return res.json({ twoStep: true, challenge: auth.challengeFor(out.user), sentTo: auth.maskEmail(out.user.email), sending: true });
+    }
     const recent = await q.recentTokenCount(out.user.id, '2sv');
     let sent = null;
     if ((recent?.c || 0) < 8) sent = await sendCode(out.user, req, '2sv');
@@ -699,7 +734,8 @@ r.post('/auth/elevate', auth.authRequired, wrap(async (req, res) => {
     return res.status(401).json({ error: 'That password is not right' });
   }
   await audit(u.id, 'elevate.ok', {}, req.ip);
-  res.json({ elevation: auth.elevate(u), minutes: 15 });
+  // The owner's screen needs this next anyway: send it now, saving a round trip
+  res.json({ elevation: auth.elevate(u), minutes: 15, access: req.user.owner ? await accessPayload() : undefined });
 }));
 
 r.get('/auth/me', auth.authRequired, wrap(async (req, res) => {
@@ -913,7 +949,7 @@ r.get('/members', auth.authRequired, wrap(async (req, res) => {
   // Run the batches together rather than one after another. With 80+ rings
   // the sequential version took long enough that sign-in felt broken.
   const linkBatches = await Promise.all(
-    chunk(ringIds, 20).map(batch => zoho.coql(queries.groupMembersFor(batch)).catch(() => []))
+    chunk(ringIds, 20).map(batch => zoho.coql(queries.groupMembersFor(batch)))
   );
   const links = linkBatches.flat();
   const byContact = new Map();
@@ -928,7 +964,7 @@ r.get('/members', auth.authRequired, wrap(async (req, res) => {
   if (!byContact.size) return res.json([]);
 
   const contactBatches = await Promise.all(
-    chunk([...byContact.keys()], 50).map(batch => zoho.coql(queries.contactsByIds(batch)).catch(() => []))
+    chunk([...byContact.keys()], 50).map(batch => zoho.coql(queries.contactsByIds(batch)))
   );
   const contacts = contactBatches.flat();
   res.json(contacts.map(c => {
@@ -946,11 +982,12 @@ r.get('/members', auth.authRequired, wrap(async (req, res) => {
 r.get('/members/no-ring', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
   // Page the join table and the member list in parallel — these are the two
   // slowest calls in the app and they do not depend on each other.
-  const offsets = [0, 200, 400, 600, 800, 1000];
-  const [linkPages, memberPages] = await Promise.all([
-    Promise.all(offsets.map(o => zoho.coql(queries.allGroupMembers(o)).catch(() => []))),
-    Promise.all(offsets.map(o => zoho.coql(queries.allActiveMembers(o)).catch(() => []))),
+  // Every row of each (paged inside zoho.coql). A failure is reported, not
+  // turned into a shorter list that looks right.
+  const [links, members] = await Promise.all([
+    zoho.coql(queries.allGroupMembers()), zoho.coql(queries.allActiveMembers()),
   ]);
+  const linkPages = [links], memberPages = [members];
   const inAGroup = new Set();
   linkPages.flat().forEach(l => { if (l.Members?.id) inAGroup.add(l.Members.id); });
 
@@ -1154,6 +1191,14 @@ r.post('/meetings', auth.authRequired, writesAllowed, wrap(async (req, res) => {
 }));
 
 /** Facilitators are Contacts flagged Is_Facilitator. */
+/** The Overview's headline numbers, counted by Zoho — the same figure every time. */
+r.get('/stats', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  const year = String(new Date().getFullYear());
+  const n = rows => Number((rows && rows[0] && (rows[0]['COUNT(id)'] ?? rows[0].count)) || 0);
+  const [active, inactive, joined] = await Promise.all(queries.memberCounts(year).map(qq => zoho.coql(qq)));
+  res.json({ activeMembers: n(active), inactiveMembers: n(inactive), joinedThisYear: n(joined), year, at: new Date().toISOString() });
+}));
+
 r.get('/facilitators', auth.authRequired, wrap(async (req, res) => {
   const rows = await zoho.coql(queries.facilitators());
   res.json(rows.map(fromZoho.member));
@@ -2326,7 +2371,7 @@ async function accessPayload() {
   const ck = await captchaKeys();
   return { caps: Object.fromEntries(Object.entries(access.CAPS).map(([k, c]) => [k, { label: c.label, detail: c.detail, group: c.group }])),
     perms: a.perms, twoStep: a.twoStep, people, ownerId: a.ownerId,
-    captcha: { siteKey: ck.site || '', secretSet: !!ck.secret } };
+    captcha: { siteKey: ck.site || '', secretSet: !!ck.secret, type: ck.type, proven: ck.proven } };
 }
 
 r.get('/admin/access', auth.authRequired, access.requireOwner, auth.requireElevated, wrap(async (req, res) => {
@@ -2341,6 +2386,7 @@ r.put('/admin/access', auth.authRequired, access.requireOwner, auth.requireEleva
     // reCAPTCHA keys are 40 characters of letters, digits, - and _. Blank both to switch it off.
     const site = String(b.captcha.siteKey || '').trim(), secret = String(b.captcha.secret || '').trim();
     const ok = s => /^[A-Za-z0-9_-]{20,80}$/.test(s);
+    captchaCache = null;
     if (!site && !secret) { await q.setSetting('captcha_site_key', ''); await q.setSetting('captcha_secret', ''); }
     else {
       if (!ok(site)) return res.status(400).json({ error: 'That site key does not look right — copy it again from Google.' });
@@ -2348,8 +2394,11 @@ r.put('/admin/access', auth.authRequired, access.requireOwner, auth.requireEleva
       if (!secret && !(await captchaKeys()).secret) return res.status(400).json({ error: 'Paste the secret key as well.' });
       await q.setSetting('captcha_site_key', site);
       if (secret) await q.setSetting('captcha_secret', secret);
+      await q.setSetting('captcha_type', b.captcha.type === 'v2' ? 'v2' : 'v3');
+      await q.setSetting('captcha_proven', '');     // new keys must prove themselves before they can block anyone
     }
   }
+  captchaCache = null;
   await audit(req.user.id, 'access.changed', { perms: b.perms || undefined, twoStep: b.twoStep || undefined,
     captcha: b.captcha ? (b.captcha.siteKey ? 'on' : 'off') : undefined }, req.ip);
   res.json(await accessPayload());

@@ -94,7 +94,12 @@ const fakeZoho = http.createServer((req, res) => {
     if (url.pathname === '/crm/v8/coql') {
       const sq = JSON.parse(body || '{}').select_query || '';
       const mod = Object.keys(store).find(m => sq.includes(`from ${m}`)) || 'Rep_Activities';
-      return json({ data: store[mod] });
+      // Like Zoho: "limit offset, count", at most 200 a page
+      const lim = sq.match(/limit\s+(\d+)\s*(?:,\s*(\d+))?\s*$/i);
+      const rows = store[mod] || [];
+      if (!lim) return json({ data: rows });
+      const [off, cnt] = lim[2] ? [+lim[1], +lim[2]] : [0, +lim[1]];
+      return json({ data: rows.slice(off, off + Math.min(cnt, 200)) });
     }
     const m = url.pathname.match(/^\/crm\/v8\/([A-Za-z_]+)(?:\/([^/]+))?$/);
     if (m) {
@@ -1120,16 +1125,20 @@ describe('owner, permissions and 2-step sign-in', () => {
     const bad = await invoke('PUT', '/admin/access', { token: ownerToken, headers: h, body: { captcha: { siteKey: 'nope', secret: 'x' } } });
     assert.equal(bad.statusCode, 400);
     const site = '6Lc' + 'a'.repeat(37), secret = '6Lc' + 'b'.repeat(37);
-    const ok = json(await invoke('PUT', '/admin/access', { token: ownerToken, headers: h, body: { captcha: { siteKey: site, secret } } }));
-    assert.equal(ok.captcha.siteKey, site); assert.equal(ok.captcha.secretSet, true);
-    assert.equal(json(await invoke('GET', '/auth/captcha')).siteKey, site);
+    const ok = json(await invoke('PUT', '/admin/access', { token: ownerToken, headers: h, body: { captcha: { siteKey: site, secret, type: 'v2' } } }));
+    assert.equal(ok.captcha.siteKey, site); assert.equal(ok.captcha.secretSet, true); assert.equal(ok.captcha.proven, false);
+    assert.equal(json(await invoke('GET', '/auth/captcha')).type, 'v2');
     try {
+      // New keys can't lock anyone out: a wrong key type sends no token at all
+      const before = await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse' } });
+      assert.equal(before.statusCode, 200, 'not yet proven, so not enforced');
+      const human = await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse', captcha: 'good' } });
+      assert.equal(human.statusCode, 200, human.body);
+      // Now proven: enforced
       const none = await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse' } });
       assert.equal(none.statusCode, 400); assert.equal(json(none).captcha, true);
       const robot = await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse', captcha: 'bad' } });
       assert.equal(robot.statusCode, 400);
-      const human = await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse', captcha: 'good' } });
-      assert.equal(human.statusCode, 200, human.body);
       assert.equal((await invoke('POST', '/auth/forgot', { body: { email: 'rep@test.org' } })).statusCode, 400, 'forgot needs it too');
     } finally {
       await invoke('PUT', '/admin/access', { token: ownerToken, headers: h, body: { captcha: { siteKey: '', secret: '' } } });
@@ -1146,6 +1155,13 @@ describe('speed', () => {
     process.env.ZOHO_CACHE_SECONDS = '30';
     try {
       zoho.clearCache();
+      // More than one page comes back whole, not cut at 200
+      store.Big_Test = Array.from({ length: 450 }, (_, i) => ({ id: 'B' + String(i).padStart(4, '0') }));
+      const all = await zoho.coql('select id from Big_Test where id is not null limit 200');
+      assert.equal(all.length, 450, 'every row, across three pages');
+      assert.equal(new Set(all.map(r => r.id)).size, 450, 'no row twice');
+      delete store.Big_Test;
+
       const coqlCalls = () => zohoCalls.filter(c => c.path === '/crm/v8/coql').length;
       const before = coqlCalls();
       await zoho.coql('select id from Growth_Ring_Groups where id is not null limit 1');

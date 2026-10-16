@@ -192,13 +192,42 @@ const cache = new Map();
 const cacheMs = () => parseInt(process.env.ZOHO_CACHE_SECONDS ?? '30', 10) * 1000;
 function clearCache() { cache.clear(); }
 
+/**
+ * Every row, not just the first 200.
+ *
+ * Zoho hands back at most 200 rows per query. A query written "limit 200"
+ * used to stop there silently, so lists with more (members in 20 rings,
+ * every membership link) came back short — and short by a different amount
+ * each time, which is why totals wandered. Such queries are now paged, in a
+ * fixed order (by id, unless the query sorts itself), until a short page.
+ * Pages are fetched a few at a time so long lists stay quick.
+ */
+const PAGE = 200, MAX_ROWS = 10000, WAVE = 4;
+async function coqlPaged(selectQuery) {
+  const m = selectQuery.match(/\blimit\s+200\s*$/i);
+  const one = async q => (await request('/coql', { method: 'POST', body: { select_query: q } }))?.data || [];
+  if (!m) return one(selectQuery);
+  const base = selectQuery.slice(0, m.index).trimEnd();
+  const ordered = /\border\s+by\b/i.test(base) ? base : `${base} order by id`;
+  const page = offset => one(`${ordered} limit ${offset}, ${PAGE}`);
+  const rows = await page(0);
+  let offset = PAGE, done = rows.length < PAGE;
+  while (!done && offset < MAX_ROWS) {
+    const offsets = Array.from({ length: WAVE }, (_, i) => offset + i * PAGE).filter(o => o < MAX_ROWS);
+    const pages = await Promise.all(offsets.map(page));
+    for (const p of pages) { rows.push(...p); if (p.length < PAGE) { done = true; break; } }
+    offset += offsets.length * PAGE;
+  }
+  const seen = new Set();
+  return rows.filter(r => !r || !r.id || (seen.has(r.id) ? false : seen.add(r.id)));
+}
+
 async function coql(selectQuery) {
   const ttl = cacheMs();
   const hit = ttl > 0 && cache.get(selectQuery);
   if (hit && Date.now() - hit.at < ttl) return structuredClone(hit.rows);
 
-  const out = await request('/coql', { method: 'POST', body: { select_query: selectQuery } });
-  const rows = out?.data || [];
+  const rows = await coqlPaged(selectQuery);
   if (ttl > 0) {
     if (cache.size > 300) cache.delete(cache.keys().next().value);
     cache.set(selectQuery, { at: Date.now(), rows: structuredClone(rows) });

@@ -383,9 +383,9 @@ const queries = {
   },
 
   /** Every membership link, used to work out who has no group at all. */
-  allGroupMembers: (offset = 0) =>
+  allGroupMembers: () =>
     `select id, Growth_Ring_Groups, Members from ${M.GROUP_MEMBER}
-     where id is not null limit ${offset}, 200`,
+     where id is not null limit 200`,
 
   /** Contacts by id, once the join table has told us which ones we want. */
   contactsByIds: ids => {
@@ -395,9 +395,17 @@ const queries = {
   },
 
   /** All active members, paged. Diff against the join table for "no ring". */
-  allActiveMembers: (offset = 0) =>
+  allActiveMembers: () =>
     `select ${MEMBER_FIELDS} from ${M.CONTACT}
-     where Active = true limit ${offset}, 200`,
+     where Active = true limit 200`,
+
+  /** Exact totals, counted by Zoho itself — the Overview's headline numbers. */
+  memberCounts: year => [
+    `select COUNT(id) from ${M.CONTACT} where Active = true and Status = 'Active'`,
+    `select COUNT(id) from ${M.CONTACT} where Status like 'Inactive%'`,
+    // COQL wants brackets once there are more than two conditions
+    `select COUNT(id) from ${M.CONTACT} where (Active = true and Status = 'Active') and Paid_Membership_StartDate >= '${year}-01-01'`,
+  ],
 
   /** Visits logged against a rep's rings. */
   visitsForRings: ringIds => {

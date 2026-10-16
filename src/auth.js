@@ -101,9 +101,9 @@ async function login(email, password, ip, device) {
   return finishLogin(user, ip);
 }
 async function finishLogin(user, ip) {
-  await q.touchLogin(user.id);
-  await audit(user.id, 'login.ok', null, ip);
-  return { token: issue(user), user: await withAccess(user) };
+  // Side by side, not one after another: each is a round trip to the database
+  const [, , who] = await Promise.all([q.touchLogin(user.id), audit(user.id, 'login.ok', null, ip), withAccess(user)]);
+  return { token: issue(user), user: who };
 }
 
 async function authRequired(req, res, next) {

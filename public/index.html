@@ -287,6 +287,8 @@
   button,a,.clicky,.chip,.seg,.num,.kpi,.menu-tile,.quick,.rp-item,label{touch-action:manipulation;}
   *{-webkit-tap-highlight-color:transparent;}
   .captcha-slot{min-height:78px;margin:2px 0 12px;display:flex;justify-content:center;}
+  .captcha-note{font-size:11.5px;color:var(--ink-faint);text-align:center;margin:-2px 0 10px;}
+  .grecaptcha-badge{visibility:hidden;}   /* v3's floating badge would cover the phone tab bar; the note above credits Google */
   .perm-all{background:var(--surface-2);border-radius:8px;padding-left:10px;padding-right:0;}
 
   /* 2-step code screen and the owner's lock screen */
@@ -996,7 +998,7 @@ const API = {
       throw err; }
     return res.status === 204 ? null : res.json();
   },
-  login(email,password){ return this.call('/auth/login',{method:'POST',body:JSON.stringify({email,password,device:deviceToken(),captcha:captchaToken()})}); },
+  login(email,password){ return this.call('/auth/login',{method:'POST',body:JSON.stringify({email,password,device:deviceToken(),captcha:captchaToken(),sendLater:true})}); },
   loginCode(challenge,code,trust){ return this.call('/auth/login/code',{method:'POST',body:JSON.stringify({challenge,code,trust})}); },
   loginResend(challenge){ return this.call('/auth/login/resend',{method:'POST',body:JSON.stringify({challenge})}); },
   elevate(password){ return this.call('/auth/elevate',{method:'POST',body:JSON.stringify({password})}); },
@@ -2463,7 +2465,9 @@ async function sendDigestTest(repId, email){
 function vOfficeDash(){
   const pend=S.rings.filter(r=>r.status==='pending').length;
   const od=dueItems(null).filter(a=>days(a.nextDue)<0).length;
-  const act=S.members.filter(m=>m.status==='active').length;
+  // Zoho's own counts when we have them: exact, and the same on every load
+  const st = S.stats || null;
+  const act = st ? st.activeMembers : S.members.filter(m=>m.status==='active').length;
   const rings=S.rings.filter(r=>r.status==='active');
   const atRisk=rings.filter(r=>ringHealth(r)<50);
   const exits=S.activities.filter(a=>a.type==='Exit Interview'&&a.date>='2026-01-01').length;
@@ -2472,8 +2476,8 @@ function vOfficeDash(){
   // but not WHEN they went inactive, so we show the current total instead
   // of inventing a year figure.
   const yr = String(new Date().getFullYear());
-  const newM = S.members.filter(m => m.status==='active' && m.joined && m.joined >= yr+'-01-01').length;
-  const inactive = S.members.filter(m => m.status !== 'active').length;
+  const newM = st && st.year === yr ? st.joinedThisYear : S.members.filter(m => m.status==='active' && m.joined && m.joined >= yr+'-01-01').length;
+  const inactive = st ? st.inactiveMembers : S.members.filter(m => m.status !== 'active').length;
 
   return `${announceBanner()}
     <div class="hello"><h2>${greeting()}</h2><div class="sub">${todayLong()} · where things stand across every rep and ring</div></div>
@@ -3542,7 +3546,13 @@ function noAccess(what){
     <div class="empty">Your account doesn't have access to this. The owner can switch it on under Access &amp; security.</div>`;
 }
 var accessStatus = null, accessData = null, myDevices = null, accessBusy = false;
-function refreshAccessScreen(){ if(ui.view === 'access') renderContent(); }
+function refreshAccessScreen(){
+  if(ui.view !== 'access') return;
+  // Never redraw under someone typing their password
+  const pw = document.querySelector('.lock-form input');
+  if(pw && (pw.value || document.activeElement === pw)) return;
+  renderContent();
+}
 function loadAccessBits(){
   if(accessBusy) return;
   accessBusy = true;
@@ -3555,7 +3565,9 @@ const elevated = () => elevation.token && Date.now() < elevation.until;
 
 function vAccess(){
   if(!API.live) return noAccess('Access & security');
-  if(!accessStatus){ loadAccessBits(); return `<div class="section-head"><div><h2>Access &amp; security</h2></div></div>${skeleton(4)}`; }
+  // The owner goes straight to the password box; the rest loads behind it
+  if(!accessStatus || myDevices === null) loadAccessBits();
+  if(!accessStatus && !isOwner()) return `<div class="section-head"><div><h2>Access &amp; security</h2></div></div>${skeleton(4)}`;
   const head = `<div class="section-head"><div><h2>Access &amp; security</h2>
     <div class="sub">Who can do what in Rep Hub, and how people sign in.</div></div>
     ${isOwner() && elevated() ? `<button class="btn sm" onclick="lockAccess()">${icon('key',15)} Lock</button>` : ''}</div>`;
@@ -3627,6 +3639,12 @@ function vAccess(){
           <li>Label: <strong>Rep Hub</strong>. Type: <strong>Challenge (v2) → "I'm not a robot" Checkbox</strong>.</li>
           <li>Domains: <code>${esc(location.hostname)}</code> <button class="btn sm" type="button" onclick="copyText('${esc(location.hostname)}',this)">Copy</button></li>
           <li>Submit, then paste the <strong>site key</strong> and <strong>secret key</strong> here.</li></ol>`}
+      ${a.captcha && a.captcha.siteKey && !a.captcha.proven ? `<div class="callout" style="margin:0 0 10px"><strong>Waiting for the first real check</strong>
+        Until one sign-in has passed Google's check with these keys, nobody is blocked by it — so a wrong key can't lock anyone out.</div>` : ''}
+      <div class="field"><label>Key type (as chosen on Google's page)</label>
+        <select id="capType">
+          <option value="v3" ${!a.captcha || a.captcha.type !== 'v2' ? 'selected' : ''}>Score based (v3) — invisible, no box to tick</option>
+          <option value="v2" ${a.captcha && a.captcha.type === 'v2' ? 'selected' : ''}>Challenge (v2) — the "I'm not a robot" box</option></select></div>
       <div class="two">
         <div class="field"><label>Site key</label><input id="capSite" value="${esc((a.captcha && a.captcha.siteKey) || '')}" placeholder="6Lc…" autocomplete="off" spellcheck="false"></div>
         <div class="field"><label>Secret key</label><input id="capSecret" type="password" placeholder="${a.captcha && a.captcha.secretSet ? 'Saved — leave blank to keep it' : '6Lc…'}" autocomplete="off" spellcheck="false"></div>
@@ -3697,7 +3715,7 @@ async function unlockAccess(e){
   try{
     const out = await API.elevate(e.target.elements.namedItem('password').value);
     elevation = { token: out.elevation, until: Date.now() + (out.minutes || 15) * 60000 - 20000 };
-    accessData = await API.owner('/admin/access');
+    accessData = out.access || await API.owner('/admin/access');   // usually comes back with the password check
     renderContent();
   }catch(ex){
     if(err){ err.style.display = 'block'; err.textContent = ex.message || 'That password is not right'; }
@@ -3729,9 +3747,11 @@ async function saveCaptcha(off){
   const secret = off ? '' : (document.getElementById('capSecret').value || '').trim();
   if(!off && !siteKey){ toast('Paste the site key first'); return; }
   if(off && !confirm('Switch off the "I\'m not a robot" check?')) return;
-  await saveAccess({ captcha: { siteKey, secret } }, off ? 'Robot check switched off' : 'Robot check is on for sign-in');
-  captchaSiteKey = off ? null : siteKey;
-  try{ off ? localStorage.removeItem('rephub_captcha') : localStorage.setItem('rephub_captcha', siteKey); }catch(e){}
+  const type = (document.getElementById('capType') || {}).value === 'v2' ? 'v2' : 'v3';
+  await saveAccess({ captcha: { siteKey, secret, type } }, off ? 'Robot check switched off' : 'Robot check is on for sign-in');
+  captchaSiteKey = off ? null : siteKey; captchaType = type;
+  try{ off ? localStorage.removeItem('rephub_captcha') : localStorage.setItem('rephub_captcha', siteKey);
+       localStorage.setItem('rephub_captcha_type', type); }catch(e){}
 }
 function setTwoStep(k, on){
   saveAccess({ twoStep: { ...accessData.twoStep, [k]: on } }, `2-step sign-in ${on?'on':'off'} for ${k==='admin'?'directors':k==='staff'?'office staff':'reps'}`);
@@ -4200,6 +4220,25 @@ function mgrRefilter(){
   document.querySelectorAll('.mgr-card').forEach(c => { const hit = !q || c.dataset.name.includes(q); c.hidden = !hit; if(hit) n++; });
   const none = document.getElementById('mgrNone'); if(none) none.hidden = n > 0;
 }
+/* A pie (donut) chart with a legend you can tap. segs: [{label, value, color, go}] */
+function donut(title, segs, center, sub){
+  const total = segs.reduce((s, x) => s + x.value, 0), C = 2 * Math.PI * 42, gap = total > 1 ? 1.6 : 0;
+  let acc = 0;
+  const arcs = segs.filter(s => s.value).map(s => {
+    const len = s.value / total * C;
+    const el = `<circle cx="60" cy="60" r="42" class="d-seg" style="stroke:${s.color};stroke-dasharray:${Math.max(0.1, len - gap).toFixed(2)} ${(C - len + gap).toFixed(2)};stroke-dashoffset:${(-acc).toFixed(2)}"
+      ${s.go ? `onclick="${s.go}"` : ''}><title>${esc(s.label)}: ${s.value} (${Math.round(s.value / total * 100)}%)</title></circle>`;
+    acc += len; return el; }).join('');
+  return `<div class="card donut-card"><div class="trend-t">${esc(title)}</div>
+    <div class="donut-wrap">
+      <div class="donut"><svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="42" class="d-bg"/>${arcs}</svg>
+        <div class="d-in"><span class="d-n"><span class="cu" data-n="${center}">${center}</span></span><span class="d-l">${esc(sub)}</span></div></div>
+      <div class="d-legend">${segs.map(s => `<button class="d-key" ${s.go ? `onclick="${s.go}"` : 'disabled'}>
+        <span class="d-dot" style="background:${s.color}"></span><span class="d-lab">${esc(s.label)}</span>
+        <strong>${s.value}</strong><span class="d-pct">${total ? Math.round(s.value / total * 100) : 0}%</span></button>`).join('')}</div>
+    </div></div>`;
+}
+
 /* A rep's last 8 weeks as a tiny line */
 function sparkline(counts){
   const w = 96, h = 26, max = Math.max(1, ...counts), step = w / (counts.length - 1);
@@ -4887,21 +4926,50 @@ function supportFoot(){
    Shown only once the owner has added keys. The last key seen is kept, so the
    box has its space from the first paint instead of pushing the form down. */
 var captchaSiteKey = (() => { try{ return localStorage.getItem('rephub_captcha') || null; }catch(e){ return null; } })();
-var captchaWidget = null;
+var captchaWidget = null, v3Token = '';
+// v3 = Google's invisible score check (their default key type); v2 = the tick box
+var captchaType = (() => { try{ return localStorage.getItem('rephub_captcha_type') || 'v3'; }catch(e){ return 'v3'; } })();
 function loadCaptchaConfig(){
   fetch('/api/auth/captcha').then(r => r.ok ? r.json() : null).then(v => {
     if(!v) return;
-    const key = v.siteKey || null, changed = key !== captchaSiteKey;
-    captchaSiteKey = key;
-    try{ key ? localStorage.setItem('rephub_captcha', key) : localStorage.removeItem('rephub_captcha'); }catch(e){}
+    const key = v.siteKey || null, type = v.type || 'v3';
+    const changed = key !== captchaSiteKey || type !== captchaType;
+    captchaSiteKey = key; captchaType = type;
+    try{ key ? localStorage.setItem('rephub_captcha', key) : localStorage.removeItem('rephub_captcha');
+         localStorage.setItem('rephub_captcha_type', type); }catch(e){}
     if(changed && !ui.me) render();
   }).catch(() => {});
 }
-function captchaSlot(){ return captchaSiteKey ? `<div class="captcha-slot" id="captchaSlot"></div>` : ''; }
+function captchaSlot(){
+  if(!captchaSiteKey) return '';
+  return captchaType === 'v3'
+    ? `<div class="captcha-note" id="captchaSlot">Protected by Google reCAPTCHA</div>`
+    : `<div class="captcha-slot" id="captchaSlot"></div>`;
+}
+/* v3: ask Google for a token just before sending the form */
+async function prepareCaptcha(action){
+  v3Token = '';
+  if(!captchaSiteKey || captchaType !== 'v3' || !window.grecaptcha || !grecaptcha.execute) return;
+  try{
+    v3Token = await new Promise((ok, no) => {
+      setTimeout(() => no(new Error('timeout')), 6000);
+      grecaptcha.ready(() => grecaptcha.execute(captchaSiteKey, { action: action || 'login' }).then(ok, no));
+    });
+  }catch(e){ v3Token = ''; }
+}
 function mountCaptcha(){
   const slot = document.getElementById('captchaSlot');
   captchaWidget = null;
   if(!slot || !captchaSiteKey) return;
+  if(captchaType === 'v3'){
+    if(!document.getElementById('gcaptcha')){
+      const s = document.createElement('script');
+      s.id = 'gcaptcha'; s.async = true;
+      s.src = 'https://www.google.com/recaptcha/api.js?render=' + encodeURIComponent(captchaSiteKey);
+      document.head.appendChild(s);
+    }
+    return;
+  }
   const dark = matchMedia && matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light';
   const go = () => { const s = document.getElementById('captchaSlot'); if(!s || s.dataset.done) return;
     try{ captchaWidget = grecaptcha.render(s, { sitekey: captchaSiteKey, theme: dark ? 'dark' : 'light' }); s.dataset.done = '1'; }catch(e){} };
@@ -4914,7 +4982,10 @@ function mountCaptcha(){
     document.head.appendChild(s);
   }
 }
-function captchaToken(){ try{ return captchaWidget !== null ? grecaptcha.getResponse(captchaWidget) : ''; }catch(e){ return ''; } }
+function captchaToken(){
+  if(captchaType === 'v3') return v3Token;
+  try{ return captchaWidget !== null ? grecaptcha.getResponse(captchaWidget) : ''; }catch(e){ return ''; }
+}
 /* A token works once, so every attempt that fails needs a fresh tick */
 function resetCaptcha(){ try{ if(captchaWidget !== null) grecaptcha.reset(captchaWidget); }catch(e){} }
 
@@ -5042,6 +5113,7 @@ function loginScreen(){
       <p class="lead" style="margin:0 0 6px;text-align:center">To keep your account safe, we've emailed a six-digit code to
         <strong>${esc(ui.twoStep.sentTo)}</strong>.</p>
       <div class="ts-who">${esc(ui.loginEmail||'')}</div>
+      <div class="row-sub" id="tsSending" style="text-align:center;margin:-6px 0 12px">${ui.twoStep.sending ? 'Sending your code…' : ''}</div>
       <form onsubmit="doTwoStep(event)">
         <div class="field"><label>Enter the code</label>
           <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required autofocus
@@ -5182,6 +5254,7 @@ async function doForgotForm(e){
   ui.loginEmail = email;
   btn.disabled = true; btn.textContent = 'Sending…';
   try{
+    await prepareCaptcha('forgot');
     await API.forgot(email);
     ui.codeFor = email; ui.authMode = 'signin';
     render();
@@ -5217,6 +5290,7 @@ async function resendCode(){
   const btn = event && event.target;
   if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
   try{
+    await prepareCaptcha('forgot');
     await API.forgot(ui.codeFor);
     toast('A new code is on its way — the old one no longer works');
   }catch(e){
@@ -5281,6 +5355,7 @@ async function doSignup(e){
   if(pw !== again) return show("The two passwords don't match.");
   btn.disabled = true; btn.textContent = 'Creating…';
   try{
+    await prepareCaptcha('signup');
     await API.signup(name, email, pw);
     ui.verifyFor = email; ui.authMode = 'signin';
     render();
@@ -5345,6 +5420,7 @@ async function doLinkFromForm(){
   if(!email){ toast('Put your email address in first'); if(box) box.focus(); return; }
   ui.loginEmail = email;
   try{
+    await prepareCaptcha('setup_link');
     await API.requestLink(email);
     ui.linkSentTo = email; ui.resetSent = false;
     render();
@@ -5482,11 +5558,16 @@ async function doLogin(e){
     if(btn){ btn.disabled = false; btn.textContent = 'Sign in'; }
   };
   try{
+    await prepareCaptcha('login');
     const out=await API.login(f.namedItem('email').value, f.namedItem('password').value);
     if(out.twoStep){
-      // Right password; now the code from their inbox
-      ui.twoStep = { challenge: out.challenge, sentTo: out.sentTo };
+      // Right password; now the code from their inbox. The code screen shows
+      // at once and the email is sent alongside.
+      ui.twoStep = { challenge: out.challenge, sentTo: out.sentTo, sending: !!out.sending };
       render();
+      if(out.sending) API.loginResend(out.challenge)
+        .then(() => { if(ui.twoStep){ ui.twoStep.sending = false; const n = document.getElementById('tsSending'); if(n) n.textContent = 'Sent. It can take a few seconds to arrive.'; } })
+        .catch(e => { const n = document.getElementById('tsSending'); if(n){ n.textContent = e.message || 'The code could not be sent. Tap "Send a new code".'; n.style.color = 'var(--rust)'; } });
       return;
     }
     if(out.device) saveDevice(out.device);
@@ -5792,8 +5873,13 @@ async function loadFromServer(){
   S.rings.forEach(r=>{ ringToRep[r.id] = r.repId; });
 
   const settle = (p, apply) => p.then(v=>{ try{ apply(v); }catch(e){} }).catch(()=>{});
+  const got = {};
   await Promise.all([
-    settle(API.members(asRep),      v => S.members     = (v||[]).map(m=>adapt.member(m, ringToRep))),
+    // Members in rings and members with no ring are combined once BOTH are
+    // in (below). Applying each as it landed made the total depend on which
+    // answered first — the 421-or-423 wobble.
+    settle(API.members(asRep),      v => { got.members = (v||[]).map(m=>adapt.member(m, ringToRep)); }),
+    isOffice() ? settle(API.call('/stats'), v => { if(v && typeof v.activeMembers === 'number') S.stats = v; }) : Promise.resolve(),
     settle(API.activities(asRep),   v => S.activities  = (v||[]).map(adapt.activity)),
     settle(API.visits(asRep),       v => S.visits      = (v||[]).map(adapt.visit)),
     settle(API.events(),            v => S.events      = (v||[]).map(adapt.event).filter(e=>e.date)),
@@ -5830,12 +5916,15 @@ async function loadFromServer(){
         at>=0 ? S.facilitators[at] = entry : S.facilitators.push(entry);
       });
     }),
-    settle(API.membersNoRingLive(), v => {
-      (v||[]).map(m=>adapt.member(m,{})).forEach(m=>{
-        if(!S.members.some(x=>x.id===m.id)) S.members.push({...m, repId: ui.me});
-      });
-    }),
+    settle(API.membersNoRingLive(), v => { got.noRing = (v||[]).map(m=>adapt.member(m,{})); }),
   ]);
+  if(got.members){
+    const byId = new Map(got.members.map(m => [m.id, m]));
+    // A rep's no-ring list is their own patch, so it counts as theirs
+    (got.noRing || []).forEach(m => { if(!byId.has(m.id)) byId.set(m.id, { ...m, repId: isRep() ? ui.me : null }); });
+    S.members = [...byId.values()];
+  }
+  if(got.noRing) S.membersNoRing = got.noRing.map(m => ({ ...m, repId: null }));
 
   loadingDetail = false;
   save();

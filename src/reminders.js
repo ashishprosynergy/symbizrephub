@@ -21,6 +21,9 @@ function mailer() {
       host: cfg.mail.host,
       port: cfg.mail.port,
       secure: cfg.mail.port === 465,
+      // Keep the connection open between emails. A fresh TLS handshake and
+      // login with Gmail cost a second or two on every single send.
+      pool: true, maxConnections: 2, maxMessages: 100,
       auth: cfg.mail.user ? { user: cfg.mail.user, pass: cfg.mail.pass } : undefined,
     });
   }
