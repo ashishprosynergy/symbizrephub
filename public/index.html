@@ -128,6 +128,10 @@
   .nv-row{padding:9px 0 9px 37px;}
   .nv-row[hidden],.nv-grp[hidden]{display:none;}
   .inline-link{color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;}
+  .nudge{display:flex;align-items:center;gap:12px;padding:13px 15px;}
+  .nudge > .ico{color:var(--primary);flex:none;}
+  .nudge strong{font-size:14px;}
+  @media (max-width:520px){ .nudge{flex-wrap:wrap;} .nudge .btn{margin-left:30px;} }
   .maplink{display:inline-flex;align-items:center;gap:3px;color:var(--info);text-decoration:none;font-weight:500;}
   .maplink:hover{text-decoration:underline;}
   .maplink .ico{flex:none;}
@@ -2117,8 +2121,15 @@ function vToday(){
       <div class="stat click" onclick="setView('requests')"><div class="n">${reqs}</div><div class="l">Open requests</div></div>
       <div class="stat click" onclick="setView('unaffiliated')"><div class="n">${(S.membersNoRing||[]).filter(m=>m.status==='active').length}</div><div class="l">Members with no ring<br><span style="font-size:10px;opacity:.7">network-wide</span></div></div>
     </div>
-    ${S.activities.some(a=>a.repId===ui.me) ? trendCard('Your calls and meetings', weeklyCounts(S.activities.filter(a=>a.repId===ui.me && a.outcome)))
-      : (loading || loadingDetail) ? `<div class="card skel-card"></div>` : ''}
+    ${(() => {
+      // The chart only once there is something to chart. Eight empty bars
+      // told a rep nothing and arrived last, after the calls had loaded.
+      const weeks = weeklyCounts(S.activities.filter(a => a.repId === ui.me && a.outcome));
+      if(weeks.some(n => n)) return trendCard('Your calls and meetings', weeks);
+      return `<div class="card nudge">${icon('phone',18)}<div style="flex:1"><strong>No calls logged in the last 8 weeks</strong>
+        <div class="row-sub">Each call you log shows here, week by week.</div></div>
+        <button class="btn sm primary" onclick="openLog({})">Log a call</button></div>`;
+    })()}
     ${(()=>{ const t=getTimer();
       return t?`<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
         <div><strong>Timer running — ${timerLabel(t)}</strong>${esc(t.category)}${t.note?' · '+esc(t.note):''}</div>
@@ -2523,9 +2534,11 @@ function vOfficeDash(){
         <div class="n" style="color:var(--rust)">${inactive}</div><div class="l">Inactive members</div></div>
     </div>
     ${(() => {
-      // Hold the chart's space while activity loads, so the page doesn't jump when it arrives
-      if(!S.activities.length) return (loading || loadingDetail) ? `<div class="dash-pair"><div class="card skel-card"></div><div class="card skel-card"></div></div>` : '';
       const counts = weeklyCounts(S.activities.filter(a => a.outcome));   // calls made, not merely booked
+      // Nothing logged yet: one line, not an empty chart that loads last
+      if(!counts.some(n => n)) return (loading || loadingDetail) ? '' : `<div class="card nudge">${icon('phone',18)}<div style="flex:1">
+        <strong>No calls logged by any rep in the last 8 weeks</strong>
+        <div class="row-sub">The weekly chart and the most-active list appear here as reps log calls.</div></div></div>`;
       // Who logged the most this month, so the office sees effort, not just totals
       const month = TODAY_S.slice(0,7), by = {};
       S.activities.forEach(a => { if(a.outcome && a.repId && String(a.date||'').slice(0,7) === month) by[a.repId] = (by[a.repId]||0) + 1; });
