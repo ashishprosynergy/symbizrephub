@@ -4960,10 +4960,11 @@ function vCalendar() {
 
     ${ui.calDay ? `<h3 class="sub-h">${fmt(ui.calDay)}</h3>
       ${dayList.length ? dayList.map(i=>{
-        // For an event, show who is coming right here — Keturah shouldn't
-        // have to open a second screen to see the head count and guests.
+        // The head count shows straight away; the names wait behind a button.
+        // A long attendee list on every tapped day buried the rest of the day.
         const coming = i.kind==='event' ? attendeeList(i.id) : [];
         const guests = coming.filter(a=>a.guestOf);
+        const listOpen = !!(ui.calLists && ui.calLists[i.id]);
         if(i.kind==='event' && API.live && !S.registrations.some(r=>r.eventId===i.id)) loadRegs(i.id);
         return `<div class="card" style="margin-bottom:10px;padding:13px 15px">
           <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
@@ -4977,12 +4978,14 @@ function vCalendar() {
           ${i.kind==='event' ? (coming.length ? `
             <div class="row-sub" style="margin-top:9px;font-weight:600">
               ${coming.length} coming — ${coming.length-guests.length} registered${guests.length?`, ${guests.length} guest${guests.length===1?'':'s'}`:''}</div>
-            <div style="margin-top:6px">${coming.map(a=>`<div class="kv" style="padding:5px 0">
+            ${listOpen ? `<div style="margin-top:6px">${coming.map(a=>`<div class="kv" style="padding:5px 0">
               <span>${a.name?esc(a.name):'<span style="color:var(--ink-muted)">guest name not in Zoho</span>'}
                 ${a.guestOf?`<span class="tag later">${esc(a.kind)}</span>`:''}</span>
               <span class="row-sub">${a.guestOf?`${esc(a.kind.toLowerCase())} of ${esc(a.guestOf)}`:esc(a.business||'')}${a.phone?' · '+esc(a.phone):''}</span>
-            </div>`).join('')}</div>
+            </div>`).join('')}</div>` : ''}
             <div class="btnrow" style="margin-top:9px">
+              <button class="btn sm ${listOpen?'':'primary'}" onclick="toggleCalList('${i.id}')">
+                ${listOpen ? 'Hide the list' : `See the list · ${coming.length}`}</button>
               <button class="btn sm" onclick="openEvent('${i.id}')">Full details</button>
               <button class="btn sm" onclick="printSignInSheet('${i.id}')">Sign-in sheet</button>
             </div>`
@@ -4996,6 +4999,13 @@ function vCalendar() {
         : `<div class="empty">Nothing on this day.</div>`}` : ''}
 
     ${!items.length ? emptyState('events and meetings', 'Nothing scheduled yet.') : ''}`;
+}
+
+/** Show or hide one event's attendee list under a tapped calendar day. */
+function toggleCalList(eventId){
+  ui.calLists = ui.calLists || {};
+  ui.calLists[eventId] = !ui.calLists[eventId];
+  renderContent();
 }
 
 function vEventDetail() {
