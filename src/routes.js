@@ -381,9 +381,21 @@ async function detectCaptchaType(siteKey, site) {
   } catch (e) { return null; }
 }
 
+const typeChecked = new Set();
 r.get('/auth/captcha', wrap(async (req, res) => {
   res.set('Cache-Control', 'public, max-age=60');
-  const k = await captchaKeys();
+  let k = await captchaKeys();
+  // Keys saved with the wrong type (a score key as a tick box) show Google's
+  // "Invalid key type". Check once per key and put it right.
+  if (k.site && !k.proven && !typeChecked.has(k.site)) {
+    typeChecked.add(k.site);
+    const real = await detectCaptchaType(k.site, siteUrl(req));
+    if (real && real !== k.type) {
+      await q.setSetting('captcha_type', real);
+      await audit(null, 'captcha.typeCorrected', { from: k.type, to: real }, req.ip);
+      captchaCache = null; k = await captchaKeys();
+    }
+  }
   res.json({ siteKey: k.site || null, type: k.type });
 }));
 
