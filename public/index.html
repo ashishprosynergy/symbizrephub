@@ -1727,6 +1727,8 @@ function tag(d){
 }
 function statusText(s){ return s==='active'?'Active':s==='pending'?'Awaiting approval':s==='rejected'?'Needs changes':s==='paused'?'Paused':'Discontinued'; }
 function glyph(s){ return `<svg class="ring-mark glyph ${s==='pending'?'pending':s==='rejected'?'rejected':''}" width="21" height="21" viewBox="0 0 26 26"><circle cx="13" cy="13" r="11" stroke-width="1.7"/><circle cx="13" cy="13" r="6.4" stroke-width="1.7"/></svg>`; }
+/* A list, whatever was saved (old records held a count of 0 instead) */
+const listOf = x => Array.isArray(x) ? x : [];
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 /* Rep picker: a styled replacement for the plain <select> of reps.
@@ -2356,8 +2358,8 @@ function vRingDetail(){
     <h3 class="sub-h">Group meetings</h3>
     ${mts.map(t=>`<div class="row"><div class="row-main">
       <div class="row-title">${fmt(t.date)}</div>
-      <div class="row-sub">${t.attended.length} attended${t.absent.length?', '+t.absent.length+' absent':''}${t.notes?' · '+esc(t.notes):''}</div>
-    </div><span class="tag ${t.absent.length>t.attended.length?'overdue':'ok'}">${Math.round(t.attended.length/Math.max(1,t.attended.length+t.absent.length)*100)}%</span></div>`).join('')||`<div class="empty">No meetings recorded yet.</div>`}
+      <div class="row-sub">${listOf(t.attended).length ? listOf(t.attended).length+' attended' : 'Attendance not recorded'}${listOf(t.absent).length?', '+listOf(t.absent).length+' absent':''}${t.notes?' · '+esc(t.notes):''}</div>
+    </div>${listOf(t.attended).length+listOf(t.absent).length ? `<span class="tag ${listOf(t.absent).length>listOf(t.attended).length?'overdue':'ok'}">${Math.round(listOf(t.attended).length/Math.max(1,listOf(t.attended).length+listOf(t.absent).length)*100)}%</span>` : ''}</div>`).join('')||`<div class="empty">No meetings recorded yet.</div>`}
     <h3 class="sub-h">Activity history</h3>
     ${acts.map(a=>`<div class="row"><div class="row-main">
       <div class="row-title">${a.type} — ${esc(a.who)}</div>
@@ -2414,7 +2416,9 @@ function vMemberDetail(){
   const hist=S.activities.filter(a=>a.memberId===m.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
   const due=S.activities.find(a=>a.memberId===m.id&&a.nextDue);
   const mts=S.meetings.filter(t=>t.ringId===m.ringId);
-  const att=mts.length?Math.round(mts.filter(t=>t.attended.includes(m.id)).length/mts.length*100):null;
+  // Only meetings where attendance was taken can say whether this member came
+  const taken=mts.filter(t=>listOf(t.attended).length+listOf(t.absent).length>0);
+  const att=taken.length?Math.round(taken.filter(t=>listOf(t.attended).includes(m.id)).length/taken.length*100):null;
 
   return `<button class="back" onclick="setView(isRep()?'people':'members')">← Back</button>
     <div class="section-head"><div><h2>${esc(m.name)}</h2>
@@ -2974,8 +2978,8 @@ const REPORTS={
     desc:'Group meetings held and who showed up.',
     cols:['Ring','Date','Attended','Absent','Rate','Notes'],
     rows:()=>S.meetings.sort((a,b)=>new Date(b.date)-new Date(a.date)).map(t=>[
-      ring(t.ringId)?ring(t.ringId).name:'',t.date,t.attended.length,t.absent.length,
-      Math.round(t.attended.length/Math.max(1,t.attended.length+t.absent.length)*100)+'%',t.notes||''])
+      ring(t.ringId)?ring(t.ringId).name:'',t.date,listOf(t.attended).length,listOf(t.absent).length,
+      Math.round(listOf(t.attended).length/Math.max(1,listOf(t.attended).length+listOf(t.absent).length)*100)+'%',t.notes||''])
   },
   'no-ring':{
     name:'Members without a Growth Ring',
@@ -6417,7 +6421,9 @@ const adapt = {
       // records had no status and were always meetings that took place.
       status: m.status || 'held',
       place: m.place || '', link: m.link || '',
-      attended: m.attended || 0, absent: m.absent || 0,
+      // Always lists of member ids (empty when Zoho has no attendance), so
+      // every screen can count and look people up the same way
+      attended: Array.isArray(m.attended) ? m.attended : [], absent: Array.isArray(m.absent) ? m.absent : [],
       notes: m.notes || '',
     };
   },
