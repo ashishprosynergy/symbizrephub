@@ -1581,7 +1581,8 @@ function lastContactCached(memberId){
   if(!_lastContactCache){
     _lastContactCache = new Map();
     [...S.activities].sort((a,b)=>String(b.date).localeCompare(String(a.date))).forEach(a=>{
-      if(a.memberId && !_lastContactCache.has(a.memberId)) _lastContactCache.set(a.memberId, a);
+      // Only calls actually made count as contact, not ones merely booked
+      if(a.memberId && a.outcome && !_lastContactCache.has(a.memberId)) _lastContactCache.set(a.memberId, a);
     });
   }
   return _lastContactCache.get(memberId) || null;
@@ -1856,8 +1857,20 @@ function openQuickAdd(){
     <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button></div>`);
 }
 
+/**
+ * What is due: for each member (or each ring's facilitator calls), only the
+ * newest call counts — an older call's "next due" date was replaced the
+ * moment a later call was logged, and must not make someone look overdue.
+ */
 function dueItems(repId){
-  return S.activities.filter(a=>a.nextDue && (!repId||a.repId===repId))
+  const latest = new Map();
+  S.activities.forEach(a => {
+    if(repId && a.repId !== repId) return;
+    const k = a.memberId ? 'm:' + a.memberId : 'r:' + (a.ringId || '') + ':' + (a.type || '');
+    const cur = latest.get(k), d = String(a.date || ''), cd = cur ? String(cur.date || '') : '';
+    if(!cur || d > cd || (d === cd && String(a.nextDue || '') > String(cur.nextDue || ''))) latest.set(k, a);
+  });
+  return [...latest.values()].filter(a => a.nextDue)
     .sort((a,b)=> new Date(a.nextDue)-new Date(b.nextDue));
 }
 function lastContact(memberId){ return lastContactCached(memberId); }
@@ -2104,7 +2117,7 @@ function vToday(){
       <div class="stat click" onclick="setView('requests')"><div class="n">${reqs}</div><div class="l">Open requests</div></div>
       <div class="stat click" onclick="setView('unaffiliated')"><div class="n">${(S.membersNoRing||[]).filter(m=>m.status==='active').length}</div><div class="l">Members with no ring<br><span style="font-size:10px;opacity:.7">network-wide</span></div></div>
     </div>
-    ${S.activities.some(a=>a.repId===ui.me) ? trendCard('Your calls and meetings', weeklyCounts(S.activities.filter(a=>a.repId===ui.me)))
+    ${S.activities.some(a=>a.repId===ui.me) ? trendCard('Your calls and meetings', weeklyCounts(S.activities.filter(a=>a.repId===ui.me && a.outcome)))
       : (loading || loadingDetail) ? `<div class="card skel-card"></div>` : ''}
     ${(()=>{ const t=getTimer();
       return t?`<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
@@ -2512,10 +2525,10 @@ function vOfficeDash(){
     ${(() => {
       // Hold the chart's space while activity loads, so the page doesn't jump when it arrives
       if(!S.activities.length) return (loading || loadingDetail) ? `<div class="dash-pair"><div class="card skel-card"></div><div class="card skel-card"></div></div>` : '';
-      const counts = weeklyCounts(S.activities);
+      const counts = weeklyCounts(S.activities.filter(a => a.outcome));   // calls made, not merely booked
       // Who logged the most this month, so the office sees effort, not just totals
       const month = TODAY_S.slice(0,7), by = {};
-      S.activities.forEach(a => { if(a.repId && String(a.date||'').slice(0,7) === month) by[a.repId] = (by[a.repId]||0) + 1; });
+      S.activities.forEach(a => { if(a.outcome && a.repId && String(a.date||'').slice(0,7) === month) by[a.repId] = (by[a.repId]||0) + 1; });
       const top = Object.entries(by).sort((a,b)=>b[1]-a[1]).slice(0,5);
       const most = top.length ? top[0][1] : 1;
       return `<div class="dash-pair">${trendCard('Calls and meetings logged · all reps', counts)}
@@ -2590,7 +2603,8 @@ function vOfficeDash(){
       <div class="row-main"><div class="row-title">${esc(a.who)}</div><div class="row-sub">${a.type} · ${pname(a.repId)} · ${ring(a.ringId)?esc(ring(a.ringId).name):''}</div></div>
       ${tag(a.nextDue)}</div>`).join('')}
     <h3 class="sub-h">Recent activity across the network</h3>
-    ${[...S.activities].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,6).map(a=>`<div class="row">
+    ${(S.activities.some(a=>a.outcome) ? '' : `<div class="empty">No calls logged yet. Booked calls show above as they fall due.</div>`)}
+    ${S.activities.filter(a=>a.outcome).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,6).map(a=>`<div class="row">
       <div class="row-main"><div class="row-title">${a.type} — ${esc(a.who)}</div>
       <div class="row-sub">${pname(a.repId)} · ${fmt(a.date)}${a.notes?' · '+esc(a.notes):''}</div></div></div>`).join('')}`;
 }
@@ -5915,7 +5929,10 @@ const adapt = {
       who: a.memberName || a.ringName || a.type || '',
       date: a.date || '',
       nextDue: a.nextDue || null,
-      outcome: a.outcome || 'Connected',
+      // No outcome = a call that is booked but not made yet (the call cycle
+      // creates these). It used to be read as "Connected", so booked calls
+      // would have counted as done.
+      outcome: a.outcome || null,
       notes: a.notes || '',
     };
   },

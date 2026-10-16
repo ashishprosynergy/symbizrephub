@@ -410,7 +410,9 @@ const queries = {
   /** Visits logged against a rep's rings. */
   visitsForRings: ringIds => {
     const ids = (ringIds || []).map(i => `'${esc(i)}'`).join(',');
-    return `select id, Name, Visit_Date, Visit_Type, Visit_Notes, Growth_Ring_Group
+    // Next_Due_Date is what makes a call "due"; without it every booked call
+    // looked like nothing scheduled. Rep, Member and Outcome say who and how.
+    return `select id, Name, Visit_Date, Visit_Type, Visit_Notes, Growth_Ring_Group, Rep, Member, Outcome, Next_Due_Date
             from ${M.ACTIVITY} where Growth_Ring_Group in (${ids || "''"})
             order by Visit_Date desc limit 200`;
   },
