@@ -128,6 +128,27 @@
   .nv-row{padding:9px 0 9px 37px;}
   .nv-row[hidden],.nv-grp[hidden]{display:none;}
   .inline-link{color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;}
+  /* Member map */
+  .map-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
+  .map-tools .chip{display:inline-flex;align-items:center;gap:6px;}
+  .map-search{flex:1;min-width:200px;font:inherit;font-size:14px;padding:8px 12px;border:1px solid var(--line);
+    border-radius:999px;background:var(--surface);color:var(--ink);}
+  .map-search:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);}
+  .map-meta{font-size:12.5px;color:var(--ink-muted);margin:4px 0 10px;}
+  .member-map{height:68vh;min-height:360px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface-2);}
+  @media (max-width:900px){ .member-map{height:60vh;} }
+  .map-pop{font-family:var(--sans);font-size:13px;line-height:1.45;min-width:190px;}
+  .map-pop .mp-sub{color:#5A6455;font-size:12px;margin-top:2px;}
+  .map-pop .mp-actions{display:flex;gap:12px;margin-top:8px;font-weight:600;}
+  .map-pop .mp-actions a{color:#2E5132;}
+  .d-dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex:none;}
+
+  /* Membership levels */
+  .tag.tier{background:var(--line-soft);color:var(--ink-muted);}
+  .tag.tier-seedling{background:#E6F2DD;color:#4E7A2F;}
+  .tag.tier-sapling{background:var(--primary-soft);color:var(--primary);}
+  .tag.tier-mighty-oak{background:var(--accent-soft);color:var(--accent);}
+  .tag.tier-bookshelf{background:var(--info-soft);color:var(--info);}
   .nudge{display:flex;align-items:center;gap:12px;padding:13px 15px;}
   .nudge > .ico{color:var(--primary);flex:none;}
   .nudge strong{font-size:14px;}
@@ -1533,7 +1554,7 @@ function can(cap){
   return !!m.perms[cap];
 }
 /* Which switch each office screen sits behind (Overview is always there) */
-const VIEW_CAP = { manager:'manager', approvals:'approvals', calendar:'calendar', members:'members', allrings:'rings',
+const VIEW_CAP = { manager:'manager', approvals:'approvals', calendar:'calendar', members:'members', map:'members', allrings:'rings',
   visits:'visits', unaffiliated:'unaffiliated', reports:'reports', coverage:'reports', insights:'reports', team:'team',
   reminders:'reminders', timesheet:'accounting', checks:'system' };
 function canView(v){
@@ -1768,7 +1789,7 @@ const ICON_PATHS = {
 const VIEW_ICONS = { today:'home', dash:'grid', rings:'ring', allrings:'ring', people:'users', members:'users',
   calendar:'calendar', timesheet:'clock', resources:'folder', callsheet:'printer', manager:'briefcase',
   approvals:'check', visits:'pin', unaffiliated:'userplus', reports:'chart', coverage:'map', insights:'trend',
-  progress:'trend', team:'user', reminders:'bell', settings:'sliders', checks:'pulse', requests:'inbox', access:'shield' };
+  progress:'trend', team:'user', reminders:'bell', settings:'sliders', checks:'pulse', requests:'inbox', access:'shield', map:'pin' };
 function icon(name, size){
   const p = ICON_PATHS[VIEW_ICONS[name] || name] || ICON_PATHS.grid;
   const fill = name === 'more' ? 'currentColor' : 'none';
@@ -2297,7 +2318,7 @@ function vMemberDetail(){
       ${m.address?`<div class="kv"><span class="k">Address</span>
         <a href="https://maps.google.com/?q=${encodeURIComponent(m.address)}" target="_blank" rel="noopener">${esc(m.address)}</a></div>`:''}
       ${m.lifeStage?`<div class="kv"><span class="k">Life stage</span><span>${esc(m.lifeStage)}${LIFE_STAGES[m.lifeStage]?` — ${esc(LIFE_STAGES[m.lifeStage].hint)}`:''}</span></div>`:''}
-      ${m.memberType?`<div class="kv"><span class="k">Membership type</span><span>${esc(m.memberType)}</span></div>`:''}
+      ${m.tier||m.memberType?`<div class="kv"><span class="k">Membership level</span><span>${m.tier?`<span class="tag tier tier-${esc(m.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(m.tier)}</span>`:esc(m.memberType)}</span></div>`:''}
       <div class="kv"><span class="k">Member since</span><span>${fmt(m.memberSince||m.joined)}</span></div>
       <div class="kv"><span class="k">Next call due</span><span>${due?fmt(due.nextDue):'not scheduled'}</span></div>
       ${att!==null?`<div class="kv"><span class="k">Meeting attendance</span><span>${att}%</span></div>`:''}
@@ -2532,6 +2553,11 @@ function vOfficeDash(){
         <div class="n" style="color:var(--primary)">+${newM}</div><div class="l">Joined in ${yr}</div></div>
       <div class="stat click" onclick="setView('insights')" title="Members marked Inactive in Zoho. Zoho does not record the date they left, so this is a running total, not a figure for this year.">
         <div class="n" style="color:var(--rust)">${inactive}</div><div class="l">Inactive members</div></div>
+      ${(() => { // Mel: members paying but in no group, beside Inactive
+        const n = (S.membersNoRing || []).filter(m => m.status === 'active').length;
+        const known = (S.membersNoRing || []).length || !loadingDetail;
+        return `<div class="stat click" onclick="setView('unaffiliated')" title="Active members who are not in any Growth Ring">
+          <div class="n" style="color:var(--accent)">${known ? n : '…'}</div><div class="l">Not in a Growth Ring</div></div>`; })()}
     </div>
     ${(() => {
       const counts = weeklyCounts(S.activities.filter(a => a.outcome));   // calls made, not merely booked
@@ -2924,7 +2950,7 @@ function vMembersAll(){
     <h3 class="sub-h">Members · ${list.length}</h3>
     ${shown.map(m=>{const lc=lastContact(m.id);return `<div class="row clicky" onclick="openMember('${m.id}')">
       <div class="av">${initials(m.name)}</div>
-      <div class="row-main"><div class="row-title">${esc(m.name)}${m.status!=='active'?` <span class="tag later">${m.status}</span>`:''}</div>
+      <div class="row-main"><div class="row-title">${esc(m.name)}${m.tier?` <span class="tag tier tier-${esc(m.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(m.tier)}</span>`:''}${m.status!=='active'?` <span class="tag later">${m.status}</span>`:''}</div>
       <div class="row-sub">${esc(m.business||'—')}${m.ringNames&&m.ringNames.length?' · '+esc(m.ringNames[0]):''} · last spoke ${lc?fmt(lc.date):'never'}</div></div>
       ${m.renews&&days(m.renews)<=90&&days(m.renews)>=0?`<span class="tag soon">renews ${fmtShort(m.renews)}</span>`:''}</div>`;}).join('')
       || (q ? `<div class="empty">Nobody matches that.</div>` : emptyState('members'))}
@@ -4271,6 +4297,90 @@ function mgrRefilter(){
   document.querySelectorAll('.mgr-card').forEach(c => { const hit = !q || c.dataset.name.includes(q); c.hidden = !hit; if(hit) n++; });
   const none = document.getElementById('mgrNone'); if(none) none.hidden = n > 0;
 }
+/* ══════════════ MEMBER MAP (Mel) ══════════════
+ * Every active member pinned at their mailing address, coloured by
+ * membership level, filterable by rep. OpenStreetMap tiles via Leaflet; each
+ * pin also opens the address in Google Maps. */
+var mapData = null, mapBusy = false, leafletMap = null, leafletP = null;
+const TIER_COLOURS = { 'Seedling':'#7FB24F', 'Sapling':'#2E5132', 'Mighty Oak':'#AD7E21', 'Bookshelf':'#2C5A6E' };
+function ensureLeaflet(){
+  if(window.L) return Promise.resolve();
+  if(leafletP) return leafletP;
+  leafletP = new Promise((ok, no) => {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet'; css.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
+    document.head.appendChild(css);
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
+    s.onload = ok; s.onerror = () => { leafletP = null; no(new Error('The map could not load')); };
+    document.head.appendChild(s);
+  });
+  return leafletP;
+}
+function loadMapData(force){
+  if(mapBusy || (mapData && !force)) return;
+  mapBusy = true;
+  API.call('/members/map').then(v => { mapData = v; }).catch(e => { mapData = { error: e.message }; })
+    .finally(() => { mapBusy = false; if(ui.view === 'map') renderContent(); });
+}
+function mapShown(){
+  const q = (ui.mapQ || '').trim().toLowerCase();
+  return (mapData.members || []).filter(m =>
+    (!ui.mapRep || m.repId === ui.mapRep) && (!ui.mapTier || m.tier === ui.mapTier) &&
+    (!q || [m.name, m.business, m.address, (m.rings||[]).join(' ')].join(' ').toLowerCase().includes(q)));
+}
+function vMemberMap(){
+  const head = `<div class="section-head"><div><h2>Member map</h2>
+    <div class="sub">Every active member at their mailing address. Tap a pin for details.</div></div>
+    ${mapData && !mapData.error ? `<button class="btn sm" onclick="loadMapData(true)">Refresh</button>` : ''}</div>`;
+  if(!API.live) return head + `<div class="empty">The map needs the live server.</div>`;
+  if(!mapData){ loadMapData(); return head + `<div class="card skel-card" style="height:60vh"></div>`; }
+  if(mapData.error) return head + `<div class="callout rust"><strong>Could not load the map</strong>${esc(mapData.error)}
+    <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="mapData=null;renderContent()">Try again</button></div></div>`;
+  const reps = [...new Map((mapData.members||[]).filter(m=>m.repId).map(m=>[m.repId,{id:m.repId,name:m.rep}])).values()];
+  const shown = mapShown(), placed = shown.filter(m => m.lat != null);
+  setTimeout(drawMemberMap, 0);
+  return head + `
+    <div class="map-tools">
+      ${repPicker('mapRep', reps, ui.mapRep, 'All reps')}
+      <div class="chips" style="margin:0">${['', ...Object.keys(TIER_COLOURS)].map(t =>
+        `<button class="chip ${(ui.mapTier||'')===t?'on':''}" onclick="ui.mapTier='${t}';renderContent()">
+          ${t ? `<span class="d-dot" style="background:${TIER_COLOURS[t]}"></span>${esc(t)}` : 'All levels'}</button>`).join('')}</div>
+      <input class="map-search" placeholder="Find a member, business or town…" value="${esc(ui.mapQ||'')}"
+        oninput="ui.mapQ=this.value;clearTimeout(window.__mq);window.__mq=setTimeout(drawMemberMap,200)">
+    </div>
+    <div class="map-meta">${placed.length} of ${shown.length} shown on the map
+      ${mapData.pending ? ` · <strong>${mapData.pending} address${mapData.pending===1?'':'es'} still being placed</strong> — they appear within a few minutes; press Refresh` : ''}
+      ${mapData.noAddress ? ` · ${mapData.noAddress} with no address in Zoho` : ''}</div>
+    <div id="memberMap" class="member-map"></div>`;
+}
+async function drawMemberMap(){
+  const el = document.getElementById('memberMap');
+  if(!el || !mapData || mapData.error) return;
+  try{ await ensureLeaflet(); }catch(e){ el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if(leafletMap){ try{ leafletMap.remove(); }catch(e){} leafletMap = null; }
+  if(!document.body.contains(el)) return;
+  leafletMap = L.map(el, { scrollWheelZoom: true, zoomControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(leafletMap);
+  const pts = [];
+  mapShown().filter(m => m.lat != null).forEach(m => {
+    const colour = TIER_COLOURS[m.tier] || '#5A6455';
+    const g = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(m.address);
+    L.circleMarker([m.lat, m.lng], { radius: 7, color: '#fff', weight: 1.5, fillColor: colour, fillOpacity: .92 })
+      .bindPopup(`<div class="map-pop"><strong>${esc(m.name)}</strong>${m.tier ? ` <span class="tag tier tier-${esc(m.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(m.tier)}</span>` : ''}
+        ${m.business ? `<div>${esc(m.business)}</div>` : ''}<div class="mp-sub">${esc(m.address)}</div>
+        ${(m.rings||[]).length ? `<div class="mp-sub">Ring ${esc(m.rings.join(', '))}${m.rep ? ' · ' + esc(splitRepName(m.rep).name) : ''}</div>` : '<div class="mp-sub">Not in a Growth Ring</div>'}
+        ${m.phone ? `<div class="mp-sub"><a href="tel:${esc(m.phone.replace(/[^0-9+]/g,''))}">${esc(m.phone)}</a></div>` : ''}
+        <div class="mp-actions"><a href="${g}" target="_blank" rel="noopener">Google Maps</a>
+          ${S.members.some(x => x.id === m.id) ? `<a href="#" onclick="event.preventDefault();openMember('${m.id}')">Open member</a>` : ''}</div></div>`)
+      .addTo(leafletMap);
+    pts.push([m.lat, m.lng]);
+  });
+  if(pts.length) leafletMap.fitBounds(pts, { padding: [24, 24], maxZoom: 12 });
+  else leafletMap.setView([40.04, -76.3], 7);   // Lancaster County, PA
+}
+
 /* A pie (donut) chart with a legend you can tap. segs: [{label, value, color, go}] */
 function donut(title, segs, center, sub){
   const total = segs.reduce((s, x) => s + x.value, 0), C = 2 * Math.PI * 42, gap = total > 1 ? 1.6 : 0;
@@ -4912,7 +5022,7 @@ function navGroups(){
   ];
   const office = [
     ['', [['dash','Overview'],['manager','Rep manager'],['approvals','Approvals'],['calendar','Calendar']]],
-    ['Records', [['members','Members'],['allrings','Rings'],['visits','Visits'],['unaffiliated','No ring yet']]],
+    ['Records', [['members','Members'],['map','Member map'],['allrings','Rings'],['visits','Visits'],['unaffiliated','No ring yet']]],
     ['Reporting', [['reports','Reports'],['coverage','Coverage'],['insights','Retention'],['timesheet','Hours & expenses']]],
     ['Setup', [['team','Reps'],['reminders','Reminders'],['settings','Settings'],
       ...(isAdmin() ? [['checks','System check']] : []), ['access','Access & security']]],
@@ -5823,6 +5933,8 @@ const adapt = {
       region: m.region || '',
       lifeStage: m.lifeStage || '',
       memberType: m.memberType || '',
+      // The membership level (Seedling, Sapling, Mighty Oak, Bookshelf), from Memberships
+      tier: m.tier || '',
       onlineMember: !!m.onlineMember,
       address: m.address || '',
       memberSince: m.memberSince || null,
@@ -5833,7 +5945,7 @@ const adapt = {
       // Their Zoho has no renewal date. Memberships are annual, so it is the
       // next anniversary of the paid start date. Without this "Renewing soon"
       // could never match anyone.
-      renews: adapt.nextAnniversary(m.joined || m.memberSince),
+      renews: m.renewalDate || adapt.nextAnniversary(m.joined || m.memberSince),
       status: String(m.status || '').toLowerCase() === 'active' ? 'active' : 'discontinued',
       isFacilitator: !!m.isFacilitator,
     };
@@ -5893,6 +6005,10 @@ const adapt = {
     return {
       id: m.id, ringId: m.ringId, ringName: m.ringName || '',
       date: m.date, time: m.time || '',
+      // held | planned | cancelled (from Zoho's Meeting Status). Older saved
+      // records had no status and were always meetings that took place.
+      status: m.status || 'held',
+      place: m.place || '', link: m.link || '',
       attended: m.attended || 0, absent: m.absent || 0,
       notes: m.notes || '',
     };
@@ -6186,7 +6302,7 @@ function renderContentSafe(el){
       </div>`;
   }
 }
-const VIEW_TITLE = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', allrings:'Rings',
+const VIEW_TITLE = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', map:'Member map', allrings:'Rings',
   visits:'Visits', unaffiliated:'No ring yet', reports:'Reports', coverage:'Coverage', insights:'Retention', team:'Reps',
   reminders:'Reminders', timesheet:'Hours and expenses', checks:'System check', settings:'Settings', access:'Access & security' };
 function renderContentInner(el){
@@ -6212,7 +6328,7 @@ function renderContentInner(el){
     :v==='members'?vMembersAll():v==='allrings'?vAllRings():v==='insights'?vInsights()
     :v==='team'?(API.live ? (setTimeout(()=>loadUsers(),0), vTeam()) : vTeam()):v==='reminders'?vReminders()
     :v==='settings'?((can('settings')||can('books'))?vSettings():noAccess('Settings'))
-    :v==='access'?vAccess():vOfficeDash();
+    :v==='access'?vAccess():v==='map'?vMemberMap():vOfficeDash();
 }
 
 /**
@@ -6444,15 +6560,27 @@ function calendarItems(repId, range) {
   });
   // Meetings a rep has actually recorded. These were being saved and then
   // never shown, so the calendar looked empty even after logging one.
+  // Ring meetings from Zoho's GR Meetings: held, planned or cancelled. The same
+  // meeting is sometimes entered twice there, so each shows once.
+  const seenMtg = new Set();
   (S.meetings || []).forEach(mt => {
     const g = ring(mt.ringId);
     if(!g || !mine(g)) return;
+    const key = mt.ringId + '|' + mt.date + '|' + (mt.time || '');
+    if(seenMtg.has(key)) return;
+    seenMtg.add(key);
     const attended = Array.isArray(mt.attended) ? mt.attended.length : (mt.attended || 0);
     const absent = Array.isArray(mt.absent) ? mt.absent.length : (mt.absent || 0);
+    const held = mt.status === 'held', cancelled = mt.status === 'cancelled';
     out.push({
       kind: 'meeting', date: mt.date, time: mt.time || '',
-      title: `${g.name} met`, repId: g.repId, id: mt.id, held: true,
-      sub: attended || absent ? `${attended} there${absent?`, ${absent} away`:''}` : (mt.notes || 'recorded'),
+      title: cancelled ? `${g.name} — cancelled` : held ? `${g.name} met` : `${g.name} meets`,
+      repId: g.repId, ringId: g.id, id: mt.id, held: held || cancelled, cancelled,
+      sub: held && (attended || absent) ? `${attended} there${absent?`, ${absent} away`:''}`
+        : [g.facName ? 'Facilitator ' + g.facName : '', mt.link ? 'online' : '',
+           /host/i.test(mt.place || '') ? mt.place : ''].filter(Boolean).join(' · '),
+      // A town opens in Maps; "at the host's home" is just words
+      where: /host/i.test(mt.place || '') ? '' : mt.place,
       go: `openRing('${g.id}')`,
     });
   });
@@ -6464,7 +6592,7 @@ function calendarItems(repId, range) {
       ? recurringBetween(r.meetDay, range.from, range.to)
       : [nextRecurring(r.meetDay)].filter(Boolean);
     dates.forEach(d => {
-      // Already recorded as held that day: show the record, not a second "meets"
+      // Already in Zoho for that day (held, planned or cancelled): show that, not a guess
       if ((S.meetings || []).some(mt => mt.ringId === r.id && mt.date === d)) return;
       out.push({
         kind: 'meeting', date: d, time: r.meetTime, repId: r.repId, ringId: r.id,

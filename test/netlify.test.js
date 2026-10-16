@@ -23,6 +23,8 @@ process.env.ZOHO_API_DOMAIN = `http://127.0.0.1:${FAKE_ZOHO_PORT}`;
 process.env.ZOHO_ACCOUNTS_DOMAIN = `http://127.0.0.1:${FAKE_ZOHO_PORT}`;
 process.env.RECAPTCHA_VERIFY_URL = `http://127.0.0.1:${FAKE_ZOHO_PORT}/recaptcha/siteverify`;
 process.env.RECAPTCHA_ANCHOR_URL = `http://127.0.0.1:${FAKE_ZOHO_PORT}/recaptcha/anchor`;
+process.env.CENSUS_GEOCODER_URL = `http://127.0.0.1:${FAKE_ZOHO_PORT}/census`;
+process.env.NOMINATIM_URL = `http://127.0.0.1:${FAKE_ZOHO_PORT}/nominatim`;
 
 /* ─── in-memory Postgres ─── */
 const { newDb } = require('pg-mem');
@@ -52,6 +54,13 @@ const fakeZoho = http.createServer((req, res) => {
     zohoCalls.push({ method: req.method, path: url.pathname });
     const json = d => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(d)); };
 
+    // fake US Census batch geocoder: places "1 Main St"
+    if (url.pathname === '/census') {
+      const m = body.match(/"(\d+)","1 Main St"/);
+      res.writeHead(200, { 'content-type': 'text/csv' });
+      return res.end(m ? `"${m[1]}","1 Main St, Lititz, PA, 17543","Match","Exact","1 MAIN ST, LITITZ, PA, 17543","-76.30,40.15","1","L"\n` : '');
+    }
+    if (url.pathname === '/nominatim') return json([]);
     // fake Google widget page: keys starting 6Lv are score (v3) keys
     if (url.pathname === '/recaptcha/anchor') {
       res.writeHead(200, { 'content-type': 'text/html' });
@@ -1166,6 +1175,61 @@ describe('owner, permissions and 2-step sign-in', () => {
       await invoke('PUT', '/admin/access', { token: ownerToken, headers: h, body: { captcha: { siteKey: '', secret: '' } } });
     }
     assert.equal(json(await invoke('GET', '/auth/captcha')).siteKey, null, 'switched off again');
+  });
+});
+
+/* ═══════════ MEL'S FEEDBACK: MEETINGS, LEVELS, MAP ═══════════ */
+describe("ring meetings, membership levels and the member map", () => {
+  const { handler } = require('../netlify/functions/api');
+  const invoke = (method, path, { body, token } = {}) => handler({
+    httpMethod: method, path: `/.netlify/functions/api${path}`,
+    rawUrl: `https://x.netlify.app/.netlify/functions/api${path}`,
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    queryStringParameters: {}, body: body ? JSON.stringify(body) : null, isBase64Encoded: false,
+  }, {});
+  let token;
+  before(async () => {
+    token = JSON.parse((await invoke('POST', '/auth/login', { body: { email: 'office@test.org', password: 'correct-horse' } })).body).token;
+    store.Growth_Ring_Groups.push({ id: 'GR9', Name: '99', Active: true, Regional_Rep: { id: 'REPX', name: 'Rep X #0001' } });
+    store.Growth_Ring_Meetings_N = [
+      { id: 'MT1', Growth_Ring_Group: { id: 'GR9', name: '99' }, Meeting_Datetime: '2026-10-20T19:00:00+05:30',
+        Meeting_Status: 'Scheduled', Meeting_Location: 'Host Address' },
+      { id: 'MT2', Growth_Ring_Group: { id: 'GR9', name: '99' }, Meeting_Datetime: '2026-09-01T17:30:00+05:30',
+        Meeting_Status: 'Complete', Other_City: 'Lititz', Other_State: 'PA' },
+    ];
+    store.Contacts.push({ id: 'C9', Full_Name: 'Map Member #9', Status: 'Active', Active: true,
+      Mailing_Street: '1 Main St', Mailing_City: 'Lititz', Mailing_State: 'PA', Mailing_Zip: '17543' });
+    store.Group_Members = [{ id: 'L9', Members: { id: 'C9', name: 'Map Member #9' }, Growth_Ring_Groups: { id: 'GR9', name: '99' } }];
+    store.Deals = [
+      { id: 'D1', Contact_Name: { id: 'C9' }, Membership_Tier: 'Seedling', Stage: 'Inactive', Start_Date: '2025-01-01' },
+      { id: 'D2', Contact_Name: { id: 'C9' }, Membership_Tier: 'Sapling', Stage: 'Closed Won/Active', Start_Date: '2026-01-01', Renewal_Date: '2027-01-01' },
+    ];
+  });
+
+  test('ring meetings come from GR Meetings, on Eastern time, with their status', async () => {
+    const rows = JSON.parse((await invoke('GET', '/meetings', { token })).body);
+    const planned = rows.find(r => r.id === 'MT1'), held = rows.find(r => r.id === 'MT2');
+    assert.ok(planned && held, JSON.stringify(rows));
+    assert.equal(planned.date, '2026-10-20'); assert.equal(planned.time, '9:30 AM');
+    assert.equal(planned.status, 'planned'); assert.equal(planned.place, "At the host's home");
+    assert.equal(held.status, 'held'); assert.equal(held.place, 'Lititz, PA');
+  });
+
+  test("members carry their membership level and real renewal date", async () => {
+    const m = JSON.parse((await invoke('GET', '/members', { token })).body).find(x => x.id === 'C9');
+    assert.ok(m, 'member loaded');
+    assert.equal(m.tier, 'Sapling', 'the active membership wins over an old one');
+    assert.equal(m.renewalDate, '2027-01-01');
+  });
+
+  test('the member map places addresses once and keeps them', async () => {
+    await invoke('GET', '/members/map', { token });        // looks the address up
+    const map = JSON.parse((await invoke('GET', '/members/map', { token })).body);
+    const m = map.members.find(x => x.id === 'C9');
+    assert.ok(m && m.lat === 40.15 && m.lng === -76.30, JSON.stringify(m));
+    assert.equal(m.tier, 'Sapling'); assert.deepEqual(m.rings, ['99']); assert.equal(m.rep, 'Rep X #0001');
+    const saved = await db.q.allGeocodes();
+    assert.ok(saved.some(r => r.source === 'census' && r.lat === 40.15), 'kept for next time');
   });
 });
 

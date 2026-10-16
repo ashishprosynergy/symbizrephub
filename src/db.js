@@ -203,6 +203,14 @@ CREATE TABLE IF NOT EXISTS trusted_devices (
 );
 
 CREATE INDEX IF NOT EXISTS idx_device_user ON trusted_devices (user_id);
+
+CREATE TABLE IF NOT EXISTS geocodes (
+  address_key TEXT PRIMARY KEY,
+  lat         DOUBLE PRECISION,
+  lng         DOUBLE PRECISION,
+  source      TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE INDEX IF NOT EXISTS idx_token_user ON login_tokens (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_writes (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries (user_id, entry_date);
@@ -303,6 +311,11 @@ const q = {
   forgetDevice: (hash, userId) => query('DELETE FROM trusted_devices WHERE token_hash = $1 AND user_id = $2', [hash, userId]),
   forgetDevicesFor: userId => query('DELETE FROM trusted_devices WHERE user_id = $1', [userId]),
   setRole: (id, role) => query('UPDATE users SET role = $1 WHERE id = $2', [role, id]),
+  allGeocodes: () => query('SELECT address_key, lat, lng, source, created_at FROM geocodes'),
+  saveGeocode: (key, lat, lng, source) => query(
+    `INSERT INTO geocodes (address_key, lat, lng, source) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (address_key) DO UPDATE SET lat = EXCLUDED.lat, lng = EXCLUDED.lng, source = EXCLUDED.source, created_at = now()`,
+    [key, lat, lng, source]),
   linkZoho: (id, contactId, phone, region) => query(
     'UPDATE users SET zoho_owner_id = $2, phone = COALESCE(phone, $3), region = COALESCE(region, $4) WHERE id = $1 AND zoho_owner_id IS NULL',
     [id, contactId, phone, region]),

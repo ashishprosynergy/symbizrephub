@@ -1013,12 +1013,38 @@ r.get('/members', auth.authRequired, wrap(async (req, res) => {
     chunk([...byContact.keys()], 50).map(batch => zoho.coql(queries.contactsByIds(batch)))
   );
   const contacts = contactBatches.flat();
+  const tiers = await membershipsByContact();
   res.json(contacts.map(c => {
-    const m = fromZoho.member(c);
+    const m = withMembership(fromZoho.member(c), tiers);
     const link = byContact.get(c.id) || {};
     return { ...m, ringIds: link.ringIds || [], ringNames: link.ringNames || [], roles: link.roles || [] };
   }));
 }));
+
+/**
+ * Each member's membership (Zoho "Memberships", the renamed Deals module):
+ * the tier — Seedling, Sapling, Mighty Oak, Bookshelf — and the real renewal
+ * date. The contact's own "type" only ever says "Member". One read for all.
+ */
+async function membershipsByContact() {
+  const rows = await zoho.coql(`select Contact_Name, Membership_Tier, Stage, Renewal_Date, Expiry_Date, Start_Date
+    from Deals where Contact_Name is not null limit 200`).catch(() => []);
+  const rank = s => /active/i.test(s || '') ? 3 : /new|invoice/i.test(s || '') ? 2 : 1;   // the current one wins
+  const by = new Map();
+  rows.forEach(d => {
+    const id = d.Contact_Name?.id;
+    if (!id) return;
+    const cur = by.get(id);
+    if (!cur || rank(d.Stage) > rank(cur.Stage) || (rank(d.Stage) === rank(cur.Stage) && String(d.Start_Date || '') > String(cur.Start_Date || ''))) by.set(id, d);
+  });
+  return by;
+}
+function withMembership(m, by) {
+  const d = by.get(m.id);
+  if (!d) return m;
+  return { ...m, tier: d.Membership_Tier || '', membershipStage: d.Stage || '',
+    renewalDate: d.Renewal_Date || d.Expiry_Date || null };
+}
 
 /**
  * Members with no Growth Ring at all — Keturah's request #1.
@@ -1062,7 +1088,8 @@ r.get('/members/no-ring', auth.authRequired, auth.requireOffice, wrap(async (req
     if (out.some(m => m.id === c.id)) return;
     out.push(fromZoho.member(c));
   });
-  res.json(out);
+  const tiers = await membershipsByContact();
+  res.json(out.map(m => withMembership(m, tiers)));
 }));
 
 /** Events the office has flagged Show_on_Portal — requests #2 and #4. */
@@ -1196,20 +1223,45 @@ r.get('/visits', auth.authRequired, wrap(async (req, res) => {
 r.get('/meetings', auth.authRequired, wrap(async (req, res) => {
   const { ringIds } = await scopeRings(req.user, req.query.as);
   if (!ringIds.length) return res.json([]);
+  // The real field is Meeting_Datetime (there is no Meeting_Date or Notes), so
+  // the old query failed every time and the calendar never showed a ring
+  // meeting. Four months back and everything ahead.
+  const since = `${addDays(today(), -120)}T00:00:00+00:00`;
   const batches = await Promise.all(
     chunk(ringIds, 20).map(b => zoho.coql(
-      `select id, Growth_Ring_Group, Meeting_Date, Notes from ${M.MEETING}
-       where Growth_Ring_Group in (${b.map(i => `'${String(i).replace(/'/g,'')}'`).join(',')})
-       order by Meeting_Date desc limit 200`
-    ).catch(() => []))
+      `select id, Name, Growth_Ring_Group, Meeting_Datetime, Meeting_Status, Meeting_Location, Other_City, Other_State,
+              Growth_Ring_Meeting_Link, Internal_Meeting_Notes, Regional_Rep
+       from ${M.MEETING}
+       where Growth_Ring_Group in (${b.map(i => `'${String(i).replace(/'/g,'')}'`).join(',')}) and Meeting_Datetime >= '${since}'
+       order by Meeting_Datetime desc limit 200`
+    ))
   );
-  res.json(batches.flat().map(z => ({
-    id: z.id,
-    ringId: z.Growth_Ring_Group?.id || null,
-    ringName: z.Growth_Ring_Group?.name || '',
-    date: z.Meeting_Date,
-    notes: z.Notes || '',
-  })));
+  // Zoho stores the moment; the groups meet on US Eastern time
+  const eastern = iso => {
+    const d = new Date(iso);
+    if (isNaN(d)) return { date: String(iso || '').slice(0, 10), time: '' };
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true })
+      .formatToParts(d).map(p => [p.type, p.value]));
+    return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute} ${parts.dayPeriod}` };
+  };
+  res.json(batches.flat().filter(z => z.Meeting_Datetime).map(z => {
+    const when = eastern(z.Meeting_Datetime);
+    const status = String(z.Meeting_Status || '');
+    return {
+      id: z.id,
+      ringId: z.Growth_Ring_Group?.id || null,
+      ringName: z.Growth_Ring_Group?.name || '',
+      date: when.date, time: when.time,
+      // Completed / Complete, Scheduled, Tentative, Cancelled / Canceled
+      status: /^complete/i.test(status) ? 'held' : /^cancel/i.test(status) ? 'cancelled' : 'planned',
+      place: [z.Other_City, z.Other_State].filter(Boolean).join(', ')
+        || (z.Meeting_Location === 'Host Address' ? "At the host's home" : (z.Meeting_Location || '')),
+      link: z.Growth_Ring_Meeting_Link || '',
+      notes: z.Internal_Meeting_Notes || '',
+      repZohoId: z.Regional_Rep?.id || null,
+    };
+  }));
 }));
 
 r.post('/meetings', auth.authRequired, writesAllowed, wrap(async (req, res) => {
@@ -1237,6 +1289,45 @@ r.post('/meetings', auth.authRequired, writesAllowed, wrap(async (req, res) => {
 }));
 
 /** Facilitators are Contacts flagged Is_Facilitator. */
+/**
+ * Every active member on a map — Mel's request. Positions come from the
+ * geocodes table; addresses not placed yet are looked up in the background
+ * and appear on the next load.
+ */
+const geo = require('./lib/geocode');
+async function activeMemberAddresses() {
+  const contacts = await zoho.coql(queries.allActiveMembers());
+  return contacts.map(fromZoho.member).filter(m => /^active$/i.test(m.status))
+    .map(m => ({ ...m, state: m.region }));
+}
+r.get('/members/map', auth.authRequired, auth.requireOffice, access.requirePerm('members'), wrap(async (req, res) => {
+  const [members, links, ringRows, tiers, cached] = await Promise.all([
+    activeMemberAddresses(), zoho.coql(queries.allGroupMembers()), zoho.coql(queries.ringsForRep(null)),
+    membershipsByContact(), q.allGeocodes(),
+  ]);
+  const rings = new Map(ringRows.map(fromZoho.ring).map(r => [r.id, r]));
+  const inRings = new Map();
+  links.forEach(l => { const c = l.Members?.id, g = l.Growth_Ring_Groups?.id; if (c && g) (inRings.get(c) || inRings.set(c, []).get(c)).push(g); });
+  const pos = new Map(cached.filter(r => r.lat != null).map(r => [r.address_key, r]));
+  const out = members.map(m => {
+    const p = pos.get(geo.keyOf(m));
+    const rg = (inRings.get(m.id) || []).map(id => rings.get(id)).filter(Boolean);
+    const t = tiers.get(m.id);
+    return { id: m.id, name: m.name, business: m.business, address: m.address, phone: m.phone,
+      lat: p ? p.lat : null, lng: p ? p.lng : null, tier: t ? t.Membership_Tier || '' : '',
+      rings: rg.map(r => r.name), rep: rg[0] ? (rg[0].repName || '') : '', repId: rg[0] ? (rg[0].repZohoId || null) : null };
+  });
+  const pending = geo.missing(members, new Map(cached.map(r => [r.address_key, r]))).length;
+  // Place the rest without making anyone wait
+  if (pending) {
+    const site = netlifySite(req);
+    if (site) await kickBackground(site, 'geocode-background');
+    else await geo.geocodeMissing(members, { budgetMs: 4000 }).catch(e => console.error('[geocode]', e.message));
+  }
+  res.json({ members: out, located: out.filter(m => m.lat != null).length, total: out.length,
+    noAddress: members.filter(m => !geo.hasAddress(m)).length, pending });
+}));
+
 /** The Overview's headline numbers, counted by Zoho — the same figure every time. */
 r.get('/stats', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
   const year = String(new Date().getFullYear());
@@ -1590,6 +1681,14 @@ async function kickBooks(site) {
     console.error('[books] background start failed, the 15-minute job will do it:', e.message);
     return true;   // queued either way; sync-flush finishes it
   }
+}
+/** Start any of Rep Hub's background functions. Netlify answers 202 at once. */
+async function kickBackground(site, name) {
+  try {
+    const res = await fetch(`${site}/.netlify/functions/${name}`, {
+      method: 'POST', headers: { 'x-rephub-key': kickKey() }, signal: AbortSignal.timeout(3000) });
+    return res.status === 202 || res.ok;
+  } catch (e) { console.error(`[${name}] could not start:`, e.message); return false; }
 }
 /** Where this site lives, when running on Netlify; null anywhere else. */
 function netlifySite(req) {

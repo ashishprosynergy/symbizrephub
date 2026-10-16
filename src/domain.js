@@ -155,11 +155,12 @@ const toZoho = {
     Group_Description: r.description,
   }),
 
-  /** Growth_Ring_Meetings_N — confirm field names before the first write. */
+  /** Growth_Ring_Meetings_N, field names read from the live org. */
   meeting: m => ({
     Growth_Ring_Group: { id: m.ringId },
-    Meeting_Date: m.date,
-    Notes: m.notes || '',
+    Meeting_Datetime: m.date && m.date.length === 10 ? `${m.date}T19:00:00-04:00` : m.date,   // evening, Eastern, when no time is given
+    Meeting_Status: m.status || 'Completed',
+    Internal_Meeting_Notes: m.notes || '',
   }),
 
   /**
