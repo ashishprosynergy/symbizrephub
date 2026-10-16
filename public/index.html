@@ -157,6 +157,12 @@
   .chk-title{font-size:14px;}
   .chk-row.done .chk-title{text-decoration:line-through;color:var(--ink-faint);}
   .chk-late{color:var(--rust);font-weight:600;}
+  .onb{margin-bottom:14px;border-left:4px solid var(--primary)}
+  .onb-keys{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--ink-muted)}
+  .onb-keys>span{display:inline-flex;align-items:center;gap:5px}
+  .onb-keys b{color:var(--ink)}
+  .chip-n{margin-left:6px;font-size:11px;font-weight:700;opacity:.7;font-variant-numeric:tabular-nums}
+  .chip-zero{opacity:.55}
   .sort-val{font-size:11.5px;color:var(--ink-muted);font-weight:600;white-space:nowrap}
   .map-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--ink-muted);margin:2px 0 8px;}
   .map-legend .lg{display:inline-flex;align-items:center;gap:5px}
@@ -4438,6 +4444,7 @@ function vManager(){
     </div>
 
     ${mgrAttention()}
+    ${onboardPanel()}
 
     <div class="kpis">
       ${kpi(cards.length,'reps','user','neutral',"ui.mgrFilter='all';renderContent()")}
@@ -4517,7 +4524,12 @@ function vManager(){
           const ci = m.nextCheckin
             ? `<div class="row-sub" style="margin-top:8px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">${icon('calendar',13)} Check-in ${m.nextCheckin <= TODAY_S ? '<strong style="color:var(--rust)">due</strong>' : fmt(m.nextCheckin)} · ${seen}</div>`
             : `<div class="row-sub" style="margin-top:8px">${seen.charAt(0).toUpperCase() + seen.slice(1)}</div>`;
-          return goalBars({ calls: m.callsQuarter, visits: m.visitsQuarter, newMembers: newMembersFor(c.id) }, m.goal) + ci; })()}
+          const ob = onboardOf(c.id);
+          const inv = ob && ob.status !== 'active' ? (ob.status === 'noemail'
+            ? `<div class="row-sub" style="margin-top:4px;color:var(--rust)">No email in Zoho, so they can't be invited yet</div>`
+            : `<div class="row-sub" style="margin-top:4px">${esc(ONB_LABEL[ob.status])}${ob.invitedAt ? ' (' + fmt(ob.invitedAt.slice(0,10)) + ')' : ''} ·
+                <a href="#" class="inline-link" onclick="event.preventDefault();sendInvites(['${esc(c.id)}'], null)">${ob.status === 'invited' ? 'send again' : 'invite now'}</a></div>`) : '';
+          return goalBars({ calls: m.callsQuarter, visits: m.visitsQuarter, newMembers: newMembersFor(c.id) }, m.goal) + ci + inv; })()}
         <div class="btnrow" style="margin-top:10px">
           <button class="btn sm" onclick="previewAsRep('${esc(c.id)}','${esc(c.name)}')">See their screen</button>
           <button class="btn sm" onclick="ui.calRep='${esc(c.id)}';setView('calendar')">Their calendar</button>
@@ -4594,6 +4606,89 @@ function mgrAttention(){
       : `<div class="row-sub" style="margin-top:8px">Nothing is slipping. Every rep has been active in the last fortnight.</div>`}
   </div>`;
 }
+/* ── Getting the reps signed in ── */
+var onboard = null, onboardBusy = false;
+function loadOnboard(force){
+  if(onboardBusy || (onboard && !force) || !API.live || !can('manager')) return;
+  onboardBusy = true;
+  API.call('/reps/onboarding').then(v => { onboard = v; }).catch(e => { if(!onboard) onboard = { error: e.message }; })
+    .finally(() => { onboardBusy = false; if(ui.view === 'manager') renderContent(); });
+}
+const onboardOf = id => Array.isArray(onboard) ? onboard.find(x => x.id === id) : null;
+function onboardPanel(){
+  if(!API.live) return '';
+  loadOnboard();
+  if(!Array.isArray(onboard)) return '';
+  const n = k => onboard.filter(x => x.status === k).length;
+  const total = onboard.length, active = n('active'), invited = n('invited'), notYet = n('none') + n('account'), noEmail = n('noemail');
+  const canInvite = onboard.filter(x => x.status !== 'active' && x.status !== 'noemail');
+  if(active === total) return `<div class="callout ok" style="margin-bottom:14px"><strong>Every rep has signed in to Rep Hub</strong></div>`;
+  const pct = total ? Math.round(active / total * 100) : 0;
+  return `<div class="card onb">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+      <div><div class="trend-t" style="margin:0">Getting reps signed in</div>
+        <div style="font-size:15px;margin-top:4px"><strong>${active} of ${total}</strong> rep${total===1?' has':'s have'} signed in</div></div>
+      <div class="btnrow" style="margin:0">
+        ${canInvite.length ? `<button class="btn sm primary" onclick="confirmInvite('all')">Invite ${canInvite.length} rep${canInvite.length===1?'':'s'}</button>` : ''}
+        <button class="btn sm" onclick="openOnboard()">See who</button>
+        <button class="btn sm" onclick="printSignInGuide()">Print a sign-in guide</button></div></div>
+    <div class="load" style="margin:10px 0 8px"><span style="width:${pct}%"></span></div>
+    <div class="onb-keys">
+      <span><span class="d-dot" style="background:var(--primary)"></span>Signed in <b>${active}</b></span>
+      <span><span class="d-dot" style="background:var(--accent)"></span>Invited, not yet <b>${invited}</b></span>
+      <span><span class="d-dot" style="background:#9AA394"></span>Not invited <b>${notYet}</b></span>
+      ${noEmail ? `<span><span class="d-dot" style="background:var(--rust)"></span>No email in Zoho <b>${noEmail}</b></span>` : ''}</div>
+  </div>`;
+}
+const ONB_LABEL = { active:'Signed in', invited:'Invited, not signed in yet', account:'Has an account, never signed in', none:'Not invited yet', noemail:'No email in Zoho' };
+function openOnboard(){
+  if(!Array.isArray(onboard)) return;
+  const order = { noemail:0, none:1, account:2, invited:3, active:4 };
+  openModal(`<h3>Reps and Rep Hub</h3>
+    <p class="lead">Inviting sends a welcome email with a link to choose a password (good for 7 days) and how to sign in.
+      Replies come to you. Reps with no email need one added to their contact in Zoho first.</p>
+    <div class="pick-list" style="max-height:52vh">${onboard.slice().sort((a,b) => order[a.status]-order[b.status] || a.name.localeCompare(b.name)).map(x => `<div class="row" style="align-items:center">
+      <div class="row-main"><div class="row-title">${esc(splitRepName(x.name).name)}</div>
+        <div class="row-sub">${esc(ONB_LABEL[x.status])}${x.status === 'active' && x.lastLogin ? ' · last ' + fmt(x.lastLogin.slice(0,10)) : ''}${x.status === 'invited' ? ' · invited ' + fmt(x.invitedAt.slice(0,10)) : ''}${x.email ? ' · ' + esc(x.email) : ''}</div></div>
+      ${x.status === 'active' || x.status === 'noemail' ? '' : `<button class="btn sm" onclick="sendInvites(['${esc(x.id)}'], this)">${x.status === 'invited' ? 'Send again' : 'Invite'}</button>`}</div>`).join('')}</div>
+    <div class="m-actions"><button class="btn" onclick="printSignInGuide()">Print a sign-in guide</button>
+      <button class="btn primary" onclick="closeModal()">Done</button></div>`);
+}
+function confirmInvite(which){
+  const list = onboard.filter(x => x.status !== 'active' && x.status !== 'noemail');
+  openModal(`<h3>Invite ${list.length} rep${list.length===1?'':'s'} to Rep Hub?</h3>
+    <p class="lead">Each gets a welcome email from Rep Hub with a link to choose their password and how to sign in. Replies come to you.</p>
+    <div class="pick-list">${list.map(x => `<div class="pick" style="cursor:default"><span>${esc(splitRepName(x.name).name)}<span class="row-sub"> · ${esc(x.email)}${x.status === 'invited' ? ' · invited before' : ''}</span></span></div>`).join('')}</div>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="sendInvites('all', this)">Send ${list.length} invitation${list.length===1?'':'s'}</button></div>`);
+}
+async function sendInvites(ids, btn){
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+  try{
+    const r = await API.call('/reps/invite', { method:'POST', body: JSON.stringify({ repIds: ids }) });
+    const failed = r.results.filter(x => !x.sent);
+    toast(r.sent ? `${r.sent} invitation${r.sent===1?'':'s'} sent${failed.length ? `; ${failed.length} not sent` : ''}` : (failed[0] ? `Not sent: ${failed[0].skipped || failed[0].error}` : 'Nothing to send'));
+    loadOnboard(true); loadMgr(true);          // refreshed behind what is showing
+    if(ids === 'all') closeModal(); else if(btn){ btn.textContent = r.sent ? 'Sent' : 'Not sent'; }
+  }catch(e){ if(btn){ btn.disabled = false; btn.textContent = 'Try again'; } toast(e.message || 'Could not send'); }
+}
+function printSignInGuide(){
+  const site = location.origin, host = location.host;
+  openPrintable('Rep Hub sign-in guide', `
+    ${orgHeader('Rep Hub — getting signed in', 'For Symbiz regional reps')}
+    <p style="font-size:15px">Rep Hub shows the Growth Rings you look after, who is due a call, your ring meetings, and where to log calls, visits, hours and expenses.</p>
+    <ol style="font-size:15px;line-height:1.8">
+      <li>Open the email titled <strong>"… has invited you to Rep Hub"</strong> and tap <strong>Choose my password</strong>.</li>
+      <li>No email? Go to <strong>${esc(host)}</strong>, tap <strong>Invited? Email me a link to set up my account</strong>, and enter the email address Symbiz has for you.</li>
+      <li>Sign in with that email and your new password.</li>
+      <li>On a phone or tablet, add it to your home screen: Safari → Share → <em>Add to Home Screen</em>; Chrome → ⋮ → <em>Add to Home screen</em>.</li>
+      <li>Forgotten your password later? Tap <strong>Forgotten your password?</strong> on the sign-in screen.</li>
+    </ol>
+    <p style="font-size:15px">Your first screen, <strong>Today</strong>, lists who is due a call. Tap a name to phone them, then <strong>Log</strong> the call and Rep Hub schedules the next one.</p>
+    <p style="font-size:22px;font-weight:700;margin-top:24px">${esc(host)}</p>
+    <p class="note">Questions: ask Mel or the Symbiz office, 800-394-7970.</p>`);
+}
+
 function attnGo(kind, repId){
   const r = mgrRep(repId);
   if(kind === 'checkin') return openRepNotes(repId);
@@ -5156,12 +5251,25 @@ function mapRefreshButton(){
   const b = document.getElementById('mapRefresh');
   if(b){ b.disabled = mapBusy; b.textContent = mapBusy ? 'Updating…' : 'Refresh'; }
 }
-function mapShown(){
+/** The members the filters let through. `over` tries one filter at another value, for the counts on the chips */
+function mapShown(over){
+  const f = { mapRep: ui.mapRep, mapTier: ui.mapTier, mapRing: ui.mapRing, ...(over || {}) };
   const q = (ui.mapQ || '').trim().toLowerCase();
   return (mapData.members || []).filter(m =>
-    (!ui.mapRep || m.repId === ui.mapRep) && (!ui.mapTier || m.tier === ui.mapTier) &&
-    (!ui.mapRing || (ui.mapRing === 'in' ? (m.rings||[]).length : !(m.rings||[]).length)) &&
+    (!f.mapRep || m.repId === f.mapRep) && (!f.mapTier || m.tier === f.mapTier) &&
+    (!f.mapRing || (f.mapRing === 'in' ? (m.rings||[]).length : !(m.rings||[]).length)) &&
     (!q || [m.name, m.business, m.address, (m.rings||[]).join(' '), m.rep].join(' ').toLowerCase().includes(q)));
+}
+/* Each chip says how many it would show, so a choice that changes nothing
+   (every Seedling member is in a ring, say) is plain to see rather than puzzling */
+function mapChipCounts(){
+  document.querySelectorAll('.chip[data-mk]').forEach(c => {
+    const n = mapShown({ [c.dataset.mk]: c.dataset.mv || null }).length;
+    let b = c.querySelector('.chip-n');
+    if(!b){ b = document.createElement('span'); b.className = 'chip-n'; c.appendChild(b); }
+    b.textContent = n;
+    c.classList.toggle('chip-zero', n === 0);
+  });
 }
 function vMemberMap(){
   const head = `<div class="section-head"><div><h2>Member map</h2>
@@ -5362,6 +5470,7 @@ async function drawMemberMap(fit){
   if(list){ list.querySelectorAll('.map-item').forEach(el => { el.hidden = !ids.has(el.dataset.id); });
     const none = document.getElementById('mapNone'); if(none) none.hidden = shown.length > 0; }
   mapLegend();
+  mapChipCounts();
 }
 /* From the list to the pin: zoom in, open its card */
 function focusMapMember(id){
@@ -6050,7 +6159,7 @@ function logout(){ placeByScreen = {};
   elevation = { token: null, until: 0 }; keepElevation(); accessStatus = null; accessData = null; myDevices = null; ui.twoStep = null;
   try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); localStorage.removeItem('rephub_retention'); localStorage.removeItem('rephub_map'); localStorage.removeItem('rephub_summits'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
   retentionData = null; retentionFresh = false; summitList = null; summitFresh = false; summitMine = null; summitDetail = null; mapData = null; mapFresh = false;
-  mgrData = null; myGoal = undefined;
+  mgrData = null; myGoal = undefined; onboard = null; repMail = null; repMailP = null;
   serverUsers = null; zohoReps = null; usersLoadedAt = 0;
   API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
 

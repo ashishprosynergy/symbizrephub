@@ -337,6 +337,8 @@ const q = {
   everyUser:   ()    => query('SELECT id,email,name,role,region,active,phone,zoho_owner_id FROM users ORDER BY role, name'),
   hardDelete:  id    => query('DELETE FROM users WHERE id = $1', [id]),
   touchLogin:  id    => query('UPDATE users SET last_login_at = now() WHERE id = $1', [id]),
+  /** When each person was last sent a "choose your password" link */
+  lastInvites: () => query("SELECT user_id, max(created_at) AS at FROM login_tokens WHERE purpose = 'setpassword' GROUP BY user_id"),
   setDigestEmail: (id, on) => query('UPDATE users SET digest_email = $2 WHERE id = $1', [id, !!on]),
   insertUser:  u     => query(
     `INSERT INTO users (id,email,name,phone,role,region,password_hash,zoho_owner_id,email_verified)

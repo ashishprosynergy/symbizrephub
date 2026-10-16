@@ -1514,6 +1514,24 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.equal((await invoke('POST', '/messages/reps', { token: rep, body: { repIds: 'all', subject: 'a', body: 'b' } })).statusCode, 403);
   });
 
+  test('inviting reps: an account linked to their Zoho contact, a link to set a password, and who has started', async () => {
+    assert.equal((await invoke('POST', '/reps/invite', { token: rep, body: { repIds: 'all' } })).statusCode, 403);
+    let list = J(await invoke('GET', '/reps/onboarding', { token: office }));
+    assert.equal(list.find(x => x.id === 'REPM').status, 'none', 'has an email in Zoho, no account yet');
+
+    const r = J(await invoke('POST', '/reps/invite', { token: office, body: { repIds: ['REPM'] } }));
+    assert.equal(r.results.length, 1);
+    const u = (await db.q.allUsers()).find(x => x.zoho_owner_id === 'REPM');
+    assert.ok(u, 'an account was made for the rep');
+    assert.equal(u.role, 'rep'); assert.equal(u.email, 'quiet@test.org'); assert.equal(u.name, 'Quiet Rep', 'the Zoho number is not part of their name');
+
+    list = J(await invoke('GET', '/reps/onboarding', { token: office }));
+    assert.equal(list.find(x => x.id === 'REPM').status, 'invited');
+    // Inviting again sends a fresh link, never a second account
+    await invoke('POST', '/reps/invite', { token: office, body: { repIds: 'all' } });
+    assert.equal((await db.q.allUsers()).filter(x => x.zoho_owner_id === 'REPM').length, 1);
+  });
+
   test('the Monday email previews who it goes to and lists the warnings', async () => {
     const res = await invoke('POST', '/manager/digest/run', { token: office, body: { dryRun: true } });
     assert.equal(res.statusCode, 200);

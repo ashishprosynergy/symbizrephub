@@ -569,16 +569,44 @@ async function notifyOfficeOfSignup(user) {
   }
 }
 
-async function sendPasswordLink(user, req, { invite } = {}) {
+async function sendPasswordLink(user, req, { invite, from } = {}) {
   const token = crypto.randomBytes(32).toString('hex');
-  const hours = invite ? 72 : 2;
+  // An invitation sent by the office may sit in an inbox over a weekend
+  const hours = from ? 168 : invite ? 72 : 2;
   const expires = new Date(Date.now() + hours * 3600000).toISOString();
   await q.addLoginToken(token, user.id, expires, req.ip, 'setpassword');
   const url = `${siteUrl(req)}/?setup=${token}`;
   return reminders.sendEmail(user.email,
-    invite ? 'Set up your Rep Hub password' : 'Reset your Rep Hub password',
-    passwordLinkEmail({ name: user.name, url, invite, hours }),
-    { userId: user.id, kind: invite ? 'invite' : 'reset' });
+    from ? `${(from.name || 'Symbiz').split(' ')[0]} has invited you to Rep Hub` : invite ? 'Set up your Rep Hub password' : 'Reset your Rep Hub password',
+    from ? welcomeEmail({ name: user.name, email: user.email, url, from, site: siteUrl(req) }) : passwordLinkEmail({ name: user.name, url, invite, hours }),
+    { userId: user.id, kind: invite ? 'invite' : 'reset', replyTo: from ? from.email : undefined });
+}
+
+/** The invitation a rep gets from the office: what Rep Hub is, and three steps */
+function welcomeEmail({ name, email, url, from, site }) {
+  const first = esc((name || '').split(' ')[0] || 'Hello'), by = esc(from.name || 'The Symbiz office');
+  const step = (n, t) => `<tr><td style="vertical-align:top;padding:0 10px 10px 0"><span style="display:inline-block;width:22px;height:22px;border-radius:50%;
+    background:#2E5132;color:#fff;font-size:12px;font-weight:700;text-align:center;line-height:22px">${n}</span></td>
+    <td style="padding:0 0 10px;font-size:14px;line-height:1.5;color:#1E2A20">${t}</td></tr>`;
+  return `<!doctype html><html><body style="margin:0;background:#F2F5EC;font-family:-apple-system,Segoe UI,Arial,sans-serif;">
+  <div style="max-width:520px;margin:0 auto;padding:26px 18px;">
+    <h1 style="font-size:19px;color:#1E2A20;margin:0 0 8px;">Welcome to Rep Hub</h1>
+    <p style="color:#3A4537;font-size:14.5px;line-height:1.6;margin:0 0 14px;">${first}, ${by} has set up your Rep Hub account.
+      It shows the Growth Rings you look after, who is due a call, your ring meetings on a calendar, and where to log
+      your calls, visits, hours and expenses — on your phone, tablet or computer.</p>
+    <table style="border-collapse:collapse;margin:0 0 16px">
+      ${step(1, 'Tap the button below and choose a password.')}
+      ${step(2, `Sign in with this email address: <strong>${esc(email)}</strong>`)}
+      ${step(3, 'On a phone or tablet, add it to your home screen so it opens like an app: in Safari tap Share → <em>Add to Home Screen</em>; in Chrome tap ⋮ → <em>Add to Home screen</em>.')}
+    </table>
+    <a href="${url}" style="display:inline-block;background:#2E5132;color:#fff;text-decoration:none;
+       padding:13px 26px;border-radius:8px;font-weight:600;font-size:15px;">Choose my password</a>
+    <p style="color:#5A6455;font-size:13px;line-height:1.6;margin:18px 0 0;">The button works once, for the next 7 days. After that,
+      go to <a href="${esc(site)}" style="color:#2E5132">${esc(site.replace(/^https?:\/\//, ''))}</a>, tap <em>Invited? Email me a link to set up my account</em> and enter your email for a fresh one.</p>
+    <p style="color:#5A6455;font-size:13px;line-height:1.6;margin:10px 0 0;">Questions? Just reply to this email and it goes to ${by}.</p>
+    <p style="color:#8A9284;font-size:11.5px;margin-top:18px;word-break:break-all;">${esc(url)}</p>
+    <p style="color:#8A9284;font-size:12px;margin-top:16px;">Symbiz Network · 800-394-7970</p>
+  </div></body></html>`;
 }
 
 function passwordLinkEmail({ name, url, invite, hours }) {
@@ -2955,6 +2983,51 @@ r.post('/rings/:id/reassign', ...mgrGuard, writesAllowed, wrap(async (req, res) 
   await audit(req.user.id, 'ring.reassigned', { id: req.params.id, ring: from.name, from: from.repZohoId, to: repZohoId }, req.ip);
   res.json({ ok: true, ringId: req.params.id, from: from.repZohoId, to: repZohoId });
 }));
+
+/* Getting the reps signed in: who has started, and one-click invitations.
+   A rep with no account gets one (linked to their Zoho contact) and a
+   welcome email with a link to choose their password; a rep who has an
+   account but never signed in gets a fresh link. */
+async function repOnboarding() {
+  const [reps, users, invites] = await Promise.all([repEmails(), q.allUsers(), q.lastInvites()]);
+  const invited = new Map(invites.map(i => [i.user_id, i.at]));
+  return reps.map(r => {
+    const u = users.find(x => x.zoho_owner_id === r.id);
+    const at = u && invited.get(u.id) ? new Date(invited.get(u.id)).toISOString() : null;
+    const status = u && u.last_login_at ? 'active' : u && at ? 'invited' : u ? 'account' : r.email ? 'none' : 'noemail';
+    return { id: r.id, name: r.name, email: (u && u.email) || r.email || '', status,
+      lastLogin: u && u.last_login_at ? new Date(u.last_login_at).toISOString() : null, invitedAt: at };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+r.get('/reps/onboarding', ...mgrGuard, wrap(async (req, res) => { res.json(await repOnboarding()); }));
+
+r.post('/reps/invite', ...mgrGuard, wrap(async (req, res) => {
+  const want = req.body?.repIds;
+  const list = (await repOnboarding()).filter(x => want === 'all' ? x.status !== 'active' : (want || []).map(String).includes(x.id));
+  const users = await q.allUsers();
+  const out = [];
+  for (const rep of list) {
+    if (rep.status === 'active') { out.push({ id: rep.id, name: rep.name, skipped: 'already signed in' }); continue; }
+    if (!rep.email) { out.push({ id: rep.id, name: rep.name, skipped: 'no email in Zoho' }); continue; }
+    let u = users.find(x => x.zoho_owner_id === rep.id);
+    if (!u) {
+      if (users.some(x => String(x.email).toLowerCase() === rep.email.toLowerCase())) {
+        out.push({ id: rep.id, name: rep.name, skipped: 'that email belongs to another account' }); continue;
+      }
+      const id = 'u_' + Date.now().toString(36) + crypto.randomBytes(2).toString('hex');
+      await q.insertUser({ id, email: rep.email, name: splitName(rep.name), phone: null, role: 'rep', region: null,
+        password_hash: auth.hash(crypto.randomBytes(16).toString('hex')), zoho_owner_id: rep.id });
+      u = { id, email: rep.email, name: splitName(rep.name) };
+      await audit(req.user.id, 'user.createdFromZoho', { id, contactId: rep.id, email: rep.email, by: 'invite' }, req.ip);
+    }
+    const sent = await sendPasswordLink(u, req, { invite: true, from: req.user });
+    out.push({ id: rep.id, name: rep.name, sent: !!(sent && sent.ok), error: sent && !sent.ok ? (sent.error || 'not sent') : undefined });
+  }
+  await audit(req.user.id, 'reps.invited', { sent: out.filter(x => x.sent).length, asked: list.length }, req.ip);
+  res.json({ results: out, sent: out.filter(x => x.sent).length });
+}));
+/* "Dale Savage #0842" → "Dale Savage": the number is Zoho's, not part of their name */
+const splitName = n => String(n || '').replace(/\s*#\s*\d+\s*$/, '').trim() || 'Rep';
 
 /* Message reps: one email, reps in BCC, replies go to the sender */
 let repEmailCache = null;           // { at, list } — addresses rarely change; Zoho is slow to ask
