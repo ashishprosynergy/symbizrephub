@@ -67,6 +67,102 @@
   .viewas .sel{max-width:230px;}
   @media (max-width:760px){ .viewas span{display:none;} .viewas .sel{max-width:150px;font-size:12.5px;} }
 
+  /* ── Visual polish (Oct 2026) ── */
+  /* One look for every dropdown: no more grey browser boxes */
+  select,.field select,.acct-row select,.sel{-webkit-appearance:none;appearance:none;cursor:pointer;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238A9284' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 11px center;background-size:14px;padding-right:34px !important;}
+  .sel{font:inherit;font-size:14px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;
+    background-color:var(--surface);color:var(--ink);font-weight:600;}
+  .sel:hover,.field select:hover{border-color:var(--ink-faint);}
+  .field input,.field select,.field textarea,.sel{transition:border-color .15s,box-shadow .15s;}
+  .field input:focus,.field select:focus,.field textarea:focus,.sel:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);}
+
+  /* Buttons and cards: a little depth and a press */
+  .btn{transition:border-color .15s,background .15s,box-shadow .15s,transform .06s;}
+  .btn:active:not([disabled]){transform:translateY(1px);}
+  .btn.primary{box-shadow:0 1px 2px rgba(20,40,20,.18);}
+  .card{box-shadow:0 1px 2px rgba(20,30,15,.04);}
+  .stat{border-radius:12px;padding:13px 14px;box-shadow:0 1px 2px rgba(20,30,15,.04);transition:border-color .15s,transform .15s,box-shadow .15s;}
+  .stat .n{font-size:28px;}
+  @media (max-width:520px){ .stats{grid-template-columns:1fr 1fr;} }
+  .stat.click:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(20,30,15,.08);}
+
+  /* Icons */
+  .ico{flex:none;display:block;}
+  .rl-l{display:flex;align-items:center;gap:10px;min-width:0;}
+  .rl-l .ico{opacity:.75;} .rail-link.active .rl-l .ico{opacity:1;}
+
+  /* Greeting */
+  .hello{margin:0 0 16px;}
+  .hello h2{font-size:25px;}
+  .hello .sub{margin-top:3px;color:var(--ink-muted);font-size:13.5px;}
+
+  /* Trend card + leaderboard */
+  .dash-pair{display:grid;grid-template-columns:1.4fr 1fr;gap:11px;margin-bottom:11px;}
+  .dash-pair .card{margin:0;}
+  @media (max-width:700px){ .dash-pair{grid-template-columns:1fr;} }
+  .trend{padding:14px 15px 10px;margin-bottom:11px;}
+  .trend-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+  .trend-t{font-size:12.5px;font-weight:600;color:var(--ink-muted);letter-spacing:.01em;}
+  .trend-n{font-family:var(--serif);font-size:26px;margin-top:2px;}
+  .trend-n span{font-family:var(--sans);font-size:12.5px;color:var(--ink-muted);margin-left:4px;}
+  .trend-d{font-size:11.5px;font-weight:700;padding:3px 8px;border-radius:999px;background:var(--line-soft);color:var(--ink-muted);white-space:nowrap;}
+  .trend-d.up{background:var(--primary-soft);color:var(--primary);} .trend-d.down{background:var(--rust-soft);color:var(--rust);}
+  .trend-bars{width:100%;height:74px;margin-top:10px;display:block;}
+  .trend-bars rect{fill:var(--primary-soft);} .trend-bars rect.now{fill:var(--primary);}
+  .trend-foot{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink-faint);margin-top:5px;}
+  .leader{padding:14px 15px;}
+  .leader-row{display:flex;align-items:center;gap:10px;margin-top:10px;}
+  .leader-name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .leader-row .bar{margin-top:4px;height:5px;}
+  .leader-n{font-size:14px;min-width:22px;text-align:right;}
+
+  /* Loading placeholders */
+  @keyframes skel{0%{background-position:100% 0}100%{background-position:0 0}}
+  .skel-row{display:flex;gap:12px;align-items:center;padding:13px 0;border-bottom:1px solid var(--line-soft);}
+  .skel-dot,.skel-line{background:linear-gradient(90deg,var(--line-soft) 0%,var(--surface-2) 50%,var(--line-soft) 100%);
+    background-size:300% 100%;animation:skel 1.3s ease-in-out infinite;}
+  .skel-dot{width:32px;height:32px;border-radius:50%;flex:none;}
+  .skel-line{height:12px;border-radius:6px;}
+  .skel-line.sm{height:9px;margin-top:8px;}
+
+  /* Empty lists: a calm box with a mark, not a stray grey line */
+  .empty{text-align:center;padding:26px 18px;border:1px dashed var(--line);border-top:1px dashed var(--line);
+    border-radius:12px;background:var(--surface-2);margin:6px 0 12px;}
+  .empty::before{content:'';display:block;width:38px;height:38px;margin:0 auto 9px;border-radius:50%;
+    background:var(--primary-soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%235E8F63' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 12h-6l-2 3h-4l-2-3H2'/%3E%3Cpath d='M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z'/%3E%3C/svg%3E") center/18px no-repeat;}
+
+  /* Phone tab bar: icons, labels, and the + for reps */
+  .tabbar{box-shadow:0 -4px 16px rgba(20,30,15,.06);align-items:center;}
+  .tabbar button{font-size:10.5px;gap:3px;min-height:52px;justify-content:center;}
+  .tabbar button .ico{width:21px;height:21px;}
+  .tabbar button.active{color:var(--primary);}
+  .tabbar button.active .ico{stroke-width:2.2;}
+  .tabbar .tab-add{flex:0 0 64px;}
+  .tabbar .tab-add span{width:48px;height:48px;border-radius:50%;background:var(--primary);color:var(--primary-ink);
+    display:grid;place-items:center;box-shadow:0 6px 16px rgba(46,81,50,.35);margin-top:-18px;}
+  .tabbar .tab-add .ico{width:24px;height:24px;stroke-width:2.4;}
+
+  /* More menu and quick-add sheet */
+  .menu-grp{font-size:11px;font-weight:700;color:var(--ink-faint);letter-spacing:.05em;text-transform:uppercase;margin:14px 0 7px;}
+  .menu-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+  .menu-tile{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+    min-height:76px;padding:10px 6px;border:1px solid var(--line);border-radius:12px;background:var(--surface);
+    color:var(--ink);font:inherit;font-size:12.5px;font-weight:600;text-align:center;cursor:pointer;}
+  .menu-tile .ico{color:var(--primary);}
+  .menu-tile.on{background:var(--primary-soft);border-color:var(--primary);}
+  .menu-tile .pill{position:absolute;top:6px;right:6px;}
+  .quick-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px;}
+  .quick{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:14px;border:1px solid var(--line);
+    border-radius:14px;background:var(--surface);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+  .quick .ico{color:var(--primary);margin-bottom:6px;}
+  .quick strong{font-size:14.5px;} .quick span{font-size:12px;color:var(--ink-muted);}
+  .quick:hover,.menu-tile:hover{border-color:var(--primary);}
+  .quick.wide{grid-column:1/-1;flex-direction:row;align-items:center;gap:10px;}
+  .quick.wide .ico{margin:0;} .quick.wide span{margin-left:auto;}
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .tabbar .tab-add span{box-shadow:none;} }
+
   /* Zoho Books card */
   .books-steps{margin:0 0 4px;padding-left:20px;font-size:14px;line-height:1.6;color:var(--ink);}
   .books-steps li{margin-bottom:6px;}
@@ -1405,6 +1501,123 @@ function pickRep(key, id){
 document.addEventListener('click', e=>{ if(!e.target.closest('.rp')) closeRepPickers(); });
 document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeRepPickers(); });
 
+/* ── Icons: one line-drawn set used in the sidebar, tab bar and menus ── */
+const ICON_PATHS = {
+  home:'<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>',
+  grid:'<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+  ring:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.3"/>',
+  users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  calendar:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  folder:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  printer:'<path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M6 14h12v7H6z"/>',
+  briefcase:'<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/>',
+  check:'<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+  pin:'<path d="M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/>',
+  userplus:'<circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2M19 8v6M16 11h6"/>',
+  chart:'<path d="M3 3v18h18"/><path d="M8 17v-6M13 17V7M18 17v-4"/>',
+  map:'<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
+  trend:'<path d="m3 17 6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  bell:'<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  sliders:'<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  pulse:'<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  inbox:'<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  more:'<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  phone:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>',
+  receipt:'<path d="M4 2v20l3-2 3 2 3-2 3 2 3-2 3 2V2l-3 2-3-2-3 2-3-2-3 2z" transform="scale(.9) translate(1.3 1.2)"/><path d="M8 9h8M8 13h6"/>',
+  timer:'<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M10 2h4"/>',
+  logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+  key:'<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3"/>',
+};
+const VIEW_ICONS = { today:'home', dash:'grid', rings:'ring', allrings:'ring', people:'users', members:'users',
+  calendar:'calendar', timesheet:'clock', resources:'folder', callsheet:'printer', manager:'briefcase',
+  approvals:'check', visits:'pin', unaffiliated:'userplus', reports:'chart', coverage:'map', insights:'trend',
+  progress:'trend', team:'user', reminders:'bell', settings:'sliders', checks:'pulse', requests:'inbox' };
+function icon(name, size){
+  const p = ICON_PATHS[VIEW_ICONS[name] || name] || ICON_PATHS.grid;
+  const fill = name === 'more' ? 'currentColor' : 'none';
+  return `<svg class="ico" width="${size||18}" height="${size||18}" viewBox="0 0 24 24" fill="${fill}" stroke="currentColor"
+    stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+}
+
+/* Placeholder rows while a screen's data is on its way, so the page fills
+   in place instead of jumping from "Loading…" to a full list. */
+function skeleton(rows){
+  const w = [[62,38],[48,30],[70,44],[55,34]];
+  return `<div class="skel" aria-busy="true" aria-label="Loading">${Array.from({length:rows||4},(_,i)=>
+    `<div class="skel-row"><div class="skel-dot"></div><div style="flex:1">
+      <div class="skel-line" style="width:${w[i%4][0]}%"></div><div class="skel-line sm" style="width:${w[i%4][1]}%"></div></div></div>`).join('')}</div>`;
+}
+
+/* Calls and meetings logged per week, oldest first, ending this week */
+function weeklyCounts(acts, weeks){
+  weeks = weeks || 8;
+  const out = Array(weeks).fill(0), t = new Date(TODAY_S + 'T00:00:00');
+  acts.forEach(a => {
+    if(!a.date) return;
+    const d = Math.floor((t - new Date(String(a.date).slice(0,10) + 'T00:00:00')) / 86400000);
+    if(d < 0) return;
+    const w = Math.floor(d / 7);
+    if(w < weeks) out[weeks - 1 - w]++;
+  });
+  return out;
+}
+function trendCard(title, counts, note){
+  const max = Math.max(1, ...counts), n = counts.length, bw = 100 / n;
+  const now = counts[n-1], prev = counts[n-2] || 0, diff = now - prev;
+  const total = counts.reduce((s,x)=>s+x,0);
+  const bars = counts.map((c,i)=>{ const h = Math.max(c ? 6 : 2, Math.round(c / max * 100));
+    return `<rect x="${(i*bw+bw*.18).toFixed(2)}" y="${100-h}" width="${(bw*.64).toFixed(2)}" height="${h}" rx="1.5"
+      class="${i===n-1?'now':''}"><title>${c} ${i===n-1?'this week':(n-1-i)+' week'+(n-1-i===1?'':'s')+' ago'}</title></rect>`; }).join('');
+  return `<div class="trend card">
+    <div class="trend-head"><div><div class="trend-t">${esc(title)}</div>
+      <div class="trend-n">${now}<span> this week</span></div></div>
+      <span class="trend-d ${diff>0?'up':diff<0?'down':''}">${diff>0?'▲ '+diff:diff<0?'▼ '+(-diff):'same'} vs last week</span></div>
+    <svg class="trend-bars" viewBox="0 0 100 100" preserveAspectRatio="none" role="img"
+      aria-label="${esc(title)}: ${counts.join(', ')} over the last ${n} weeks">${bars}</svg>
+    <div class="trend-foot"><span>${n} weeks ago</span><span>${note ? esc(note) : total + ' in ' + n + ' weeks'}</span><span>This week</span></div>
+  </div>`;
+}
+function greeting(){
+  const h = new Date().getHours();
+  const first = String(me().name || '').split(/\s+/)[0];
+  return `${h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'}${first ? ', ' + esc(first) : ''}`;
+}
+function todayLong(){
+  return new Date(TODAY_S + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+}
+
+/* Phone: everything that doesn't fit on the tab bar */
+function openMoreMenu(){
+  openModal(`<h3>Menu</h3>
+    ${navGroups().map(([g, items]) => `${g ? `<div class="menu-grp">${esc(g)}</div>` : ''}
+      <div class="menu-grid">${items.map(([id, label]) => { const b = badgeFor(id);
+        return `<button class="menu-tile ${ui.view===id?'on':''}" onclick="closeModal();setView('${id}')">
+          ${icon(id, 20)}<span>${esc(label)}</span>${b ? `<span class="pill">${b}</span>` : ''}</button>`; }).join('')}</div>`).join('')}
+    <div class="menu-grp">Account</div>
+    <div class="menu-grid">
+      ${API.live ? `<button class="menu-tile" onclick="closeModal();openChangePassword()">${icon('key',20)}<span>Change password</span></button>` : ''}
+      <button class="menu-tile" onclick="closeModal();logout()">${icon('logout',20)}<span>Sign out</span></button></div>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
+}
+
+/* Phone, reps: the four things they log, one tap from anywhere */
+function openQuickAdd(){
+  const t = getTimer();
+  openModal(`<h3>Add</h3><p class="lead">What would you like to record?</p>
+    <div class="quick-grid">
+      <button class="quick" onclick="closeModal();openLog({})">${icon('phone',22)}<strong>Log a call</strong><span>or a meeting</span></button>
+      <button class="quick" onclick="closeModal();openExpense()">${icon('receipt',22)}<strong>Expense</strong><span>with receipt</span></button>
+      <button class="quick" onclick="closeModal();openTime()">${icon('clock',22)}<strong>Hours</strong><span>time worked</span></button>
+      <button class="quick" onclick="closeModal();openVisit()">${icon('pin',22)}<strong>Visit</strong><span>schedule one</span></button>
+      <button class="quick wide" onclick="closeModal();${t?'stopTimer()':'openTimerStart()'}">${icon('timer',22)}
+        <strong>${t?'Stop the timer':'Start a timer'}</strong><span>${t?esc(timerLabel(t)):'runs while you work'}</span></button>
+    </div>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button></div>`);
+}
+
 function dueItems(repId){
   return S.activities.filter(a=>a.nextDue && (!repId||a.repId===repId))
     .sort((a,b)=> new Date(a.nextDue)-new Date(b.nextDue));
@@ -1628,6 +1841,7 @@ function vToday(){
   let welcomed = true;
   try{ welcomed = localStorage.getItem('rephub_welcomed') === '1'; }catch(e){}
   return `${announceBanner()}
+    <div class="hello"><h2>${greeting()}</h2><div class="sub">${todayLong()}</div></div>
     ${welcomed ? '' : `<div class="callout info"><strong>Welcome to Rep Hub</strong>
       This shows the Growth Rings you look after, who is due a call, and the forms you need.
       Tap a name to phone them, then log the call so the next one gets scheduled for you.
@@ -1652,6 +1866,7 @@ function vToday(){
       <div class="stat click" onclick="setView('requests')"><div class="n">${reqs}</div><div class="l">Open requests</div></div>
       <div class="stat click" onclick="setView('unaffiliated')"><div class="n">${(S.membersNoRing||[]).filter(m=>m.status==='active').length}</div><div class="l">Members with no ring<br><span style="font-size:10px;opacity:.7">network-wide</span></div></div>
     </div>
+    ${S.activities.some(a=>a.repId===ui.me) ? trendCard('Your calls and meetings', weeklyCounts(S.activities.filter(a=>a.repId===ui.me))) : ''}
     ${(()=>{ const t=getTimer();
       return t?`<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
         <div><strong>Timer running — ${timerLabel(t)}</strong>${esc(t.category)}${t.note?' · '+esc(t.note):''}</div>
@@ -1689,7 +1904,7 @@ function vMyRings(){
         <div class="status ${r.status}"><span class="dot"></span>${statusText(r.status)}</div>
         <div class="row-sub" style="margin-top:3px">${h===null?'Not rated yet':'Health '+h}</div>
       </div></div>`;
-  }).join('')||emptyState('your Growth Rings', "You have no Growth Rings yet. The office assigns them in Zoho.");
+  }).join('')||emptyState('your Growth Rings', "You have no Growth Rings yet. The office assigns them in Zoho, or you can start one above.");
   return `${typeFilterChips()}
     <div class="section-head"><div><h2>My Growth Rings</h2><div class="sub">Groups you organize and support.</div></div>
       <button class="btn primary" onclick="openNewRing()">Start a ring</button></div>
@@ -2042,7 +2257,7 @@ function vOfficeDash(){
   const inactive = S.members.filter(m => m.status !== 'active').length;
 
   return `${announceBanner()}
-    <div class="section-head"><div><h2>Network overview</h2><div class="sub">Where things stand across every rep and ring.</div></div></div>
+    <div class="hello"><h2>${greeting()}</h2><div class="sub">${todayLong()} · where things stand across every rep and ring</div></div>
     <div class="stats">
       <div class="stat click" onclick="setView('approvals')"><div class="n" style="color:var(--accent)">${pend}</div><div class="l">Awaiting approval</div></div>
       <div class="stat click" onclick="setView('coverage')"><div class="n" style="color:var(--rust)">${od}</div><div class="l">Overdue contacts</div></div>
@@ -2053,6 +2268,21 @@ function vOfficeDash(){
       <div class="stat click" onclick="setView('insights')" title="Members marked Inactive in Zoho. Zoho does not record the date they left, so this is a running total, not a figure for this year.">
         <div class="n" style="color:var(--rust)">${inactive}</div><div class="l">Inactive members</div></div>
     </div>
+    ${(() => {
+      if(!S.activities.length) return '';
+      const counts = weeklyCounts(S.activities);
+      // Who logged the most this month, so the office sees effort, not just totals
+      const month = TODAY_S.slice(0,7), by = {};
+      S.activities.forEach(a => { if(a.repId && String(a.date||'').slice(0,7) === month) by[a.repId] = (by[a.repId]||0) + 1; });
+      const top = Object.entries(by).sort((a,b)=>b[1]-a[1]).slice(0,5);
+      const most = top.length ? top[0][1] : 1;
+      return `<div class="dash-pair">${trendCard('Calls and meetings logged · all reps', counts)}
+        ${top.length ? `<div class="card leader"><div class="trend-t">Most active this month</div>
+          ${top.map(([id,n]) => `<div class="leader-row"><span class="rp-av">${esc(repInitials(pname(id)))}</span>
+            <div style="flex:1;min-width:0"><div class="leader-name">${esc(splitRepName(pname(id)).name)}</div>
+            <div class="bar"><span style="width:${Math.round(n/most*100)}%"></span></div></div>
+            <strong class="leader-n">${n}</strong></div>`).join('')}</div>` : ''}</div>`;
+    })()}
     ${(() => {
       const rated = rings.map(r=>({r, h:ringHealth(r)})).filter(x=>x.h!==null);
       const risky = rated.filter(x=>x.h<50);
@@ -5060,14 +5290,20 @@ async function loadSecondary(){
  * What to show when a screen has nothing in it. Without demo data this is a
  * normal state, not an error, and the message should say which it is.
  */
-function emptyState(what, hint){
-  if(loading || loadingDetail) return `<div class="empty">Loading ${esc(what)}…</div>`;
+function emptyState(what, hint, action){
+  if(loading || loadingDetail) return skeleton(4);
   if(loadError) return `<div class="callout rust"><strong>Could not load ${esc(what)}</strong>
     ${esc(loadError)}
     <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="retryLoad()">Try again</button></div></div>`;
   if(API.live && !zohoConnected) return `<div class="callout info"><strong>Zoho isn't connected yet</strong>
     Once the connection is made, ${esc(what)} appear here automatically. Nothing else to do.</div>`;
+  if(action) return emptyWithAction(hint || ('No ' + what + ' yet.'), action[0], action[1]);
   return `<div class="empty">${esc(hint || ('No ' + what + ' yet.'))}</div>`;
+}
+/* An empty list with a way forward: what to do next, as a button */
+function emptyWithAction(text, label, onclick){
+  return `<div class="empty">${esc(text)}<div class="btnrow" style="justify-content:center;margin-top:12px">
+    <button class="btn sm primary" onclick="${onclick}">${esc(label)}</button></div></div>`;
 }
 let zohoConnected = false;
 
@@ -5128,7 +5364,7 @@ function renderContentSafe(el){
     if(renderRetry !== key){
       renderRetry = key;
       requestAnimationFrame(() => { if(screenKey() === key) renderContent(); });
-      if(!el.innerHTML.trim()) el.innerHTML = `<div class="empty">Loading…</div>`;
+      if(!el.innerHTML.trim()) el.innerHTML = skeleton(5);
       return;
     }
     renderRetry = null;
@@ -5182,7 +5418,7 @@ function railNavHTML(){
   return navGroups().map(([g,items])=>
     (g?`<div class="nav-grp">${g}</div>`:'')+items.map(([id,label])=>{
       const b=badgeFor(id);
-      return `<button class="rail-link ${ui.view===id?'active':''}" onclick="setView('${id}')"><span>${label}</span>${b?`<span class="pill ${id==='today'||id==='approvals'||id==='dash'?'':'muted'}">${b}</span>`:''}</button>`;
+      return `<button class="rail-link ${ui.view===id?'active':''}" onclick="setView('${id}')"><span class="rl-l">${icon(id,17)}<span>${label}</span></span>${b?`<span class="pill ${id==='today'||id==='approvals'||id==='dash'?'':'muted'}">${b}</span>`:''}</button>`;
     }).join('')).join('');
 }
 function bannersHTML(){
@@ -5197,12 +5433,19 @@ function bannersHTML(){
     ${(ui.offline||(API.live===false&&!navigator.onLine))?`<div class="banner sync">Working offline — ${(OutBox.count()||S.syncQueue.length)} change${(OutBox.count()||S.syncQueue.length)===1?'':'s'} waiting to sync.</div>`:''}`;
 }
 function tabbarHTML(){
-  return (isRep()
-    ? [['today','Today','◉'],['calendar','Calendar','▦'],['rings','Rings','◎'],['timesheet','Hours','$'],['resources','Web Toolbox','⎘']]
-    : navItems().slice(0,5)).map(([id,label,ic])=>{
-    const b=badgeFor(id);
-    return `<button class="${ui.view===id?'active':''}" onclick="setView('${id}')">${b?`<span class="pill">${b}</span>`:''}<span style="font-size:15px">${ic}</span>${label}</button>`;
-  }).join('');
+  // Four screens and "More". Office people used to get the first five of
+  // eleven with no way to reach Settings, Reps or Reports on a phone.
+  const main = isRep()
+    ? [['today','Today'],['rings','Rings'],['calendar','Calendar'],['timesheet','Hours']]
+    : [['dash','Overview'],['approvals','Approvals'],['calendar','Calendar'],['members','Members']];
+  const inMain = main.some(([id]) => id === ui.view);
+  const tab = ([id,label]) => { const b = badgeFor(id);
+    return `<button class="${ui.view===id?'active':''}" onclick="setView('${id}')">${b?`<span class="pill">${b}</span>`:''}${icon(id,21)}<span>${label}</span></button>`; };
+  const tabs = main.map(tab);
+  const more = `<button class="${inMain?'':'active'}" onclick="openMoreMenu()">${icon('more',21)}<span>More</span></button>`;
+  // Reps get the + in the middle of the bar, where a thumb lands
+  if(isRep()) tabs.splice(2, 0, `<button class="tab-add" onclick="openQuickAdd()" aria-label="Add a call, expense, hours or visit"><span>${icon('plus',24)}</span></button>`);
+  return tabs.join('') + more;
 }
 function render(){
   const app=document.getElementById('app');
@@ -5224,8 +5467,8 @@ function render(){
             <div><div class="nm">${esc(me().name)}</div><div class="rl">${me().role==='rep'?'Rep':me().role==='admin'?'Director':'Office'}</div></div></div>
           <div class="rail-nav" id="railNav"></div>
           <div class="rail-foot">
-            ${API.live?`<button class="rail-link" onclick="openChangePassword()">Change password</button>`:''}
-            <button class="rail-link" onclick="logout()">Sign out</button>
+            ${API.live?`<button class="rail-link" onclick="openChangePassword()"><span class="rl-l">${icon('key',17)}<span>Change password</span></span></button>`:''}
+            <button class="rail-link" onclick="logout()"><span class="rl-l">${icon('logout',17)}<span>Sign out</span></span></button>
             <div style="font-size:10.5px;color:var(--ink-faint);padding:10px 11px 0;line-height:1.5">
               Managed by Prosynergy Bookkeeping<br>540-212-9403</div></div>
         </nav>
@@ -5532,7 +5775,8 @@ function vCalendar() {
           <div class="btnrow" style="margin-top:7px">${actions(i)}</div>
         </div></div>`).join('')}
     </div>`).join('')
-    : `<div class="empty">Nothing in the next 30 days.${isRep()?' A good time to book a ring visit.':''}</div>`;
+    : isRep() ? emptyWithAction('Nothing in the next 30 days. A good time to book a ring visit.', 'Schedule a visit', 'openVisit()')
+    : `<div class="empty">Nothing in the next 30 days.</div>`;
 
   return `<div class="section-head"><div><h2>Calendar</h2>
     <div class="sub">Local events, ring visits, and when each of your groups meets.</div></div>
@@ -5725,7 +5969,7 @@ function vEventDetail() {
                <div class="btnrow" style="margin-top:9px">
                  <button class="btn sm" onclick="delete regsError['${e.id}'];loadRegs('${e.id}');renderContent()">Try again</button></div></div>`
           : (API.live && e.registrationCount
-            ? `<div class="empty">Loading ${e.registrationCount} registration${e.registrationCount===1?'':'s'}…</div>`
+            ? skeleton(Math.min(4, e.registrationCount))
             : `<div class="empty">Nobody has registered yet.</div>`)}
 
       ${maybe.length?`<h3 class="sub-h">Tentative · ${maybe.length}</h3>
@@ -6059,7 +6303,7 @@ function vVisits() {
       <div class="sub">When you're next sitting in with each group.</div></div>
       ${isRep() ? `<button class="btn primary" onclick="openVisit()">Schedule a visit</button>` : ''}</div>
     <h3 class="sub-h">Coming up · ${upcoming.length}</h3>
-    ${upcoming.map(row).join('') || emptyState('visits', 'No visits booked. Each active ring should see you once or twice a year.')}
+    ${upcoming.map(row).join('') || emptyState('visits', 'No visits booked. Each active ring should see you once or twice a year.', isRep() ? ['Schedule a visit', 'openVisit()'] : null)}
     <h3 class="sub-h">Rings with no visit booked</h3>
     ${S.rings.filter(r => r.status === 'active' && (!repId || r.repId === repId) && !upcoming.some(v => v.ringId === r.id))
       .map(r => `<div class="row"><div class="row-main"><div class="row-title">${esc(r.name)}</div>

@@ -691,7 +691,7 @@ describe('hours and expenses', () => {
     assert.equal((await invoke('POST',`/expenses/${rows[0].id}/approve`,{token:officeToken})).statusCode, 200);
   });
 
-  test('the accounting email carries each receipt, named by its line, plus data for bill entry', async () => {
+  test('the accounting email carries each receipt, named by its line', async () => {
     // A photographed receipt, approved, alongside the PDF one above
     const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
     await invoke('POST', '/expenses', { token: repToken,
@@ -724,13 +724,9 @@ describe('hours and expenses', () => {
 
     // Dates read as dates, not "Fri Oct 02 2026 00:00:00 GMT"
     assert.ok(!/GMT|00:00:00/.test(mail.html));
-    const json = JSON.parse(mail.html.match(/<pre[^>]*>([\s\S]*?)<\/pre>/)[1]
-      .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'));
-    const lunch = json.expenses.find(x => x.description === 'Lunch with facilitator');
-    assert.equal(lunch.date, '2026-10-02');
-    assert.equal(lunch.amount, 23.5);
-    assert.equal(lunch.receiptStatus, 'attached');
-    assert.ok(receiptFiles.includes(lunch.receiptFile), 'the data names the attached file');
+    // No machine-readable block any more: Rep Hub makes the Books bills itself
+    assert.ok(!/<pre/.test(mail.html) && !/bill entry/i.test(mail.html), 'no JSON block in the email');
+    assert.ok(/Lunch with facilitator/.test(mail.html) && /23\.50/.test(mail.html));
   });
 
   test('with Zoho Books connected, sent expenses become bills with receipts, once each', async () => {

@@ -1457,20 +1457,6 @@ async function deliverToAccounting({ timeIds, expenseIds, actor, ip } = {}) {
     </div>`).join('');
 
   const booksOn = await books.configured();
-  const forBills = {
-    purpose: 'Approved rep expenses to enter as bills. Each receipt is attached; its filename starts with the ref.',
-    approvedBy: approverUsers.map(u => u.name),
-    expenses: e.map(x => ({
-      ref: x.ref, rep: x.rep_name, date: day(x.entry_date), amount: Number(Number(x.amount).toFixed(2)),
-      currency: 'USD', category: x.category, vendor: x.vendor || null, description: x.description || '',
-      zohoBooksBillNumber: booksOn ? `RH-${x.id}` : null,
-      receiptFile: x.receiptNote === 'MISSING' || /^TOO LARGE/.test(x.receiptNote) ? null : x.receiptNote,
-      receiptStatus: x.receiptNote === 'MISSING' ? 'missing' : /^TOO LARGE/.test(x.receiptNote) ? 'too large to attach' : 'attached',
-    })),
-    hours: t.map((x, i) => ({ ref: `H${i + 1}`, rep: x.rep_name, date: day(x.entry_date), hours: Number(x.hours),
-      category: x.category, description: x.description || '' })),
-  };
-
   const stamp = today();
   const missing = e.filter(x => x.receiptNote === 'MISSING').length;
   const sent = await reminders.sendEmail(to, `Rep hours and expenses — ${stamp}`,
@@ -1480,8 +1466,7 @@ async function deliverToAccounting({ timeIds, expenseIds, actor, ip } = {}) {
         each named by its line (E1, E2…).${missing ? ` <strong>${missing} expense${missing === 1 ? ' has' : 's have'} no receipt.</strong>` : ''}</p>
      ${table}
      ${e.length ? `<h3 style="font-size:15px;margin:22px 0 10px">Expenses with receipts</h3>${expenseBlocks}` : ''}
-     <h3 style="font-size:13px;margin:22px 0 6px;color:#666">Data for bill entry (JSON)</h3>
-     <pre style="font:12px/1.45 ui-monospace,Menlo,monospace;background:#f5f5f0;padding:10px;border-radius:6px;white-space:pre-wrap">${esc(JSON.stringify(forBills, null, 2))}</pre>`,
+     ${booksOn && e.length ? `<p style="color:#555;font-size:13px">Each expense is also entered in Zoho Books as a bill numbered RH-&lt;expense number&gt;, with its receipt attached.</p>` : ''}`,
     { userId: actor?.id || null, kind: 'accounting',
       replyTo: approverUsers.length === 1 ? approverUsers[0].email : (actor?.email || undefined),
       attachments: [
