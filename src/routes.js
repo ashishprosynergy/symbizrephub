@@ -210,7 +210,9 @@ r.post('/auth/request-link', wrap(async (req, res) => {
 
   if (sent && sent.ok === false) {
     return res.status(503).json({
-      error: 'Email is not switched on for this site yet, so no link could be sent. Sign in with your password instead.',
+      error: sent.skipped
+        ? 'Email is not switched on for this site yet, so no link could be sent. Sign in with your password instead.'
+        : 'The email could not be sent just now. Try again in a minute, or sign in with your password.',
     });
   }
   await audit(user.id, 'auth.linkRequested', { email }, req.ip);
@@ -330,7 +332,11 @@ r.post('/auth/forgot', wrap(async (req, res) => {
 
   const sent = await sendResetCode(user, req);
   if (sent && sent.ok === false) {
-    return res.status(503).json({ error: 'Email is not switched on for this site, so no code could be sent. Ask the office to reset it for you.' });
+    // Not configured and "the mail server said no" need different fixes, so
+    // do not report both as the first.
+    return res.status(503).json({ error: sent.skipped
+      ? 'Email is not switched on for this site, so no code could be sent. Ask the office to reset it for you.'
+      : 'The code could not be emailed just now. Try again in a minute, or ask the office to reset it for you.' });
   }
   await audit(user.id, 'auth.forgotRequested', {}, req.ip);
   res.json(same);
