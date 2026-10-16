@@ -4929,17 +4929,19 @@ async function previewAsRep(id, name){
   ui.me = id;
   ui.view = 'today'; ui.ringId=null; ui.memberId=null; ui.eventId=null; ui.q='';
   ui.calRep = null;
-  closeSheet(); closeModal(); render();
-  await loadFromServer();   // ask the server for that rep's scope
-  render();
+  // The office already holds every rep's rings, people and calls, and each
+  // screen filters by ui.me — so their view draws at once from what is here.
+  // Reloading it all from Zoho was the lag, and the blank placeholder card.
+  closeSheet(); closeModal(); goingTo(); render();
 }
 async function endPreview(){
   previewRepId = null;
   if(officeIdBeforePreview !== null){ ui.me = officeIdBeforePreview; officeIdBeforePreview = null; }
   ui.view = 'team';
-  render();
-  await loadFromServer();
-  render();
+  goingTo(); render();
+  // Only if something reloaded while looking as the rep (and so narrowed the
+  // data to them) fetch the office's again — quietly, behind the screen.
+  if(dataScope !== null) loadFromServer().catch(() => {});
 }
 function openPreviewPicker(){
   const reps = PEOPLE.filter(p=>p.role==='rep');
@@ -5932,10 +5934,12 @@ const adapt = {
  * in behind, and each piece is independent so one slow call cannot hold
  * up the rest.
  */
+var dataScope = null;   // whose data S holds: null = everyone (office), or one rep's id
 async function loadFromServer(){
   if(!API.live) return;
   loading = true;
   const asRep = previewRepId || null;
+  dataScope = asRep;
 
   try{
     // Pass one: just the rings. Fast, and it is what every screen keys off.
