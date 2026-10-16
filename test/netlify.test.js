@@ -600,6 +600,8 @@ describe('hours and expenses', () => {
   before(async () => {
     repToken = JSON.parse((await invoke('POST','/auth/login',{body:{email:'rep@test.org',password:'correct-horse'}})).body).token;
     officeToken = JSON.parse((await invoke('POST','/auth/login',{body:{email:'office@test.org',password:'correct-horse'}})).body).token;
+    // These tests send straight to accounting; the approval step has its own test
+    await db.q.setSetting('accountingApprover', '');
   });
 
   test('schema creates the hours and expenses tables', async () => {
@@ -762,6 +764,87 @@ describe('hours and expenses', () => {
     }
   });
 
+  test('with an approver set, nothing reaches accounting until they approve the link', async () => {
+    const cfg = require('../src/config');
+    const reminders = require('../src/reminders');
+    const realSend = reminders.sendEmail, realMail = { ...cfg.mail };
+    const mails = [];
+    cfg.mail.enabled = true; cfg.mail.host = 'smtp.test';
+    reminders.sendEmail = async (to, subject, html, opts) => { mails.push({ to, subject, html, opts }); return { ok: true }; };
+    try {
+      await db.q.setSetting('accountingApprover', 'mel@test.org');
+      await invoke('POST', '/expenses', { token: repToken, body: { date: '2026-10-08', amount: 19.99, category: 'Printing',
+        vendor: 'Staples', description: 'Flyers for info night' } });
+      for (const x of JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body)) {
+        if (x.status === 'Submitted') await invoke('POST', `/expenses/${x.id}/approve`, { token: officeToken });
+      }
+
+      // The office presses Send: it goes to Mel, not accounting
+      const asked = JSON.parse((await invoke('POST', '/accounting/send', { token: officeToken })).body);
+      assert.equal(asked.awaitingApproval, true, JSON.stringify(asked));
+      assert.equal(mails.length, 1);
+      assert.equal(mails[0].to, 'mel@test.org');
+      const token = mails[0].html.match(/approve=([a-f0-9]+)/)[1];
+      let rows = JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body);
+      assert.ok(rows.some(x => x.description === 'Flyers for info night' && x.status === 'Approved'), 'still waiting, not sent');
+      const waiting = JSON.parse((await invoke('GET', '/accounting/batches', { token: officeToken })).body);
+      assert.equal(waiting.length, 1);
+
+      // Mel opens the link — no sign-in — and sees the items
+      const view = JSON.parse((await invoke('GET', `/accounting/batch/${token}`)).body);
+      assert.ok(view.expenses.some(x => x.vendor === 'Staples' && x.amount === 19.99));
+
+      // Something approved after he was asked is not slipped into his batch
+      await invoke('POST', '/expenses', { token: repToken, body: { date: '2026-10-09', amount: 5, category: 'Other', vendor: 'X', description: 'Late item' } });
+      for (const x of JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body)) {
+        if (x.status === 'Submitted') await invoke('POST', `/expenses/${x.id}/approve`, { token: officeToken });
+      }
+
+      // He approves: accounting gets it, and only what he saw
+      const ok = await invoke('POST', `/accounting/batch/${token}/approve`);
+      assert.equal(ok.statusCode, 200, ok.body);
+      const toAccounting = mails.find(m => /Rep hours and expenses —/.test(m.subject));
+      assert.ok(toAccounting, 'accounting emailed');
+      assert.ok(/Flyers for info night/.test(toAccounting.html));
+      assert.ok(!/Late item/.test(toAccounting.html), 'the later item waits for the next batch');
+      rows = JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body);
+      assert.equal(rows.find(x => x.description === 'Flyers for info night').status, 'Reimbursed');
+      assert.equal(rows.find(x => x.description === 'Late item').status, 'Approved');
+
+      // The link is spent
+      assert.equal((await invoke('POST', `/accounting/batch/${token}/approve`)).statusCode, 410);
+      assert.equal((await invoke('GET', '/accounting/batch/not-a-real-token')).statusCode, 404);
+
+      // Sending back: the office hears why, nothing is sent
+      mails.length = 0;
+      await invoke('POST', '/accounting/send', { token: officeToken });
+      const t2 = mails[0].html.match(/approve=([a-f0-9]+)/)[1];
+      const back = await invoke('POST', `/accounting/batch/${t2}/return`, { body: { note: 'Need a receipt for the late item' } });
+      assert.equal(back.statusCode, 200);
+      assert.ok(mails.some(m => m.to === 'office@test.org' && /Need a receipt/.test(m.html)));
+      rows = JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body);
+      assert.equal(rows.find(x => x.description === 'Late item').status, 'Approved');
+
+      // The automatic run: on the chosen day it asks once; other days it doesn't
+      const routes = require('../src/routes');
+      await db.q.setSetting('accountingDay', '15');
+      mails.length = 0;
+      const notToday = await routes.runAutoAccounting(new Date('2026-11-14T15:00:00Z'));
+      assert.equal(notToday.skipped, 'not today');
+      const due = await routes.runAutoAccounting(new Date('2026-11-15T15:00:00Z'));
+      assert.equal(due.awaitingApproval, true, JSON.stringify(due));
+      assert.equal(mails.filter(m => m.to === 'mel@test.org').length, 1);
+      const again = await routes.runAutoAccounting(new Date('2026-11-15T20:00:00Z'));
+      assert.equal(again.skipped, 'already asked today');
+      await db.q.setSetting('accountingDay', 'Last');
+      assert.equal((await routes.runAutoAccounting(new Date('2026-11-29T15:00:00Z'))).skipped, 'not today');
+    } finally {
+      reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
+      await db.q.setSetting('accountingApprover', '');
+      await db.q.setSetting('accountingDay', '1');
+    }
+  });
+
   test('settings the office saves are limited to known keys', async () => {
     const res = await invoke('PUT', '/admin/settings', { token: officeToken, body: { zoho_access_token: 'evil', accountingEmail: 'books@symbiz.org' } });
     assert.equal(res.statusCode, 200);
@@ -868,8 +951,8 @@ describe('accounting PDF', () => {
 });
 
 describe('scheduled functions', () => {
-  test('all four export a handler', () => {
-    for (const f of ['weekly-digest', 'overdue-nudge', 'office-summary', 'sync-flush']) {
+  test('every scheduled function exports a handler', () => {
+    for (const f of ['weekly-digest', 'overdue-nudge', 'office-summary', 'sync-flush', 'accounting-auto']) {
       const mod = require(`../netlify/functions/${f}`);
       assert.equal(typeof mod.handler, 'function', `${f} has no handler`);
     }
@@ -898,8 +981,8 @@ describe('netlify config', () => {
       'the catch-all must be declared last or every API call returns index.html');
   });
 
-  test('all four schedules are declared', () => {
-    for (const f of ['weekly-digest', 'overdue-nudge', 'office-summary', 'sync-flush']) {
+  test('every schedule is declared', () => {
+    for (const f of ['weekly-digest', 'overdue-nudge', 'office-summary', 'sync-flush', 'accounting-auto']) {
       assert.ok(toml.includes(`[functions."${f}"]`), `${f} is not scheduled`);
     }
   });

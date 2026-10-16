@@ -38,6 +38,10 @@
 [functions."sync-flush"]
   schedule = "*/15 * * * *"
 
+# Accounting day: ask the approver (Mel) to OK the batch
+[functions."accounting-auto"]
+  schedule = "0 13 * * *"
+
 [[headers]]
   for = "/*"
   [headers.values]

@@ -178,6 +178,21 @@ ALTER TABLE expenses ADD COLUMN IF NOT EXISTS books_error TEXT;
 
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS books_queued BOOLEAN NOT NULL DEFAULT FALSE;
 
+CREATE TABLE IF NOT EXISTS accounting_batches (
+  id            SERIAL PRIMARY KEY,
+  token         TEXT NOT NULL UNIQUE,
+  period        TEXT,
+  status        TEXT NOT NULL DEFAULT 'pending',
+  time_ids      TEXT NOT NULL,
+  expense_ids   TEXT NOT NULL,
+  requested_by  TEXT,
+  approver      TEXT,
+  note          TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at    TIMESTAMPTZ,
+  decided_by    TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_token_user ON login_tokens (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_writes (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries (user_id, entry_date);
@@ -272,6 +287,28 @@ const q = {
   approveTime: (id, by) => query(
     "UPDATE time_entries SET status='Approved', approved_at=now(), approved_by=$2 WHERE id = $1", [id, by]),
   markTimeSent: () => query("UPDATE time_entries SET status='Reimbursed' WHERE status='Approved'"),
+  // Only the items in a batch: anything approved after Mel was asked waits for the next one
+  markTimeSentIds: ids => ids.length ? query(
+    `UPDATE time_entries SET status='Reimbursed' WHERE status='Approved' AND id IN (${ids.map((_, i) => '$' + (i + 1)).join(',')})`,
+    ids.map(Number)) : Promise.resolve([]),
+  markExpensesSentIds: ids => ids.length ? query(
+    `UPDATE expenses SET status='Reimbursed' WHERE status='Approved' AND id IN (${ids.map((_, i) => '$' + (i + 1)).join(',')})`,
+    ids.map(Number)) : Promise.resolve([]),
+
+  /* ── accounting batches awaiting the approver ── */
+  addBatch: b => query(
+    `INSERT INTO accounting_batches (token,period,time_ids,expense_ids,requested_by,approver)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [b.token, b.period || null, JSON.stringify(b.timeIds), JSON.stringify(b.expenseIds), b.requestedBy || null, b.approver]),
+  batchByToken: token => one('SELECT * FROM accounting_batches WHERE token = $1', [token]),
+  batchByPeriod: period => one('SELECT * FROM accounting_batches WHERE period = $1', [period]),
+  pendingBatches: () => query("SELECT * FROM accounting_batches WHERE status = 'pending' ORDER BY created_at DESC"),
+  decideBatch: (id, status, by, note) => query(
+    "UPDATE accounting_batches SET status = $2, decided_at = now(), decided_by = $3, note = $4 WHERE id = $1 AND status = 'pending'",
+    [id, status, by || null, note || null]),
+  // Asking again replaces the open request, so Mel never sees two versions
+  supersedeBatches: () => query(
+    "UPDATE accounting_batches SET status = 'replaced', decided_at = now() WHERE status = 'pending'"),
 
   /* ── expenses ── */
   addExpense: x => query(

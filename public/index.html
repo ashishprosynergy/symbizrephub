@@ -746,6 +746,11 @@ const API = {
   getSettings(){ return this.call('/admin/settings'); },
   saveSettings(obj){ return this.call('/admin/settings',{method:'PUT',body:JSON.stringify(obj)}); },
   booksStatus(){ return this.call('/admin/books-status'); },
+  accountingBatches(){ return this.call('/accounting/batches'); },
+  batch(token){ return this.call('/accounting/batch/'+encodeURIComponent(token)); },
+  batchReceipt(token,id){ return this.call('/accounting/batch/'+encodeURIComponent(token)+'/receipt/'+id); },
+  approveBatch(token){ return this.call('/accounting/batch/'+encodeURIComponent(token)+'/approve',{method:'POST'}); },
+  returnBatch(token,note){ return this.call('/accounting/batch/'+encodeURIComponent(token)+'/return',{method:'POST',body:JSON.stringify({note})}); },
   booksRetry(){ return this.call('/accounting/books-retry',{method:'POST'}); },
   checkSetup(token){ return this.call('/auth/check-setup',{method:'POST',body:JSON.stringify({token})}); },
   setPassword(token,password){ return this.call('/auth/set-password',{method:'POST',body:JSON.stringify({token,password})}); },
@@ -2365,14 +2370,35 @@ function vInsights(){
       <span class="tag later">${esc(e.exitReason||'—')}</span></div>`).join('')}`;
 }
 
+/**
+ * The Reps screen's two lists. Kept from the last visit (and across a
+ * refresh) so the screen shows at once, then quietly brought up to date —
+ * instead of a blank wait while two calls ran one after the other on every
+ * visit, sometimes several times over.
+ */
 let serverUsers = null;
 let zohoReps = null;
-async function loadUsers(){
-  try{ serverUsers = await API.users(); }
-  catch(e){ serverUsers = { error: e.message }; }
-  try{ zohoReps = await API.repsFromZoho(); }
-  catch(e){ zohoReps = { error: e.message }; }
-  renderContent();
+let usersLoadedAt = 0, usersInFlight = null;
+try{
+  const t = JSON.parse(localStorage.getItem('rephub_team') || 'null');
+  if(t && Array.isArray(t.users)) serverUsers = t.users;
+  if(t && Array.isArray(t.reps)) zohoReps = t.reps;
+}catch(e){}
+function keepTeam(){
+  try{ localStorage.setItem('rephub_team', JSON.stringify({
+    users: Array.isArray(serverUsers) ? serverUsers : null, reps: Array.isArray(zohoReps) ? zohoReps : null })); }catch(e){}
+}
+function loadUsers(force){
+  if(usersInFlight) return usersInFlight;
+  if(!force && Date.now() - usersLoadedAt < 60_000 && serverUsers && zohoReps) return Promise.resolve();
+  usersInFlight = Promise.all([
+    API.users().then(v => { serverUsers = v; }).catch(e => { if(!Array.isArray(serverUsers)) serverUsers = { error: e.message }; }),
+    API.repsFromZoho().then(v => { zohoReps = v; }).catch(e => { if(!Array.isArray(zohoReps)) zohoReps = { error: e.message }; }),
+  ]).then(() => {
+    usersLoadedAt = Date.now(); keepTeam();
+    if(ui.view === 'team') renderContent();
+  }).finally(() => { usersInFlight = null; });
+  return usersInFlight;
 }
 
 /** Create an account straight from a rep found in Zoho. */
@@ -2425,7 +2451,7 @@ async function submitInviteRep(e, contactId){
         <div style="font-family:ui-monospace,monospace;font-size:21px;font-weight:700;letter-spacing:.06em">${esc(out.tempPassword)}</div>
       </div>` : ''}
       <div class="row-sub" style="margin-top:8px">They sign in at this address with ${esc(f.namedItem('email').value)} and change it afterwards.</div>
-      <div class="m-actions"><button class="btn primary" onclick="closeModal();loadUsers()">Done</button></div>`);
+      <div class="m-actions"><button class="btn primary" onclick="closeModal();loadUsers(true)">Done</button></div>`);
   }catch(ex){
     err.style.display='block';
     err.textContent = ex.message || 'Could not create that account';
@@ -2449,7 +2475,7 @@ async function doResetPassword(id, name){
         <div style="font-family:ui-monospace,monospace;font-size:21px;font-weight:700;letter-spacing:.06em">${esc(out.tempPassword)}</div>
       </div>` : ''}
       <div class="row-sub" style="margin-top:8px">They sign in with ${esc(out.email)}</div>
-      <div class="m-actions"><button class="btn primary" onclick="closeModal();loadUsers()">Done</button></div>`);
+      <div class="m-actions"><button class="btn primary" onclick="closeModal();loadUsers(true)">Done</button></div>`);
   }catch(ex){ toast(ex.message || 'Could not reset that password'); }
 }
 
@@ -2464,7 +2490,7 @@ async function doRemoveUser(id, name){
   try{
     await API.removeUser(id);
     closeModal(); toast(`${name} can no longer sign in`);
-    serverUsers = null; zohoReps = null; loadUsers();
+    serverUsers = null; zohoReps = null; loadUsers(true);
   }catch(ex){ toast(ex.message || 'Could not remove that account'); }
 }
 
@@ -2483,7 +2509,7 @@ async function runRemoveAccount(id, name){
     closeModal();
     toast(`${name} removed`);
     serverUsers = null; zohoReps = null;
-    await loadUsers();
+    await loadUsers(true);
   }catch(e){
     openModal(`<h3>Couldn't remove</h3><p class="lead">${esc(e.message)}</p>
       <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
@@ -2508,7 +2534,7 @@ async function runResendLogin(id, name){
       ${out.tempPassword ? `<div class="card flat" style="text-align:center;padding:16px">
         <div style="font-family:ui-monospace,monospace;font-size:20px;font-weight:700;letter-spacing:.06em">${esc(out.tempPassword)}</div>
       </div>` : ''}
-      <div class="m-actions"><button class="btn primary" onclick="closeModal();loadUsers()">Done</button></div>`);
+      <div class="m-actions"><button class="btn primary" onclick="closeModal();loadUsers(true)">Done</button></div>`);
   }catch(e){
     openModal(`<h3>Couldn't send</h3><p class="lead">${esc(e.message)}</p>
       <div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
@@ -2550,7 +2576,7 @@ async function runInviteAll(){
       ${failed.map(f=>esc(f.name)+': '+esc(f.error)).join('<br>')}</div>`:''}
     <div class="m-actions">
       <button class="btn" onclick="copyPasswords()">Copy all</button>
-      <button class="btn primary" onclick="closeModal();loadUsers()">Done</button></div>`);
+      <button class="btn primary" onclick="closeModal();loadUsers(true)">Done</button></div>`);
   window.__lastPasswords = done;
 }
 
@@ -2601,8 +2627,8 @@ async function submitAddUser(e){
         <div class="card flat" style="text-align:center;padding:18px">
           <div style="font-family:ui-monospace,monospace;font-size:21px;font-weight:700;letter-spacing:.06em">${esc(out.tempPassword)}</div>
         </div>
-        <div class="m-actions"><button class="btn primary" onclick="closeModal();loadUsers()">Done</button></div>`);
-    } else { toast('Account created'); loadUsers(); }
+        <div class="m-actions"><button class="btn primary" onclick="closeModal();loadUsers(true)">Done</button></div>`);
+    } else { toast('Account created'); loadUsers(true); }
   }catch(ex){
     err.style.display='block';
     err.textContent = ex.message || 'Could not add that person';
@@ -2738,10 +2764,15 @@ function vSettings(){
           <input value="${esc(S.settings.accountingEmail || '')}" onchange="setSetting('accountingEmail', this.value)"></div>
         <div class="field"><label>Send automatically on day</label>
           <select onchange="setSetting('accountingDay', this.value)">
-            ${['1','15','Last','Off'].map(d => `<option ${String(S.settings.accountingDay) === d ? 'selected' : ''}>${d === 'Off' ? 'Off — manual only' : d === 'Last' ? 'Last day of month' : d + ' of the month'}</option>`).join('')}
+            ${['1','15','Last','Off'].map(d => `<option value="${d}" ${String(S.settings.accountingDay || '1') === d ? 'selected' : ''}>${d === 'Off' ? 'Off — manual only' : d === 'Last' ? 'Last day of month' : d + (d === '1' ? 'st' : 'th') + ' of the month'}</option>`).join('')}
           </select></div>
       </div>
-      <div class="row-sub">Approved hours and expenses are compiled and emailed on that day. Reps still see everything they submitted.</div>
+      <div class="field"><label>Approved by before it goes to accounting</label>
+        <input type="email" value="${esc(S.settings.accountingApprover ?? 'melvin.b@symbiz.org')}" placeholder="Leave empty to send without approval"
+               onchange="setSetting('accountingApprover', this.value.trim())">
+        <div class="hint">On the day above, this person is emailed everything approved, with a link to review the receipts and approve it.
+          Nothing reaches accounting, or Zoho Books, until they do. If they send it themselves, it goes straight through.</div></div>
+      <div class="row-sub">Reps still see everything they submitted.</div>
     </div>
 
     ${API.live ? `<h3 class="sub-h">Zoho Books</h3>
@@ -2814,7 +2845,7 @@ async function retryBooks(btn){
 
 // Settings the server acts on. These used to be kept only in this browser,
 // so the server never saw (for one) the accounting address typed in here.
-const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount'];
+const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','accountingApprover','booksAuto','booksPayee','booksAccount'];
 async function setSetting(k,v){
   S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`);
   if(API.live && isOffice() && SERVER_SETTINGS.includes(k)){
@@ -3826,7 +3857,10 @@ function openRing(id){ goingTo(); ui.ringId=id; ui.view='ringDetail'; closeSheet
 function openMember(id){ goingTo(); ui.memberId=id; ui.view='memberDetail'; closeSheet(); render(); }
 function openFac(id){ goingTo(); ui.facId=id; ui.view='facDetail'; closeSheet(); render(); }
 function login(id){ ui.me=id; ui.view=PEOPLE.find(p=>p.id===id).role==='rep'?'today':'dash'; render(); }
-function logout(){ placeByScreen = {}; API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
+function logout(){ placeByScreen = {};
+  try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
+  serverUsers = null; zohoReps = null; usersLoadedAt = 0;
+  API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
 
 /**
  * Office/director only: look at the app exactly as one rep sees it.
@@ -4694,16 +4728,22 @@ async function loadFromServer(){
       if(!v) return;
       const carry = {};
       if(S.settings.accountingEmail && v.accountingEmail === 'accounting@symbiz.org' && S.settings.accountingEmail !== v.accountingEmail) carry.accountingEmail = S.settings.accountingEmail;
-      if(S.settings.accountingDay && v.accountingDay === '1' && String(S.settings.accountingDay) !== '1') carry.accountingDay = String(S.settings.accountingDay);
+      if(['15','Last','Off'].includes(String(S.settings.accountingDay)) && v.accountingDay === '1') carry.accountingDay = String(S.settings.accountingDay);
       Object.assign(S.settings, v, carry);
       if(Object.keys(carry).length) API.saveSettings(carry).catch(()=>{});
     }) : Promise.resolve(),
     // Rep email addresses, so Reminders can say who actually gets a digest
-    isOffice() ? settle(API.repsFromZoho(), v => (v||[]).forEach(r=>{
-      const at = PEOPLE.findIndex(p=>p.id===r.contactId);
-      if(at>=0) PEOPLE[at] = {...PEOPLE[at], email:r.email||'', name:r.name||PEOPLE[at].name};
-      else PEOPLE.push({id:r.contactId, name:r.name, role:'rep', region:'', email:r.email||''});
-    })) : Promise.resolve(),
+    isOffice() ? settle(API.repsFromZoho(), v => {
+      // The Reps screen needs this same list, so keep it rather than fetch it twice
+      if(Array.isArray(v)){ zohoReps = v; keepTeam(); }
+      (v||[]).forEach(r=>{
+        const at = PEOPLE.findIndex(p=>p.id===r.contactId);
+        if(at>=0) PEOPLE[at] = {...PEOPLE[at], email:r.email||'', name:r.name||PEOPLE[at].name};
+        else PEOPLE.push({id:r.contactId, name:r.name, role:'rep', region:'', email:r.email||''});
+      });
+    }) : Promise.resolve(),
+    isAdmin() ? settle(API.users(), v => { if(Array.isArray(v)){ serverUsers = v; keepTeam(); } }) : Promise.resolve(),
+    isOffice() ? settle(API.accountingBatches(), v => { S.acctBatches = Array.isArray(v) ? v : []; }) : Promise.resolve(),
     settle(API.facilitators(),      v => {
       (v||[]).forEach(f=>{
         const at = S.facilitators.findIndex(x=>x.id===f.id);
@@ -4848,69 +4888,192 @@ function renderContentInner(el){
   }
   el.innerHTML=v==='manager'?vManager():v==='approvals'?vApprovals():v==='coverage'?vCoverage():v==='reports'?vReports()
     :v==='members'?vMembersAll():v==='allrings'?vAllRings():v==='insights'?vInsights()
-    :v==='team'?(API.live && (serverUsers===null||zohoReps===null) ? (setTimeout(loadUsers,0), vTeam()) : vTeam()):v==='reminders'?vReminders():v==='settings'?vSettings():vOfficeDash();
+    :v==='team'?(API.live ? (setTimeout(()=>loadUsers(),0), vTeam()) : vTeam()):v==='reminders'?vReminders():v==='settings'?vSettings():vOfficeDash();
 }
 
-var lastShell = '';
+/**
+ * The frame — sidebar, top bar, tab bar — is built once per signed-in person
+ * and then only its changing parts are updated in place. Rebuilding it on
+ * every tap threw the sidebar back to the top whenever you picked something
+ * low down in it, like Settings, and emptied the search box.
+ */
+var shellFor = null;
+const partCache = {};
+function setPart(id, html){
+  if(partCache[id] === html) return;
+  const el = document.getElementById(id);
+  if(el){ el.innerHTML = html; partCache[id] = html; }
+}
+function railNavHTML(){
+  return navGroups().map(([g,items])=>
+    (g?`<div class="nav-grp">${g}</div>`:'')+items.map(([id,label])=>{
+      const b=badgeFor(id);
+      return `<button class="rail-link ${ui.view===id?'active':''}" onclick="setView('${id}')"><span>${label}</span>${b?`<span class="pill ${id==='today'||id==='approvals'||id==='dash'?'':'muted'}">${b}</span>`:''}</button>`;
+    }).join('')).join('');
+}
+function bannersHTML(){
+  return `${previewRepId?`<div class="banner note" style="background:var(--info-soft);color:var(--info);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>Viewing as <strong>${esc((PEOPLE.find(p=>p.id===previewRepId)||{}).name||'a rep')}</strong> — this is their screen, exactly as they see it.</span>
+      <button class="btn sm" onclick="endPreview()">Back to my view</button></div>`:''}
+    ${loadingDetail?`<div class="loading-pill">Loading members and activity…</div>`:''}
+    ${loadError?`<div class="banner note" style="background:var(--rust-soft);color:var(--rust)">
+      Couldn't reach the server — showing the last data loaded.
+      <button class="btn sm" style="margin-left:8px" onclick="retryLoad()">Try again</button></div>`:''}
+    ${(API.live && API.readOnly)?`<div class="banner note">Connected to Zoho in read-only mode — you can see everything, but logging is switched off until setup finishes.</div>`:''}
+    ${(ui.offline||(API.live===false&&!navigator.onLine))?`<div class="banner sync">Working offline — ${(OutBox.count()||S.syncQueue.length)} change${(OutBox.count()||S.syncQueue.length)===1?'':'s'} waiting to sync.</div>`:''}`;
+}
+function tabbarHTML(){
+  return (isRep()
+    ? [['today','Today','◉'],['calendar','Calendar','▦'],['rings','Rings','◎'],['timesheet','Hours','$'],['resources','Web Toolbox','⎘']]
+    : navItems().slice(0,5)).map(([id,label,ic])=>{
+    const b=badgeFor(id);
+    return `<button class="${ui.view===id?'active':''}" onclick="setView('${id}')">${b?`<span class="pill">${b}</span>`:''}<span style="font-size:15px">${ic}</span>${label}</button>`;
+  }).join('');
+}
 function render(){
   const app=document.getElementById('app');
-  if(setupToken){ lastShell=''; app.innerHTML=setupScreen(); return; }
-  if(!ui.me){ lastShell=''; app.innerHTML=loginScreen(); checkSetup(); return; }
-  const nc=notifications().length;
-  const groups=navGroups();
-  const ann=S.announcements.find(a=>a.active);
-  const shell=`<div class="shell">
-    <nav class="rail">
-      <div class="rail-brand">
-        <svg class="ring-mark" width="24" height="24" viewBox="0 0 26 26"><circle cx="13" cy="13" r="11" stroke-width="1.4"/><circle cx="13" cy="13" r="7.2" stroke-width="1.4"/><circle cx="13" cy="13" r="3.4" stroke-width="1.4"/></svg>
-        <span class="wordmark">Rep Hub</span></div>
-      <div class="rail-me"><div class="av" style="background:var(--primary-soft);color:var(--primary)">${initials(me().name)}</div>
-        <div><div class="nm">${esc(me().name)}</div><div class="rl">${me().role==='rep'?'Rep':me().role==='admin'?'Director':'Office'}</div></div></div>
-      <div class="rail-nav">${groups.map(([g,items])=>
-        (g?`<div class="nav-grp">${g}</div>`:'')+items.map(([id,label])=>{
-          const b=badgeFor(id);
-          return `<button class="rail-link ${ui.view===id?'active':''}" onclick="setView('${id}')"><span>${label}</span>${b?`<span class="pill ${id==='today'||id==='approvals'||id==='dash'?'':'muted'}">${b}</span>`:''}</button>`;
-        }).join('')).join('')}</div>
-      <div class="rail-foot">
-        ${API.live?`<button class="rail-link" onclick="openChangePassword()">Change password</button>`:''}
-        <button class="rail-link" onclick="logout()">Sign out</button>
-        <div style="font-size:10.5px;color:var(--ink-faint);padding:10px 11px 0;line-height:1.5">
-          Managed by Prosynergy Bookkeeping<br>540-212-9403</div></div>
-    </nav>
-    <div class="main">
-      <div class="topbar">
-        <div class="gsearch"><input id="gsi" placeholder="Search members, facilitators, rings" oninput="globalSearch(this.value)">
-          <div class="gres" id="gres"></div></div>
-        <div class="top-right">
-          <button class="bell" onclick="openNotifs()">🔔${nc?`<span class="pill">${nc}</span>`:''}</button>
-        </div></div>
-      ${previewRepId?`<div class="banner note" style="background:var(--info-soft);color:var(--info);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-        <span>Viewing as <strong>${esc((PEOPLE.find(p=>p.id===previewRepId)||{}).name||'a rep')}</strong> — this is their screen, exactly as they see it.</span>
-        <button class="btn sm" onclick="endPreview()">Back to my view</button></div>`:''}
-      ${loadingDetail?`<div class="loading-pill">Loading members and activity…</div>`:''}
-      ${loadError?`<div class="banner note" style="background:var(--rust-soft);color:var(--rust)">
-        Couldn't reach the server — showing the last data loaded.
-        <button class="btn sm" style="margin-left:8px" onclick="retryLoad()">Try again</button></div>`:''}
-      ${(API.live && API.readOnly)?`<div class="banner note">Connected to Zoho in read-only mode — you can see everything, but logging is switched off until setup finishes.</div>`:''}
-      ${(ui.offline||(API.live===false&&!navigator.onLine))?`<div class="banner sync">Working offline — ${(OutBox.count()||S.syncQueue.length)} change${(OutBox.count()||S.syncQueue.length)===1?'':'s'} waiting to sync.</div>`:''}
-      <div class="content" id="content"></div>
-    </div></div>
+  if(approval){ shellFor=null; app.innerHTML=approvalScreen(); return; }
+  if(setupToken){ shellFor=null; app.innerHTML=setupScreen(); return; }
+  if(!ui.me){ shellFor=null; app.innerHTML=loginScreen(); checkSetup(); return; }
+  // Remember the screen, so a refresh comes back to it
+  try{ sessionStorage.setItem('rephub_screen', JSON.stringify({view:ui.view, ringId:ui.ringId, memberId:ui.memberId, facId:ui.facId, eventId:ui.eventId})); }catch(e){}
 
-    <div class="tabbar">${(isRep()
-      ? [['today','Today','◉'],['calendar','Calendar','▦'],['rings','Rings','◎'],['timesheet','Hours','$'],['resources','Web Toolbox','⎘']]
-      : navItems().slice(0,5)).map(([id,label,ic])=>{
-      const b=badgeFor(id);
-      return `<button class="${ui.view===id?'active':''}" onclick="setView('${id}')">${b?`<span class="pill">${b}</span>`:''}<span style="font-size:15px">${ic}</span>${label}</button>`;
-    }).join('')}</div>`;
-  // Rebuild the sidebar and top bar only when something in them changed.
-  // Replacing them on every tap reset the sidebar, emptied the search box and
-  // made the whole page flicker; usually only the content needs redrawing.
-  if(shell !== lastShell || !document.getElementById('content')){
-    keepPlace(() => { app.innerHTML = shell; lastShell = shell; renderContentSafe(document.getElementById('content')); });
-  } else {
-    renderContent();
+  const who = ui.me + '|' + me().name + '|' + me().role + '|' + API.live;
+  if(shellFor !== who || !document.getElementById('content')){
+    Object.keys(partCache).forEach(k => delete partCache[k]);
+    keepPlace(() => {
+      app.innerHTML = `<div class="shell">
+        <nav class="rail">
+          <div class="rail-brand">
+            <svg class="ring-mark" width="24" height="24" viewBox="0 0 26 26"><circle cx="13" cy="13" r="11" stroke-width="1.4"/><circle cx="13" cy="13" r="7.2" stroke-width="1.4"/><circle cx="13" cy="13" r="3.4" stroke-width="1.4"/></svg>
+            <span class="wordmark">Rep Hub</span></div>
+          <div class="rail-me"><div class="av" style="background:var(--primary-soft);color:var(--primary)">${initials(me().name)}</div>
+            <div><div class="nm">${esc(me().name)}</div><div class="rl">${me().role==='rep'?'Rep':me().role==='admin'?'Director':'Office'}</div></div></div>
+          <div class="rail-nav" id="railNav"></div>
+          <div class="rail-foot">
+            ${API.live?`<button class="rail-link" onclick="openChangePassword()">Change password</button>`:''}
+            <button class="rail-link" onclick="logout()">Sign out</button>
+            <div style="font-size:10.5px;color:var(--ink-faint);padding:10px 11px 0;line-height:1.5">
+              Managed by Prosynergy Bookkeeping<br>540-212-9403</div></div>
+        </nav>
+        <div class="main">
+          <div class="topbar">
+            <div class="gsearch"><input id="gsi" placeholder="Search members, facilitators, rings" oninput="globalSearch(this.value)">
+              <div class="gres" id="gres"></div></div>
+            <div class="top-right" id="topRight"></div></div>
+          <div id="banners"></div>
+          <div class="content" id="content"></div>
+        </div></div>
+        <div class="tabbar" id="tabbar"></div>`;
+      shellFor = who;
+      fillShell();
+      renderContentSafe(document.getElementById('content'));
+    });
+    return;
   }
+  // Same person, same frame: refresh only what changed, never the sidebar itself
+  fillShell();
+  renderContent();
 }
+function fillShell(){
+  const nc = notifications().length;
+  setPart('railNav', railNavHTML());
+  setPart('topRight', `<button class="bell" onclick="openNotifs()">🔔${nc?`<span class="pill">${nc}</span>`:''}</button>`);
+  setPart('banners', bannersHTML());
+  setPart('tabbar', tabbarHTML());
+}
+
+/**
+ * The page Mel's approval email opens (?approve=…). No sign-in: the link is
+ * the permission, it works once, and it only covers that one batch.
+ */
+var approval = null;
+(function(){
+  const m = location.search.match(/[?&]approve=([a-f0-9]{20,})/i);
+  if(!m) return;
+  approval = { token: m[1], loading: true };
+  API.batch(m[1]).then(b => { approval = { token: m[1], batch: b }; })
+    .catch(e => { approval = { token: m[1], error: e.message }; })
+    .finally(() => render());
+})();
+function approvalScreen(){
+  const a = approval;
+  const wrap = inner => `<div class="login"><div class="login-box" style="max-width:720px;width:100%">
+    <div class="login-brand"><span class="wordmark">Rep Hub</span></div><p class="tag">Symbiz Network</p>${inner}</div></div>`;
+  if(a.loading) return wrap(`<div class="card"><p class="lead">Loading what needs your approval…</p></div>`);
+  if(a.done) return wrap(`<div class="card"><h3 style="margin:0 0 6px">${a.done === 'approved' ? 'Approved and sent' : 'Sent back to the office'}</h3>
+    <p class="lead">${esc(a.message || '')}</p>
+    <div class="btnrow"><button class="btn" onclick="location.href='/'">Open Rep Hub</button></div></div>`);
+  if(a.error) return wrap(`<div class="card"><h3 style="margin:0 0 6px">This link can't be used</h3><p class="lead">${esc(a.error)}</p>
+    <div class="btnrow"><button class="btn" onclick="location.href='/'">Open Rep Hub</button></div></div>`);
+  const b = a.batch;
+  const total = b.expenses.reduce((s,x)=>s+x.amount,0), hours = b.time.reduce((s,x)=>s+x.hours,0);
+  return wrap(`<div class="card" style="text-align:left">
+    <h3 style="margin:0 0 4px">Approve rep hours and expenses</h3>
+    <p class="lead" style="margin:0 0 12px">${b.expenses.length} expense${b.expenses.length===1?'':'s'} · <strong>${money(total)}</strong>
+      · ${hours} hour${hours===1?'':'s'}. Nothing goes to accounting until you approve.</p>
+    ${b.expenses.length ? `<h3 class="sub-h">Expenses</h3>${b.expenses.map(x=>`<div class="row">
+      <div class="row-main"><div class="row-title">${money(x.amount)} — ${esc(x.category)}${x.vendor?' · '+esc(x.vendor):''}</div>
+        <div class="row-sub">${esc(x.rep)} · ${fmt(x.date)} · ${esc(x.description)}</div></div>
+      <div class="row-actions">${x.hasReceipt?`<button class="btn sm" onclick="viewBatchReceipt(${x.id})">Receipt</button>`:`<span class="tag overdue">no receipt</span>`}</div>
+      </div>`).join('')}` : ''}
+    ${b.time.length ? `<h3 class="sub-h">Hours</h3>${b.time.map(x=>`<div class="row"><div class="row-main">
+      <div class="row-title">${x.hours} hour${x.hours===1?'':'s'} — ${esc(x.category)}</div>
+      <div class="row-sub">${esc(x.rep)} · ${fmt(x.date)} · ${esc(x.description)}</div></div></div>`).join('')}` : ''}
+    <div id="apprErr" style="display:none;color:var(--rust);font-size:13px;margin:10px 0"></div>
+    <div class="btnrow" style="margin-top:14px">
+      <button class="btn primary" id="apprBtn" onclick="approveBatchNow()">Approve and send to accounting</button>
+      <button class="btn" onclick="returnBatchForm()">Send back with a note</button>
+    </div>
+    <div id="returnSlot"></div>
+  </div>`);
+}
+async function approveBatchNow(){
+  const btn = document.getElementById('apprBtn'), err = document.getElementById('apprErr');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try{
+    const out = await API.approveBatch(approval.token);
+    approval = { done: 'approved', message: `Emailed to ${out.to}${out.books && out.books.made ? `, and ${out.books.made} bill${out.books.made===1?'':'s'} made in Zoho Books` : ''}. Thank you.` };
+    render();
+  }catch(e){ err.style.display='block'; err.textContent = e.message; btn.disabled = false; btn.textContent = 'Approve and send to accounting'; }
+}
+function returnBatchForm(){
+  document.getElementById('returnSlot').innerHTML = `<div class="field" style="margin-top:12px"><label>What needs changing?</label>
+    <textarea id="returnNote" placeholder="e.g. E3 needs a receipt; mileage on the 4th looks high"></textarea></div>
+    <button class="btn" onclick="returnBatchNow(this)">Send back to the office</button>`;
+}
+async function returnBatchNow(btn){
+  btn.disabled = true;
+  try{
+    await API.returnBatch(approval.token, document.getElementById('returnNote').value);
+    approval = { done: 'returned', message: 'The office has been emailed your note. Nothing went to accounting.' };
+    render();
+  }catch(e){ btn.disabled = false; toast(e.message); }
+}
+async function viewBatchReceipt(id){
+  try{
+    const r = await API.batchReceipt(approval.token, id);
+    openModal(`<h3>${esc(r.name || 'Receipt')}</h3>
+      ${/^image\//.test(r.type) ? `<img src="${r.data}" alt="Receipt" style="width:100%;border-radius:8px;border:1px solid var(--line)">`
+        : `<object data="${r.data}" type="application/pdf" style="width:100%;height:60vh;border:1px solid var(--line);border-radius:8px"></object>`}
+      <div class="m-actions"><a class="btn" href="${r.data}" download="${esc(r.name||'receipt')}">Download</a>
+        <button class="btn primary" onclick="closeModal()">Close</button></div>`);
+  }catch(e){ toast(e.message || 'Could not open the receipt'); }
+}
+
+/* Opening or refreshing the app: if someone was signed in on this device,
+   show their app at once, on the screen they were on, while the server
+   confirms the session in the background. */
+(function resumeSession(){
+  if(!API.token || ui.me) return;
+  try{
+    const u = JSON.parse(localStorage.getItem('rephub_user') || 'null');
+    if(!u) return;
+    signInAs(u);
+    const s = JSON.parse(sessionStorage.getItem('rephub_screen') || 'null');
+    if(s && s.view) Object.assign(ui, s);
+  }catch(e){}
+})();
 render();
 
 /* ══════════════════ NEW: helpers for calendar + money ══════════════════ */
@@ -5625,12 +5788,20 @@ function vTimesheet() {
       const approved = [...S.timeEntries.filter(t => t.status === 'Approved'), ...S.expenses.filter(x => x.status === 'Approved')];
       const pend = [...S.timeEntries.filter(t => t.status === 'Submitted'), ...S.expenses.filter(x => x.status === 'Submitted')];
       const day = S.settings.accountingDay || '1';
-      return `<div class="callout ${approved.length ? 'ok' : 'info'}">
+      const approver = S.settings.accountingApprover ?? 'melvin.b@symbiz.org';
+      const iAmApprover = approver && String(approver).toLowerCase() === String((me()||{}).email||'').toLowerCase();
+      const waiting = (S.acctBatches || [])[0];
+      return `${waiting ? `<div class="callout info"><strong>Waiting for ${esc(waiting.approver)} to approve</strong>
+          ${waiting.expenses} expense${waiting.expenses === 1 ? '' : 's'} and ${waiting.time} time entr${waiting.time === 1 ? 'y' : 'ies'},
+          asked ${fmt(String(waiting.createdAt).slice(0,10))}. They go to accounting the moment it's approved.
+          Sending again replaces this request with everything approved now.</div>` : ''}
+        <div class="callout ${approved.length ? 'ok' : 'info'}">
         <strong>${approved.length} approved item${approved.length === 1 ? '' : 's'} ready for ${esc(S.settings.accountingEmail || 'accounting')}</strong>
-        ${day === 'Off' ? 'Automatic sending is off — use the button below.' : `Sends automatically on the ${day === 'Last' ? 'last day' : day + (day === '1' ? 'st' : 'th')} of each month.`}
+        ${day === 'Off' ? 'Automatic sending is off — use the button below.'
+          : `On the ${day === 'Last' ? 'last day' : day + (day === '1' ? 'st' : 'th')} of each month ${approver && !iAmApprover ? `they go to ${esc(approver)} to approve first` : 'they are sent automatically'}.`}
         ${pend.length ? ` ${pend.length} item${pend.length === 1 ? ' is' : 's are'} still waiting on approval and won't be included.` : ''}
         <div class="btnrow" style="margin-top:9px">
-          <button class="btn sm primary" onclick="sendToAccounting()">Send now</button>
+          <button class="btn sm primary" onclick="sendToAccounting()">${approver && !iAmApprover ? `Send to ${esc(approver.split('@')[0])} for approval` : 'Send now'}</button>
           <button class="btn sm" onclick="previewAccounting()">Preview what goes</button>
         </div></div>`; })() : ''}
     ${(() => {
@@ -5764,6 +5935,15 @@ async function sendToAccounting() {
     openModal(`<h3>Sending to ${esc(to)}…</h3><p class="lead">One moment.</p>`);
     try {
       const out = await API.accountingSend();
+      if (out.awaitingApproval) {
+        S.acctBatches = await API.accountingBatches().catch(() => S.acctBatches || []);
+        openModal(`<h3>Sent to ${esc(out.approver)} for approval</h3>
+          <p class="lead">${out.expenses} expense${out.expenses === 1 ? '' : 's'} (${money(out.amount)}) and ${out.time} time entr${out.time === 1 ? 'y' : 'ies'}
+            are waiting for approval. Once approved they go to ${esc(to)}${S.settings.booksAuto !== 'off' ? ' and into Zoho Books' : ''} automatically.
+            If anything is sent back, you'll get an email with the note.</p>
+          <div class="m-actions"><button class="btn primary" onclick="closeModal();render()">Done</button></div>`);
+        return;
+      }
       const [t, x] = await Promise.all([API.time(), API.expenses()]);
       S.timeEntries = t.map(adapt.timeEntry);
       S.expenses = x.map(adapt.expense);
@@ -7018,13 +7198,18 @@ function vChecks() {
  * Growth_Ring_Groups.Regional_Rep points at and what every screen filters on.
  * Office and director accounts keep their own login id — they see everything.
  */
-function signInAs(user){
+function signInAs(user, { keepView } = {}){
   const isRep = user.role === 'rep';
   const id = isRep ? (user.zoho_owner_id || user.id) : user.id;
   const entry = { id, name: user.name, email: user.email, role: user.role, region: user.region || '' };
   const at = PEOPLE.findIndex(p => p.id === id);
   at >= 0 ? PEOPLE[at] = entry : PEOPLE.push(entry);
+  // Remembered so a refresh opens straight into the app instead of showing
+  // the sign-in screen while the session is checked.
+  try{ localStorage.setItem('rephub_user', JSON.stringify(user)); }catch(e){}
+  const same = ui.me === id;
   ui.me = id;
+  if(keepView && same) return;
   ui.view = isRep ? 'today' : 'dash';
   if (isRep && !user.zoho_owner_id) {
     setTimeout(()=>toast('Your login is not linked to a Zoho contact yet — ask the office'), 400);
@@ -7038,12 +7223,17 @@ function signInAs(user){
   if(!API.token) return;
   try{
     const out = await API.me();
-    signInAs(out.user);
+    signInAs(out.user, { keepView: true });   // already showing from the remembered user
     render();
+    refreshMode().then(() => renderContent());   // alongside the data, not before it
     await loadFromServer();
     render();
     if(navigator.onLine && OutBox.count()) await OutBox.flush();
-  }catch(e){ API.setToken(null); }
+  }catch(e){
+    // Only a real "you are signed out" ends the session. A dropped connection
+    // on a train should not throw a rep back to the sign-in screen.
+    if(e.message === 'SESSION_EXPIRED' || e.status === 401){ logout(); }
+  }
 })();
 
 /* debug/test hook.
