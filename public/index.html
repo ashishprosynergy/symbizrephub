@@ -66,6 +66,39 @@
   .viewas span{white-space:nowrap;font-weight:600;letter-spacing:.02em;}
   .viewas .sel{max-width:230px;}
   @media (max-width:760px){ .viewas span{display:none;} .viewas .sel{max-width:150px;font-size:12.5px;} }
+
+  /* Rep picker */
+  .rp{position:relative;display:inline-block;}
+  .rp-btn{display:flex;align-items:center;gap:9px;min-width:220px;max-width:300px;padding:6px 12px 6px 6px;
+    background:var(--surface);border:1px solid var(--line);border-radius:999px;cursor:pointer;
+    color:var(--ink);font-size:14px;text-align:left;transition:border-color .15s,box-shadow .15s;}
+  .rp-btn:hover{border-color:var(--ink-faint);}
+  .rp.open .rp-btn{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);}
+  .rp-btn .rp-name{flex:1;font-weight:600;}
+  .rp-caret{color:var(--ink-muted);font-size:12px;transition:transform .15s;}
+  .rp.open .rp-caret{transform:rotate(180deg);}
+  .rp-pop{position:absolute;right:0;top:calc(100% + 6px);z-index:60;width:300px;max-width:calc(100vw - 32px);
+    background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 14px 34px rgba(20,30,15,.16),0 2px 6px rgba(20,30,15,.08);padding:6px;}
+  .rp-search{width:100%;padding:9px 11px;margin-bottom:4px;border:1px solid var(--line);border-radius:9px;
+    background:var(--surface-2);color:var(--ink);font:inherit;font-size:14px;}
+  .rp-search:focus,.rp-search:focus-visible{outline:none;border-color:var(--primary);}
+  .rp-list{max-height:320px;overflow-y:auto;overscroll-behavior:contain;}
+  .rp-item{display:flex;align-items:center;gap:10px;width:100%;padding:7px 8px;border:0;border-radius:9px;
+    background:transparent;color:var(--ink);font-size:14px;text-align:left;cursor:pointer;}
+  .rp-item:hover,.rp-item:focus-visible{background:var(--surface-2);outline:none;}
+  .rp-item.on{background:var(--primary-soft);}
+  .rp-item .rp-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rp-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rp-av{flex:none;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;
+    background:var(--primary);color:var(--primary-ink);font-size:11px;font-weight:700;letter-spacing:.03em;}
+  .rp-av.rp-all{background:var(--accent-soft);color:var(--accent);font-size:13px;}
+  .rp-num{flex:none;font-size:11.5px;font-weight:600;color:var(--ink-muted);background:var(--bg);
+    border:1px solid var(--line-soft);border-radius:6px;padding:1px 6px;font-variant-numeric:tabular-nums;}
+  .rp-check{flex:none;color:var(--primary);font-weight:700;}
+  .rp-empty{padding:12px;text-align:center;color:var(--ink-muted);font-size:13px;}
+  @media (max-width:760px){ .rp{display:block;width:100%;} .rp-btn{width:100%;max-width:none;min-width:0;}
+    .rp-pop{left:0;right:0;width:auto;} }
   /* ── month calendar ── */
 .cal-head{display:flex;align-items:center;gap:9px;margin:14px 0 10px;flex-wrap:wrap}
 .cal-head strong{font-family:var(--serif);font-size:17px;font-weight:600;letter-spacing:-.01em;min-width:140px}
@@ -1290,6 +1323,71 @@ function statusText(s){ return s==='active'?'Active':s==='pending'?'Awaiting app
 function glyph(s){ return `<svg class="ring-mark glyph ${s==='pending'?'pending':s==='rejected'?'rejected':''}" width="21" height="21" viewBox="0 0 26 26"><circle cx="13" cy="13" r="11" stroke-width="1.7"/><circle cx="13" cy="13" r="6.4" stroke-width="1.7"/></svg>`; }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
+/* Rep picker: a styled replacement for the plain <select> of reps.
+   key names the ui field it sets (ui[key]); allLabel adds an "All reps" row. */
+function splitRepName(n){
+  const m = String(n||'').match(/^(.*?)\s*#\s*(\w+)\s*$/);
+  return m ? {name:m[1], num:m[2]} : {name:String(n||''), num:''};
+}
+function repInitials(n){
+  const p = splitRepName(n).name.replace(/[^A-Za-z ]/g,' ').trim().split(/\s+/).filter(Boolean);
+  return ((p[0]||'?')[0] + (p.length>1 ? p[p.length-1][0] : '')).toUpperCase();
+}
+function repPicker(key, reps, current, allLabel){
+  const list = reps.slice().sort((a,b)=>splitRepName(a.name).name.localeCompare(splitRepName(b.name).name));
+  const cur = list.find(r=>r.id===current);
+  const row = (id, name, sel) => {
+    const s = splitRepName(name);
+    return `<button type="button" class="rp-item${sel?' on':''}" data-q="${esc(name.toLowerCase())}"
+      onclick="pickRep('${key}',${id?`'${esc(id)}'`:'null'})">
+      <span class="rp-av${id?'':' rp-all'}">${id?esc(repInitials(name)):'★'}</span>
+      <span class="rp-name">${esc(s.name)}</span>${s.num?`<span class="rp-num">#${esc(s.num)}</span>`:''}
+      ${sel?'<span class="rp-check">✓</span>':''}</button>`;
+  };
+  const label = cur ? splitRepName(cur.name) : {name: allLabel||'Choose a rep', num:''};
+  return `<div class="rp" data-rp="${key}">
+    <button type="button" class="rp-btn" onclick="toggleRepPicker(this)" aria-haspopup="listbox">
+      <span class="rp-av${cur?'':' rp-all'}">${cur?esc(repInitials(cur.name)):'★'}</span>
+      <span class="rp-name">${esc(label.name)}</span>${label.num?`<span class="rp-num">#${esc(label.num)}</span>`:''}
+      <span class="rp-caret">▾</span></button>
+    <div class="rp-pop" hidden>
+      ${list.length>6?`<input class="rp-search" placeholder="Search reps…" oninput="filterRepPicker(this)" onkeydown="if(event.key==='Escape')closeRepPickers()">`:''}
+      <div class="rp-list">
+        ${allLabel?row(null, allLabel, !cur):''}
+        ${list.map(r=>row(r.id, r.name, r.id===current)).join('')}
+        <div class="rp-empty" hidden>No rep matches.</div>
+      </div>
+    </div></div>`;
+}
+function closeRepPickers(except){
+  document.querySelectorAll('.rp-pop').forEach(p=>{ if(p!==except){ p.hidden=true; p.parentNode.classList.remove('open'); } });
+}
+function toggleRepPicker(btn){
+  const pop = btn.nextElementSibling, opening = pop.hidden;
+  closeRepPickers(pop);
+  pop.hidden = !opening;
+  btn.parentNode.classList.toggle('open', opening);
+  if(opening){
+    const s = pop.querySelector('.rp-search');
+    if(s){ s.value=''; filterRepPicker(s); s.focus({preventScroll:true}); }
+    const on = pop.querySelector('.rp-item.on'); if(on) on.scrollIntoView({block:'nearest'});
+  }
+}
+function filterRepPicker(input){
+  const q = input.value.trim().toLowerCase(), pop = input.closest('.rp-pop');
+  let shown = 0;
+  pop.querySelectorAll('.rp-item').forEach(b=>{ const hit = !q || b.dataset.q.includes(q); b.hidden=!hit; if(hit) shown++; });
+  pop.querySelector('.rp-empty').hidden = shown>0;
+}
+function pickRep(key, id){
+  closeRepPickers();
+  ui[key] = id;
+  if(key==='calRep') ui.calDay = null;
+  renderContent();
+}
+document.addEventListener('click', e=>{ if(!e.target.closest('.rp')) closeRepPickers(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeRepPickers(); });
+
 function dueItems(repId){
   return S.activities.filter(a=>a.nextDue && (!repId||a.repId===repId))
     .sort((a,b)=> new Date(a.nextDue)-new Date(b.nextDue));
@@ -1814,8 +1912,7 @@ function vCallSheet(){
   });
   return `<div class="section-head"><div><h2>Call sheet</h2>
       <div class="sub">One page you can print and carry. Everything due in the next 45 days, with room to write.</div></div>
-    ${isOffice()&&reps.length>1?`<select class="sel" onchange="ui.sheetRep=this.value;renderContent()">
-      ${reps.map(x=>`<option value="${x.id}" ${x.id===repId?'selected':''}>${esc(x.name)}</option>`).join('')}</select>`:''}
+    ${isOffice()&&reps.length>1?repPicker('sheetRep', reps, repId):''}
     </div>
     <div class="btnrow" style="margin-bottom:14px">
       <button class="btn primary" onclick="window.print()">Print this sheet</button>
@@ -5378,10 +5475,7 @@ function vCalendar() {
     <div class="sub">Local events, ring visits, and when each of your groups meets.</div></div>
     <div class="btnrow" style="margin:0">
       ${isRep()?`<button class="btn sm primary" onclick="openVisit()">Schedule a visit</button>`:''}
-      ${isOffice()?`<select class="sel" onchange="ui.calRep=this.value||null;ui.calDay=null;renderContent()">
-        <option value="">All reps</option>
-        ${PEOPLE.filter(p=>p.role==='rep').map(p=>`<option value="${p.id}" ${ui.calRep===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
-      </select>`:''}</div></div>
+      ${isOffice()?repPicker('calRep', PEOPLE.filter(p=>p.role==='rep'), ui.calRep, 'All reps'):''}</div></div>
 
     ${summary}
 
@@ -5809,10 +5903,7 @@ function vTimesheet() {
   return `<div class="section-head">
       <div><h2>Hours and expenses</h2>
       <div class="sub">${isOffice() ? 'What reps have submitted, ready to pass to accounting.' : 'Log what you worked and what you spent. The office picks it up from here.'}</div></div>
-      ${isOffice() ? `<select class="sel" onchange="ui.tsRep=this.value||null;renderContent()">
-        <option value="">All reps</option>
-        ${PEOPLE.filter(p => p.role === 'rep').map(p => `<option value="${p.id}" ${p.id === ui.tsRep ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-      </select>` : ''}
+      ${isOffice() ? repPicker('tsRep', PEOPLE.filter(p => p.role === 'rep'), ui.tsRep, 'All reps') : ''}
     </div>
     <div class="stats">
       <div class="stat"><div class="n">${hoursMonth}</div><div class="l">Hours outstanding</div></div>
