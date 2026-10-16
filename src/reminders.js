@@ -117,6 +117,26 @@ function esc(s) {
 
 /* ─────────── sending ─────────── */
 
+/** Readable text from one of our HTML emails: links kept, tags dropped. */
+function htmlToText(html) {
+  return String(html || '')
+    .replace(/<(style|script|head)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (m, href, label) => {
+      const l = label.replace(/<[^>]+>/g, '').trim();
+      return href.startsWith('tel:') || !l ? l || href : `${l}: ${href}`;
+    })
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|tr|li|table)>/gi, '\n')
+    .replace(/<\/t[dh]>/gi, '  ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 async function sendEmail(to, subject, html, { userId, kind, replyTo, attachments } = {}) {
   const t = mailer();
   if (!t) {
@@ -126,7 +146,9 @@ async function sendEmail(to, subject, html, { userId, kind, replyTo, attachments
     return { skipped: true, ok: false, error: 'Email is not configured on this site' };
   }
   try {
-    await t.sendMail({ from: cfg.mail.from, to, subject, html,
+    // A plain-text copy alongside the HTML. HTML-only mail is one of the
+    // things Gmail and Yahoo score as spam, which is where codes were landing.
+    await t.sendMail({ from: cfg.mail.from, to, subject, html, text: htmlToText(html),
       ...(replyTo ? { replyTo } : {}), ...(attachments ? { attachments } : {}) });
     await q.logSend(userId || null, kind || 'email', 'email', subject, true, null);
     return { ok: true };
@@ -230,5 +252,5 @@ async function runOfficeSummary({ dryRun = false } = {}) {
 
 module.exports = {
   dueForRep, runWeeklyDigest, runOverdueNudge, runOfficeSummary,
-  renderDigestHTML, renderDigestSMS, renderOfficeSummary, sendEmail, sendSMS,
+  renderDigestHTML, renderDigestSMS, renderOfficeSummary, sendEmail, sendSMS, htmlToText,
 };

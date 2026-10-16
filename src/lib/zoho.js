@@ -19,6 +19,26 @@ const ACCOUNTS = () => cfg.zoho.accountsDomain;
 /* ─────────── token cache ─────────── */
 let token = { access: null, expiresAt: 0 };
 let refreshInFlight = null;
+let rejectedAccess = null;   // a token Zoho just refused, so the shared copy is not reused
+
+/**
+ * The token is also kept in the database, shared by every running copy of
+ * the function. Each copy used to fetch its own on start-up: opening the app
+ * fires a dozen calls at once, so a dozen fresh copies each waited on Zoho's
+ * token endpoint — which Zoho also rate limits — before doing any work.
+ */
+const SHARED_KEY = 'zoho_access_token';
+async function loadShared() {
+  try {
+    const { setting } = require('../db');
+    const t = JSON.parse(await setting(SHARED_KEY, 'null'));
+    if (t && t.access && t.access !== rejectedAccess && Date.now() < t.expiresAt - 60_000) return t;
+  } catch (_) { /* no database: just refresh */ }
+  return null;
+}
+function saveShared(t) {
+  try { require('../db').q.setSetting(SHARED_KEY, JSON.stringify(t)).catch(() => {}); } catch (_) {}
+}
 
 async function getAccessToken() {
   // 60s safety margin so a token never expires mid-request
@@ -26,6 +46,9 @@ async function getAccessToken() {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
+    const shared = await loadShared();
+    if (shared) { token = shared; return token.access; }
+
     const params = new URLSearchParams({
       refresh_token: cfg.zoho.refreshToken,
       client_id: cfg.zoho.clientId,
@@ -41,6 +64,7 @@ async function getAccessToken() {
       access: body.access_token,
       expiresAt: Date.now() + (body.expires_in || 3600) * 1000,
     };
+    saveShared(token);
     return token.access;
   })();
 
@@ -74,6 +98,9 @@ function release() {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function request(path, { method = 'GET', body, query, _attempt = 0 } = {}) {
+  // Anything that changes Zoho makes cached answers out of date. COQL reads
+  // are POSTs too, so they are let through.
+  if (method !== 'GET' && path !== '/coql') clearCache();
   await acquire();
   try {
     const url = new URL(`${API()}${path}`);
@@ -99,6 +126,7 @@ async function request(path, { method = 'GET', body, query, _attempt = 0 } = {})
 
     // 401 → token rejected; force refresh once and retry
     if (res.status === 401 && _attempt === 0) {
+      rejectedAccess = access;
       token = { access: null, expiresAt: 0 };
       release();
       return request(path, { method, body, query, _attempt: 1 });
@@ -154,9 +182,28 @@ async function getRecord(module, id) {
  * COQL — SQL-ish querying. Far cheaper than pulling a module and
  * filtering in memory. Max 200 rows per call; caller pages via offset.
  */
+/**
+ * Recent answers, briefly. Opening the app asks the same questions several
+ * times over (nearly every call first looks up the user's rings), and each
+ * trip to Zoho is the slowest part of any request. Any write clears it, so a
+ * change made here shows straight away.
+ */
+const cache = new Map();
+const cacheMs = () => parseInt(process.env.ZOHO_CACHE_SECONDS ?? '30', 10) * 1000;
+function clearCache() { cache.clear(); }
+
 async function coql(selectQuery) {
+  const ttl = cacheMs();
+  const hit = ttl > 0 && cache.get(selectQuery);
+  if (hit && Date.now() - hit.at < ttl) return structuredClone(hit.rows);
+
   const out = await request('/coql', { method: 'POST', body: { select_query: selectQuery } });
-  return out?.data || [];
+  const rows = out?.data || [];
+  if (ttl > 0) {
+    if (cache.size > 300) cache.delete(cache.keys().next().value);
+    cache.set(selectQuery, { at: Date.now(), rows: structuredClone(rows) });
+  }
+  return rows;
 }
 
 /** Zoho accepts a maximum of 100 records per insert/update call. */
@@ -224,9 +271,14 @@ async function composite(subRequests) {
 }
 
 /** Health probe used by /healthz and the setup script. */
+let lastPing = { at: 0, value: null };
 async function ping() {
+  // The sign-in screen checks this every time it shows; once every few
+  // minutes is plenty to know Zoho is connected.
+  if (lastPing.value && Date.now() - lastPing.at < 5 * 60_000) return lastPing.value;
   const out = await request('/org');
-  return out?.org?.[0]?.company_name || 'connected';
+  lastPing = { at: Date.now(), value: out?.org?.[0]?.company_name || 'connected' };
+  return lastPing.value;
 }
 
 module.exports = {
@@ -244,5 +296,6 @@ module.exports = {
   composite,
   ping,
   chunk,
-  _resetTokenForTests: () => { token = { access: null, expiresAt: 0 }; },
+  clearCache,
+  _resetTokenForTests: () => { token = { access: null, expiresAt: 0 }; lastPing = { at: 0, value: null }; },
 };

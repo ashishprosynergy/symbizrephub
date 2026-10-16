@@ -184,8 +184,17 @@ CREATE INDEX IF NOT EXISTS idx_audit_user   ON audit (user_id, created_at);
  * statement because some drivers reject multi-statement strings.
  */
 let migrated = false;
+// Changes whenever SCHEMA does, so an unchanged schema costs one query on a
+// cold start instead of twenty-odd DDL statements one after another.
+const SCHEMA_VERSION = require('crypto').createHash('sha1').update(SCHEMA).digest('hex').slice(0, 12);
 async function migrate({ force = false } = {}) {
   if (migrated && !force) return true;
+  if (!force) {
+    try {
+      const row = await one("SELECT value FROM settings WHERE key = 'schema_version'");
+      if (row && row.value === SCHEMA_VERSION) { migrated = true; return true; }
+    } catch (e) { /* no settings table yet: fall through and build everything */ }
+  }
   const statements = SCHEMA.split(';').map(s => s.trim()).filter(Boolean);
   for (const stmt of statements) {
     try {
@@ -195,6 +204,9 @@ async function migrate({ force = false } = {}) {
       if (!/already exists/i.test(e.message)) throw e;
     }
   }
+  await query(
+    "INSERT INTO settings (key,value) VALUES ('schema_version',$1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+    [SCHEMA_VERSION]).catch(() => {});
   migrated = true;
   return true;
 }

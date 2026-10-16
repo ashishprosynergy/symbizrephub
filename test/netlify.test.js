@@ -12,6 +12,8 @@ const http = require('node:http');
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'netlify-test-secret';
 process.env.MAIL_ENABLED = 'false';
+// Tests change the fake Zoho between calls; a cached answer would hide that
+process.env.ZOHO_CACHE_SECONDS = '0';
 process.env.SMS_ENABLED = 'false';
 process.env.DATABASE_URL = 'postgres://localhost/test';
 process.env.READ_ONLY = 'false';   // write tests below need writes enabled
@@ -641,6 +643,59 @@ describe('hours and expenses', () => {
 });
 
 /* ═══════════ SCHEDULED FUNCTIONS ═══════════ */
+describe('speed', () => {
+  const zoho = require('../src/lib/zoho');
+
+  test('a repeated Zoho query is answered from the cache, and a write clears it', async () => {
+    process.env.ZOHO_CACHE_SECONDS = '30';
+    try {
+      zoho.clearCache();
+      const coqlCalls = () => zohoCalls.filter(c => c.path === '/crm/v8/coql').length;
+      const before = coqlCalls();
+      await zoho.coql('select id from Growth_Ring_Groups where id is not null limit 1');
+      await zoho.coql('select id from Growth_Ring_Groups where id is not null limit 1');
+      assert.equal(coqlCalls() - before, 1, 'second identical query should not reach Zoho');
+
+      await zoho.insertRecords('Rep_Visit_Trackings', [{ Name: 'cache-buster' }]);
+      await zoho.coql('select id from Growth_Ring_Groups where id is not null limit 1');
+      assert.equal(coqlCalls() - before, 2, 'a write must clear cached answers');
+    } finally {
+      process.env.ZOHO_CACHE_SECONDS = '0';
+      zoho.clearCache();
+    }
+  });
+
+  test('the Zoho token is shared through the database', async () => {
+    zoho._resetTokenForTests();
+    await zoho.getAccessToken();
+    const stored = JSON.parse(await db.setting('zoho_access_token', 'null'));
+    assert.ok(stored && stored.access, 'a fresh token is saved for other copies of the function');
+
+    // A new copy (empty memory) picks it up instead of refreshing
+    zoho._resetTokenForTests();
+    const refreshes = () => zohoCalls.filter(c => c.path === '/oauth/v2/token').length;
+    const before = refreshes();
+    assert.equal(await zoho.getAccessToken(), stored.access);
+    assert.equal(refreshes(), before);
+  });
+
+  test('an unchanged schema is not rebuilt on every cold start', async () => {
+    // Built once in before(); the recorded version is what lets later cold
+    // starts skip the DDL. (pg-mem cannot replay CREATE TABLE over existing
+    // tables, so the skip itself is not re-run here.)
+    const row = await db.one("SELECT value FROM settings WHERE key = 'schema_version'");
+    assert.ok(row && row.value, 'version recorded after building');
+  });
+
+  test('emails carry a plain-text copy with the code and links', () => {
+    const { htmlToText } = require('../src/reminders');
+    const t = htmlToText('<h1>Confirm</h1><p>Type <b>123456</b> &amp; go</p><a href="https://x.test/a">Open</a>');
+    assert.match(t, /123456/);
+    assert.match(t, /Open: https:\/\/x\.test\/a/);
+    assert.ok(!/</.test(t));
+  });
+});
+
 describe('accounting PDF', () => {
   const { tablePDF } = require('../src/lib/pdf');
   const cols = [{ label: 'Rep', width: 2 }, { label: 'Note', width: 5 }, { label: 'Amount', width: 1, align: 'right' }];
