@@ -8,6 +8,7 @@ const auth = require('./auth');
 const { enqueue, flushQueue } = require('./sync');
 const reminders = require('./reminders');
 const { tablePDF } = require('./lib/pdf');
+const books = require('./lib/books');
 const {
   nextDueDate, ringHealth, toZoho, fromZoho, daysUntil, today, addDays, queries, M,
 } = require('./domain');
@@ -1300,6 +1301,7 @@ r.post('/expenses', auth.authRequired, wrap(async (req, res) => {
     userId: req.user.id, repName: req.user.name, date: b.date, amount,
     category: b.category || 'Other', description: b.description || '', ringId: b.ringId,
     receiptName: b.receiptName, receiptType: b.receiptType, receiptData: b.receiptData,
+    vendor: String(b.vendor || '').trim().slice(0, 120) || null,
   });
   await audit(req.user.id, 'expense.logged', { amount, category: b.category, receipt: !!b.receiptData }, req.ip);
   res.status(201).json({ id: out[0]?.id });
@@ -1375,9 +1377,9 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
     receipts.push({ filename, content: buf, contentType: type, ...(x.receiptCid ? { cid: x.receiptCid } : {}) });
   }
 
-  const rows = [['Ref', 'Type', 'Rep', 'Date', 'Category', 'Hours', 'Amount', 'Description', 'Receipt']];
-  t.forEach((x, i) => rows.push([`H${i + 1}`, 'Hours', x.rep_name, day(x.entry_date), x.category, x.hours, '', x.description, '']));
-  e.forEach(x => rows.push([x.ref, 'Expense', x.rep_name, day(x.entry_date), x.category, '', x.amount, x.description,
+  const rows = [['Ref', 'Type', 'Rep', 'Date', 'Category', 'Vendor', 'Hours', 'Amount', 'Description', 'Receipt']];
+  t.forEach((x, i) => rows.push([`H${i + 1}`, 'Hours', x.rep_name, day(x.entry_date), x.category, '', x.hours, '', x.description, '']));
+  e.forEach(x => rows.push([x.ref, 'Expense', x.rep_name, day(x.entry_date), x.category, x.vendor || '', '', x.amount, x.description,
                             x.receiptNote]));
   const csv = rows.map(r => r.map(c => {
     const v = String(c ?? '');
@@ -1399,13 +1401,13 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
     title: 'Rep hours and expenses',
     subtitle: `Approved for payment · ${today()}${byLine ? ' · ' + byLine : ''}`,
     columns: [
-      { label: 'Ref', width: 4 }, { label: 'Type', width: 7 }, { label: 'Rep', width: 13 }, { label: 'Date', width: 9 },
-      { label: 'Category', width: 12 }, { label: 'Hours', width: 6, align: 'right' },
-      { label: 'Amount', width: 9, align: 'right' }, { label: 'Description', width: 25 },
-      { label: 'Receipt', width: 15 },
+      { label: 'Ref', width: 4 }, { label: 'Type', width: 7 }, { label: 'Rep', width: 12 }, { label: 'Date', width: 9 },
+      { label: 'Category', width: 10 }, { label: 'Vendor', width: 11 }, { label: 'Hours', width: 5, align: 'right' },
+      { label: 'Amount', width: 8, align: 'right' }, { label: 'Description', width: 20 },
+      { label: 'Receipt', width: 14 },
     ],
-    rows: rows.slice(1).map(r => r.map((c, i) => (i === 6 && c !== '' ? '$' + Number(c).toFixed(2) : c))),
-    footer: ['', 'Total', '', '', '', totalHours, '$' + totalAmount.toFixed(2), '', ''],
+    rows: rows.slice(1).map(r => r.map((c, i) => (i === 7 && c !== '' ? '$' + Number(c).toFixed(2) : c))),
+    footer: ['', 'Total', '', '', '', '', totalHours, '$' + totalAmount.toFixed(2), '', ''],
     note: 'Expenses marked MISSING have no receipt attached in Rep Hub.',
   });
 
@@ -1423,6 +1425,7 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
       <p style="margin:0 0 6px;font-size:14px"><strong>${esc(x.ref)} · $${Number(x.amount).toFixed(2)} · ${esc(x.category)}</strong></p>
       <p style="margin:0 0 6px;font-size:13px;color:#444">
         Rep: ${esc(x.rep_name)}<br>Date: ${esc(day(x.entry_date))}<br>
+        Vendor / paid to: ${esc(x.vendor || '—')}<br>
         Description: ${esc(x.description || '—')}<br>
         Receipt: ${esc(x.receiptNote)}</p>
       ${x.receiptCid ? `<img src="cid:${x.receiptCid}" alt="Receipt ${esc(x.ref)}" style="max-width:420px;width:100%;border:1px solid #ddd;border-radius:6px">` : ''}
@@ -1433,7 +1436,8 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
     approvedBy: approverUsers.map(u => u.name),
     expenses: e.map(x => ({
       ref: x.ref, rep: x.rep_name, date: day(x.entry_date), amount: Number(Number(x.amount).toFixed(2)),
-      currency: 'USD', category: x.category, description: x.description || '',
+      currency: 'USD', category: x.category, vendor: x.vendor || null, description: x.description || '',
+      zohoBooksBillNumber: books.configured() ? `RH-${x.id}` : null,
       receiptFile: x.receiptNote === 'MISSING' || /^TOO LARGE/.test(x.receiptNote) ? null : x.receiptNote,
       receiptStatus: x.receiptNote === 'MISSING' ? 'missing' : /^TOO LARGE/.test(x.receiptNote) ? 'too large to attach' : 'attached',
     })),
@@ -1468,8 +1472,17 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
 
   await q.markTimeSent();
   await q.markExpensesSent();
-  await audit(req.user.id, 'accounting.sent', { time: t.length, expenses: e.length }, req.ip);
-  res.json({ sent: true, to, time: t.length, expenses: e.length });
+
+  // Bills in Zoho Books, as many as fit in this request; the 15-minute job
+  // finishes the rest. A Books problem never undoes the email that went.
+  let booksOut = null;
+  if (books.configured() && (await setting('booksAuto', 'on')) !== 'off' && e.length) {
+    await q.queueBills(e.map(x => x.id));
+    booksOut = await books.makeBills({ budgetMs: 5000 })
+      .catch(err => ({ configured: true, made: 0, failed: 0, left: e.length, error: err.message }));
+  }
+  await audit(req.user.id, 'accounting.sent', { time: t.length, expenses: e.length, books: booksOut }, req.ip);
+  res.json({ sent: true, to, time: t.length, expenses: e.length, books: booksOut });
 }));
 
 /* ═══════════ SYNC (offline queue) ═══════════ */
@@ -1912,19 +1925,58 @@ r.get('/admin/audit', auth.authRequired, auth.requireOffice, wrap(async (req, re
   res.json(await q.recentAudit(parseInt(req.query.limit || '100', 10)));
 }));
 
+/**
+ * Settings the office can change. Listed explicitly: the same table holds
+ * the Zoho tokens and the schema version, which nobody should overwrite from
+ * a form. The accounting address used to live only in the browser, so the
+ * server always mailed the default no matter what was typed in.
+ */
+const OFFICE_SETTINGS = {
+  retryDays: '4', rescheduleDays: '7', dueWindow: String(cfg.reminders.dueWindowDays), announcement: '',
+  accountingEmail: 'accounting@symbiz.org', accountingDay: '1',
+  booksAuto: 'on', booksPayee: 'rep', booksAccount: '',
+};
+
 r.get('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
-  res.json({
-    retryDays: parseInt(await setting('retryDays', '4'), 10),
-    rescheduleDays: parseInt(await setting('rescheduleDays', '7'), 10),
-    dueWindow: parseInt(await setting('dueWindow', String(cfg.reminders.dueWindowDays)), 10),
-    announcement: await setting('announcement', ''),
+  const out = {};
+  for (const [k, d] of Object.entries(OFFICE_SETTINGS)) out[k] = await setting(k, d);
+  ['retryDays', 'rescheduleDays', 'dueWindow'].forEach(k => { out[k] = parseInt(out[k], 10); });
+  res.json(out);
+}));
+
+r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  const saved = {};
+  for (const [k, v] of Object.entries(req.body || {})) {
+    if (!(k in OFFICE_SETTINGS)) continue;
+    let val = String(v ?? '').trim().slice(0, 500);
+    if (k === 'accountingEmail' && val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+      return res.status(400).json({ error: 'That accounting address does not look like an email' });
+    }
+    if (k === 'booksPayee' && !['rep', 'vendor'].includes(val)) continue;
+    if (k === 'booksAuto' && !['on', 'off'].includes(val)) continue;
+    await q.setSetting(k, val);
+    saved[k] = val;
+  }
+  await audit(req.user.id, 'settings.updated', saved, req.ip);
+  res.json({ ok: true, saved });
+}));
+
+/* ═══════════ ZOHO BOOKS ═══════════ */
+r.get('/admin/books-status', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  const st = await books.status();
+  const pending = books.configured() ? (await q.billsToMake(500, true)) : [];
+  res.json({ ...st,
+    waiting: pending.filter(x => !x.books_error).length,
+    failed: pending.filter(x => x.books_error).map(x => ({ id: x.id, rep: x.rep_name, amount: Number(x.amount), error: x.books_error })),
   });
 }));
 
-r.put('/admin/settings', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
-  for (const [k, v] of Object.entries(req.body || {})) await q.setSetting(k, String(v));
-  await audit(req.user.id, 'settings.updated', req.body, req.ip);
-  res.json({ ok: true });
+/** Try again, including ones that failed — after fixing an account name, say. */
+r.post('/accounting/books-retry', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  if (!books.configured()) return res.status(400).json({ error: 'Zoho Books is not connected yet' });
+  const out = await books.makeBills({ includeFailed: true });
+  await audit(req.user.id, 'books.retry', out, req.ip);
+  res.json(out);
 }));
 
 /* ═══════════ REMINDERS (manual trigger / preview) ═══════════ */

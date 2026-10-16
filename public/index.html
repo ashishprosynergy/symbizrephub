@@ -378,6 +378,23 @@
     /* Stays put while the page scrolls, instead of riding up and down with it */
     position:sticky;top:0;height:100vh;box-sizing:border-box;overflow-y:auto;}
   /* Background loading shown without pushing the page down and back up */
+  /* ── calendar: rep summary, month/agenda switch, agenda list ── */
+  .cal-sum{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+  .cal-fig{flex:1;min-width:110px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+  .seg-toggle{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .seg-toggle button{background:var(--surface);border:none;padding:6px 12px;font-size:13px;cursor:pointer;color:var(--ink-muted)}
+  .seg-toggle button+button{border-left:1px solid var(--line)}
+  .seg-toggle button.on{background:var(--primary);color:#fff;font-weight:600}
+  .ag-day{margin:0 0 16px}
+  .ag-date{font-family:var(--serif);font-weight:600;font-size:15px;margin:0 0 7px;padding-bottom:5px;border-bottom:1px solid var(--line)}
+  .ag-today .ag-date{color:var(--primary)}
+  .ag-item{display:flex;gap:12px;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--primary);
+    border-radius:9px;padding:10px 12px;margin-bottom:8px}
+  .ag-item.k-event{border-left-color:var(--rust)}
+  .ag-item.k-visit{border-left-color:var(--info)}
+  .ag-time{min-width:64px;font-size:12.5px;font-weight:600;color:var(--ink-muted);padding-top:2px}
+  .ag-body{flex:1;min-width:0}
+  @media (max-width:520px){ .ag-item{flex-direction:column;gap:3px} .ag-time{min-width:0} }
   .loading-pill{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:30;
     background:var(--info-soft);color:var(--info);border:1px solid var(--line);border-radius:999px;
     font-size:12.5px;padding:6px 14px;box-shadow:0 4px 14px rgba(0,0,0,.08);pointer-events:none;}
@@ -726,6 +743,10 @@ const API = {
   verifyEmail(email,code){ return this.call('/auth/verify-email',{method:'POST',body:JSON.stringify({email,code})}); },
   resendVerification(email){ return this.call('/auth/resend-verification',{method:'POST',body:JSON.stringify({email})}); },
   changePassword(current,next){ return this.call('/auth/password',{method:'POST',body:JSON.stringify({current,next})}); },
+  getSettings(){ return this.call('/admin/settings'); },
+  saveSettings(obj){ return this.call('/admin/settings',{method:'PUT',body:JSON.stringify(obj)}); },
+  booksStatus(){ return this.call('/admin/books-status'); },
+  booksRetry(){ return this.call('/accounting/books-retry',{method:'POST'}); },
   checkSetup(token){ return this.call('/auth/check-setup',{method:'POST',body:JSON.stringify({token})}); },
   setPassword(token,password){ return this.call('/auth/set-password',{method:'POST',body:JSON.stringify({token,password})}); },
   me(){ return this.call('/auth/me'); },
@@ -2723,6 +2744,9 @@ function vSettings(){
       <div class="row-sub">Approved hours and expenses are compiled and emailed on that day. Reps still see everything they submitted.</div>
     </div>
 
+    ${API.live ? `<h3 class="sub-h">Zoho Books</h3>
+    <div class="card" id="booksCard">${booksCard()}</div>` : ''}
+
     <h3 class="sub-h">Zoho CRM connection</h3>
     <div class="card">
       <div class="kv"><span class="k">Connection</span><span class="status active"><span class="dot"></span>Connected</span></div>
@@ -2732,7 +2756,74 @@ function vSettings(){
       <div class="kv"><span class="k">Last sync</span><span>${ui.offline?'paused — offline':'just now'}</span></div>
     </div>`;
 }
-function setSetting(k,v){ S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`); toast('Setting saved'); }
+/**
+ * Zoho Books on the settings screen: whether it is connected, how bills are
+ * made, and anything that failed. Status is fetched once per visit.
+ */
+let booksInfo = null, booksLoading = false;
+function loadBooksStatus(force){
+  if(booksLoading || (booksInfo && !force)) return;
+  booksLoading = true;
+  API.booksStatus().then(v => { booksInfo = v; }).catch(e => { booksInfo = { error: e.message }; })
+    .finally(() => { booksLoading = false; const el = document.getElementById('booksCard'); if(el) el.innerHTML = booksCard(); });
+}
+function booksCard(){
+  if(!booksInfo){ loadBooksStatus(); return `<div class="row-sub">Checking the Zoho Books connection…</div>`; }
+  const b = booksInfo;
+  if(b.error && b.configured === undefined) return `<div class="callout rust" style="margin:0"><strong>Could not check Zoho Books</strong>${esc(b.error)}</div>`;
+  if(!b.configured) return `<div class="row-sub" style="line-height:1.6">
+      Not connected. Once it is, every expense sent to accounting becomes a bill in Zoho Books with its receipt attached.
+      Connecting needs three settings in Netlify — ZOHO_BOOKS_ORG_ID, ZOHO_BOOKS_REFRESH_TOKEN and, if Books uses
+      its own Zoho client, ZOHO_BOOKS_CLIENT_ID and ZOHO_BOOKS_CLIENT_SECRET.</div>`;
+  if(!b.connected) return `<div class="callout rust" style="margin:0"><strong>Zoho Books is set up but not answering</strong>${esc(b.error||'')}
+      <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="booksInfo=null;loadBooksStatus(true)">Check again</button></div></div>`;
+  const s = S.settings;
+  const accts = b.expenseAccounts || [];
+  return `<div class="row-sub" style="margin-bottom:10px">Connected to <strong>${esc(b.organization||'Zoho Books')}</strong>.
+      Expenses sent to accounting become bills numbered RH-&lt;expense number&gt;, with the receipt attached.</div>
+    <div class="two">
+      <div class="field"><label>Make bills automatically</label>
+        <select onchange="setSetting('booksAuto', this.value)">
+          <option value="on" ${(s.booksAuto||'on')==='on'?'selected':''}>Yes — when sent to accounting</option>
+          <option value="off" ${s.booksAuto==='off'?'selected':''}>No — email only</option></select></div>
+      <div class="field"><label>Bill is made out to</label>
+        <select onchange="setSetting('booksPayee', this.value)">
+          <option value="rep" ${(s.booksPayee||'rep')==='rep'?'selected':''}>The rep (they are reimbursed)</option>
+          <option value="vendor" ${s.booksPayee==='vendor'?'selected':''}>The vendor on the receipt</option></select></div>
+    </div>
+    <div class="field"><label>Expense account when none matches the category</label>
+      <select onchange="setSetting('booksAccount', this.value)">
+        <option value="">— none: the category must match an account —</option>
+        ${accts.map(a => `<option ${s.booksAccount===a?'selected':''}>${esc(a)}</option>`).join('')}</select>
+      <div class="hint">Each expense goes to the account with the same name as its category (${EXPENSE_CATEGORIES.map(esc).join(', ')}) if there is one, otherwise this one.</div></div>
+    ${b.waiting ? `<div class="row-sub">${b.waiting} bill${b.waiting===1?' is':'s are'} queued and will be made within 15 minutes.</div>` : ''}
+    ${b.failed && b.failed.length ? `<div class="callout rust" style="margin:10px 0 0">
+      <strong>${b.failed.length} bill${b.failed.length===1?'':'s'} could not be made</strong>
+      ${b.failed.slice(0,5).map(f => `E${f.id} · ${esc(f.rep)} · ${money(f.amount)} — ${esc(f.error)}`).join('<br>')}
+      <div class="btnrow" style="margin-top:9px"><button class="btn sm primary" onclick="retryBooks(this)">Try again</button></div></div>` : ''}`;
+}
+async function retryBooks(btn){
+  if(btn){ btn.disabled = true; btn.textContent = 'Working…'; }
+  try{
+    const out = await API.booksRetry();
+    toast(`${out.made} bill${out.made===1?'':'s'} made${out.failed?`, ${out.failed} still failing`:''}${out.left?`, ${out.left} queued`:''}`);
+  }catch(e){ toast(e.message || 'Could not reach Zoho Books'); }
+  booksInfo = null; loadBooksStatus(true);
+  try{ S.expenses = (await API.expenses()).map(adapt.expense); save(); renderContent(); }catch(e){}
+}
+
+// Settings the server acts on. These used to be kept only in this browser,
+// so the server never saw (for one) the accounting address typed in here.
+const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount'];
+async function setSetting(k,v){
+  S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`);
+  if(API.live && isOffice() && SERVER_SETTINGS.includes(k)){
+    try{ await API.saveSettings({[k]:v}); toast('Setting saved'); }
+    catch(e){ toast(e.message || 'Could not save that setting'); }
+    return;
+  }
+  toast('Setting saved');
+}
 function setLink(id, url){
   S.settings.links = S.settings.links || {};
   S.settings.links[id] = String(url || '').trim();
@@ -3735,7 +3826,7 @@ function openRing(id){ goingTo(); ui.ringId=id; ui.view='ringDetail'; closeSheet
 function openMember(id){ goingTo(); ui.memberId=id; ui.view='memberDetail'; closeSheet(); render(); }
 function openFac(id){ goingTo(); ui.facId=id; ui.view='facDetail'; closeSheet(); render(); }
 function login(id){ ui.me=id; ui.view=PEOPLE.find(p=>p.id===id).role==='rep'?'today':'dash'; render(); }
-function logout(){ API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
+function logout(){ placeByScreen = {}; API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
 
 /**
  * Office/director only: look at the app exactly as one rep sees it.
@@ -4514,6 +4605,9 @@ const adapt = {
       repId: (isRep() ? ui.me : x.user_id), loginId: x.user_id, repName: x.rep_name,
       date: String(x.entry_date).slice(0,10), amount: Number(x.amount),
       category: x.category, description: x.description || '', status: x.status,
+      vendor: x.vendor || '',
+      // Zoho Books: the bill made from this expense, or why it could not be made
+      billId: x.books_bill_id || null, billError: x.books_error || null,
       hasReceipt: !!x.receipt_name,
       receipt: x.receipt_name ? { name:x.receipt_name, type:x.receipt_type, data:null, serverId:x.id } : null,
     };
@@ -4594,6 +4688,16 @@ async function loadFromServer(){
     settle(API.expenses(),          v => S.expenses    = (v||[]).map(adapt.expense)),
     settle(API.pending(),           v => S.pending     = v || []),
     settle(API.meetings(asRep),     v => S.meetings    = (v||[]).map(adapt.meeting)),
+    // The server's settings win. An accounting address typed in before it was
+    // saved on the server would otherwise be lost, so hand that one over first.
+    isOffice() ? settle(API.getSettings(), async v => {
+      if(!v) return;
+      const carry = {};
+      if(S.settings.accountingEmail && v.accountingEmail === 'accounting@symbiz.org' && S.settings.accountingEmail !== v.accountingEmail) carry.accountingEmail = S.settings.accountingEmail;
+      if(S.settings.accountingDay && v.accountingDay === '1' && String(S.settings.accountingDay) !== '1') carry.accountingDay = String(S.settings.accountingDay);
+      Object.assign(S.settings, v, carry);
+      if(Object.keys(carry).length) API.saveSettings(carry).catch(()=>{});
+    }) : Promise.resolve(),
     // Rep email addresses, so Reminders can say who actually gets a digest
     isOffice() ? settle(API.repsFromZoho(), v => (v||[]).forEach(r=>{
       const at = PEOPLE.findIndex(p=>p.id===r.contactId);
@@ -4864,8 +4968,43 @@ function nextRecurring(meetDay, fromISO) {
   return null;
 }
 
-/** One merged stream: local events, scheduled ring visits, and recurring group meetings. */
-function calendarItems(repId) {
+/**
+ * Every date a "2nd Tuesday" / "Last Thursday" rule falls on between two
+ * days. Monthly groups appear in every month you look at, not just once.
+ */
+function recurringBetween(meetDay, fromISO, toISO) {
+  if (!meetDay) return [];
+  const parts = String(meetDay).split(' ');
+  const ord = { '1st': 0, '2nd': 1, '3rd': 2, '4th': 3, 'Last': -1 }[parts[0]];
+  const dow = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].indexOf(parts[1]);
+  if (ord === undefined || dow < 0) return [];
+  const out = [];
+  const start = new Date(fromISO + 'T00:00:00Z');
+  for (let m = 0; m < 14; m++) {
+    const y = start.getUTCFullYear(), mo = start.getUTCMonth() + m;
+    let day;
+    if (ord === -1) {
+      const last = new Date(Date.UTC(y, mo + 1, 0));
+      day = last.getUTCDate() - ((last.getUTCDay() - dow + 7) % 7);
+    } else {
+      const first = new Date(Date.UTC(y, mo, 1));
+      day = 1 + ((dow - first.getUTCDay() + 7) % 7) + ord * 7;
+    }
+    const d = new Date(Date.UTC(y, mo, day));
+    if (d.getUTCMonth() !== ((mo % 12) + 12) % 12) continue;
+    const iso = d.toISOString().slice(0, 10);
+    if (iso > toISO) break;
+    if (iso >= fromISO) out.push(iso);
+  }
+  return out;
+}
+
+/**
+ * One merged stream: local events, scheduled ring visits, and group meetings.
+ * With a range, a ring that meets monthly appears on each meeting day in it;
+ * without one, just its next meeting (what the home screen wants).
+ */
+function calendarItems(repId, range) {
   const out = [];
   const mine = r => !repId || r.repId === repId;
   myEvents(repId).forEach(e => out.push({
@@ -4876,7 +5015,7 @@ function calendarItems(repId) {
   myVisits(repId).filter(v => v.status === 'Scheduled').forEach(v => {
     const g = ring(v.ringId);
     out.push({ kind: 'visit', date: v.date, time: v.time, title: `Visit — ${g ? g.name : ''}`,
-               sub: v.location, id: v.id, repId: v.repId || (g ? g.repId : null),
+               sub: v.location, id: v.id, repId: v.repId || (g ? g.repId : null), ringId: v.ringId,
                go: g ? `openRing('${g.id}')` : '' });
   });
   // Meetings a rep has actually recorded. These were being saved and then
@@ -4895,11 +5034,19 @@ function calendarItems(repId) {
   });
 
   S.rings.filter(r => r.status === 'active' && mine(r) && r.meetDay).forEach(r => {
-    const d = nextRecurring(r.meetDay);
-    if (d) out.push({
-      kind: 'meeting', date: d, time: r.meetTime, repId: r.repId,
-      title: `${r.name} meets`, sub: `${r.meetingRhythm || ''} · ${r.meetPlace || 'place to be set'}`.replace(/^ · /,''),
-      id: r.id, go: `openRing('${r.id}')`
+    // A "2nd Tuesday" rule is a monthly rhythm; other rhythms only know the next date
+    const monthly = !r.meetingRhythm || /monthly/i.test(r.meetingRhythm);
+    const dates = range && monthly
+      ? recurringBetween(r.meetDay, range.from, range.to)
+      : [nextRecurring(r.meetDay)].filter(Boolean);
+    dates.forEach(d => {
+      // Already recorded as held that day: show the record, not a second "meets"
+      if ((S.meetings || []).some(mt => mt.ringId === r.id && mt.date === d)) return;
+      out.push({
+        kind: 'meeting', date: d, time: r.meetTime, repId: r.repId, ringId: r.id,
+        title: `${r.name} meets`, sub: `${r.meetingRhythm || ''} · ${r.meetPlace || 'place to be set'}`.replace(/^ · /,''),
+        id: r.id + ':' + d, go: `openRing('${r.id}')`
+      });
     });
   });
   return out.sort((a, b) => a.date.localeCompare(b.date) || String(a.time).localeCompare(String(b.time)));
@@ -4913,7 +5060,18 @@ function calendarItems(repId) {
  */
 function vCalendar() {
   const repId = isRep() ? ui.me : (ui.calRep || null);
-  let items = calendarItems(repId).filter(i => !ui.calFilter || ui.calFilter === 'all' || i.kind === ui.calFilter);
+  if(!ui.calMonth){
+    const t = new Date();
+    ui.calMonth = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}`;
+  }
+  // Reps on a phone get the agenda first: a month grid that small is all dots
+  if(!ui.calView) ui.calView = (isRep() && window.innerWidth < 700) ? 'agenda' : 'month';
+  const monthStart = ui.calMonth + '-01';
+  const monthEnd = (() => { const [y,m] = ui.calMonth.split('-').map(Number);
+    return new Date(Date.UTC(y, m, 0)).toISOString().slice(0,10); })();
+  const agendaEnd = addDays(TODAY_S, 30);
+  const range = { from: monthStart < TODAY_S ? monthStart : TODAY_S, to: monthEnd > agendaEnd ? monthEnd : agendaEnd };
+  let items = calendarItems(repId, range).filter(i => !ui.calFilter || ui.calFilter === 'all' || i.kind === ui.calFilter);
 
   /**
    * Picking a rep used to look like it did nothing. Most events carry no
@@ -4930,10 +5088,6 @@ function vCalendar() {
     networkHidden = items.filter(i => i.kind === 'event' && !i.repId).length;
   }
 
-  if(!ui.calMonth){
-    const t = new Date();
-    ui.calMonth = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}`;
-  }
   const [yy, mm] = ui.calMonth.split('-').map(Number);
   const first = new Date(Date.UTC(yy, mm-1, 1));
   const daysInMonth = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
@@ -4972,26 +5126,83 @@ function vCalendar() {
   while(cells.length % 7) cells.push('<div class="cal-cell cal-out"></div>');
 
   const dayList = ui.calDay ? (byDay[ui.calDay] || []) : [];
+  const agenda = ui.calView === 'agenda';
+
+  /* ── what a rep needs at a glance: the coming week, and rings left unvisited ── */
+  const week = items.filter(i => i.date >= TODAY_S && i.date <= addDays(TODAY_S, 7));
+  const count = k => week.filter(i => i.kind === k).length;
+  const myActiveRings = repId ? S.rings.filter(r => r.status === 'active' && r.repId === repId) : [];
+  const booked = new Set((S.visits||[]).filter(v => v.status === 'Scheduled' && v.date >= TODAY_S).map(v => v.ringId));
+  const unbooked = myActiveRings.filter(r => !booked.has(r.id));
+  const summary = repId ? `<div class="cal-sum">
+      <div class="cal-fig"><div class="mgr-n">${week.length}</div><div class="mgr-l">in the next 7 days</div></div>
+      <div class="cal-fig"><div class="mgr-n" style="color:var(--rust)">${count('event')}</div><div class="mgr-l">event${count('event')===1?'':'s'}</div></div>
+      <div class="cal-fig"><div class="mgr-n" style="color:var(--info)">${count('visit')}</div><div class="mgr-l">visit${count('visit')===1?'':'s'}</div></div>
+      <div class="cal-fig"><div class="mgr-n" style="color:var(--primary)">${count('meeting')}</div><div class="mgr-l">group meeting${count('meeting')===1?'':'s'}</div></div>
+    </div>
+    ${unbooked.length ? `<div class="callout" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div><strong>${unbooked.length} of ${myActiveRings.length} ring${myActiveRings.length===1?'':'s'} ${unbooked.length===1?'has':'have'} no visit booked</strong>
+        ${unbooked.slice(0,3).map(r=>esc(r.name)).join(', ')}${unbooked.length>3?` and ${unbooked.length-3} more`:''}</div>
+      ${isRep()?`<button class="btn sm primary" onclick="openVisit('${unbooked[0].id}')">Schedule a visit</button>`:''}</div>` : ''}` : '';
+
+  /* ── agenda: the next 30 days as a list, with the thing to do on each ── */
+  const dayLabel = iso => { const n = days(iso);
+    return n === 0 ? 'Today' : n === 1 ? 'Tomorrow'
+      : new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }); };
+  const actions = i => {
+    if (i.kind === 'event') return `<button class="btn sm" onclick="openEvent('${i.id}')">Details${i.regs?` · ${i.regs} registered`:''}</button>
+      <button class="btn sm" onclick="printSignInSheet('${i.id}')">Sign-in sheet</button>`;
+    if (i.kind === 'visit') return `${i.repId === ui.me ? `<button class="btn sm primary" onclick="completeVisit('${i.id}')">Mark visited</button>` : ''}
+      ${i.ringId ? `<button class="btn sm" onclick="openRing('${i.ringId}')">Open ring</button>` : ''}`;
+    if (i.kind === 'meeting' && !i.held) return `${i.repId === ui.me && days(i.date) <= 0 ? `<button class="btn sm primary" onclick="openMeeting('${i.ringId}')">Log this meeting</button>` : ''}
+      <button class="btn sm" onclick="openRing('${i.ringId}')">Open ring</button>`;
+    return i.go ? `<button class="btn sm" onclick="${i.go}">Open</button>` : '';
+  };
+  const agendaDays = [...new Set(items.filter(i => i.date >= TODAY_S && i.date <= agendaEnd).map(i => i.date))].sort();
+  const agendaHTML = agendaDays.length ? agendaDays.map(d => `
+    <div class="ag-day${d===TODAY_S?' ag-today':''}">
+      <div class="ag-date">${dayLabel(d)}${days(d)>1?'':` <span class="row-sub">${fmtShort(d)}</span>`}</div>
+      ${byDay[d].map(i => `<div class="ag-item k-${i.kind}">
+        <div class="ag-time">${i.time ? esc(i.time) : 'All day'}</div>
+        <div class="ag-body">
+          <div class="row-title">${esc(i.title)}</div>
+          ${i.sub ? `<div class="row-sub">${esc(i.sub)}</div>` : ''}
+          <div class="btnrow" style="margin-top:7px">${actions(i)}</div>
+        </div></div>`).join('')}
+    </div>`).join('')
+    : `<div class="empty">Nothing in the next 30 days.${isRep()?' A good time to book a ring visit.':''}</div>`;
 
   return `<div class="section-head"><div><h2>Calendar</h2>
     <div class="sub">Local events, ring visits, and when each of your groups meets.</div></div>
-    ${isOffice()?`<select class="sel" onchange="ui.calRep=this.value||null;ui.calDay=null;renderContent()">
-      <option value="">All reps</option>
-      ${PEOPLE.filter(p=>p.role==='rep').map(p=>`<option value="${p.id}" ${ui.calRep===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
-    </select>`:''}</div>
+    <div class="btnrow" style="margin:0">
+      ${isRep()?`<button class="btn sm primary" onclick="openVisit()">Schedule a visit</button>`:''}
+      ${isOffice()?`<select class="sel" onchange="ui.calRep=this.value||null;ui.calDay=null;renderContent()">
+        <option value="">All reps</option>
+        ${PEOPLE.filter(p=>p.role==='rep').map(p=>`<option value="${p.id}" ${ui.calRep===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
+      </select>`:''}</div></div>
+
+    ${summary}
 
     <div class="chips">${[['all','Everything'],['event','Local events'],['visit','Ring visits'],['meeting','Group meetings']]
       .map(([k,l])=>`<button class="chip ${((ui.calFilter||'all')===k)?'on':''}" onclick="ui.calFilter='${k}';renderContent()">${l}</button>`).join('')}</div>
 
     <div class="cal-head">
+      <div class="seg-toggle" role="tablist">
+        <button class="${agenda?'':'on'}" onclick="ui.calView='month';renderContent()">Month</button>
+        <button class="${agenda?'on':''}" onclick="ui.calView='agenda';renderContent()">Agenda</button>
+      </div>
+      ${agenda ? `<strong>Next 30 days</strong>` : `
       <button class="btn sm" onclick="ui.calMonth='${shiftMonth(-1)}';ui.calDay=null;renderContent()">‹</button>
       <strong>${monthName}</strong>
       <button class="btn sm" onclick="ui.calMonth='${shiftMonth(1)}';ui.calDay=null;renderContent()">›</button>
-      <button class="btn sm" onclick="ui.calMonth=null;ui.calDay=null;renderContent()">Today</button>
+      <button class="btn sm" onclick="ui.calMonth=null;ui.calDay=null;renderContent()">Today</button>`}
       <span style="flex:1"></span>
       ${isOffice()&&API.live?`<button class="btn sm primary" onclick="openEventForm()">Add an event</button>`:''}
       <button class="btn sm" onclick="window.print()">Print</button>
     </div>
+
+    ${agenda ? agendaHTML : ''}
+    <div style="${agenda?'display:none':''}">
 
     ${repId && networkHidden ? `<div class="callout" style="padding:9px 13px;font-size:12.5px">
       ${ui.calOnlyTheirs
@@ -5047,10 +5258,11 @@ function vCalendar() {
                <div class="btnrow" style="margin-top:9px">
                  <button class="btn sm" onclick="openEvent('${i.id}')">Full details</button>
                  <button class="btn sm" onclick="printSignInSheet('${i.id}')">Blank sign-in sheet</button>
-               </div>`) : ''}
+               </div>`) : `<div class="btnrow" style="margin-top:9px">${actions(i)}</div>`}
         </div>`;
       }).join('')
         : `<div class="empty">Nothing on this day.</div>`}` : ''}
+    </div>
 
     ${!items.length ? emptyState('events and meetings', 'Nothing scheduled yet.') : ''}`;
 }
@@ -5371,11 +5583,13 @@ function vTimesheet() {
   const row = (t, isExp) => `<div class="row">
     <div class="row-main">
       <div class="row-title">${isExp ? money(t.amount) : t.hours + (t.hours === 1 ? ' hour' : ' hours')} — ${esc(t.category)}</div>
-      <div class="row-sub">${fmt(t.date)}${isOffice() ? ' · <strong>' + esc(t.repName || pname(t.repId) || 'Unknown') + '</strong>' : ''} · ${esc(t.description)}</div>
+      <div class="row-sub">${fmt(t.date)}${isOffice() ? ' · <strong>' + esc(t.repName || pname(t.repId) || 'Unknown') + '</strong>' : ''}${isExp && t.vendor ? ' · ' + esc(t.vendor) : ''} · ${esc(t.description)}</div>
+      ${isExp && isOffice() && t.billError ? `<div class="row-sub" style="color:var(--rust)">Zoho Books: ${esc(t.billError)}</div>` : ''}
     </div>
     <div class="row-actions">
       ${isExp && t.receipt ? `<button class="btn sm" onclick="viewReceipt('${t.id}')">Receipt</button>`
         : isExp ? `<span class="tag ${t.receiptDropped ? 'overdue' : 'later'}">${t.receiptDropped ? 'receipt failed' : 'no receipt'}</span>` : ''}
+      ${isExp && isOffice() && t.billId ? `<span class="tag ok" title="Bill ${esc(t.billId)} in Zoho Books">Bill in Books</span>` : ''}
       <span class="tag ${t.status === 'Approved' || t.status === 'Reimbursed' ? 'ok' : t.status === 'Draft' ? 'later' : 'soon'}">${t.status}</span>
       ${isOffice() && t.status === 'Submitted' ? `<button class="btn sm primary" onclick="approveEntry('${isExp ? 'exp' : 'time'}','${t.id}')">Approve</button>` : ''}
     </div></div>`;
@@ -5557,6 +5771,11 @@ async function sendToAccounting() {
       openModal(`<h3>Sent</h3>
         <p class="lead">${out.time} time entr${out.time === 1 ? 'y' : 'ies'} and ${out.expenses} expense${out.expenses === 1 ? '' : 's'}
           emailed to ${esc(out.to || to)}, and marked as sent so nothing is claimed twice.</p>
+        ${out.books ? (out.books.error
+          ? `<div class="callout rust"><strong>Zoho Books bills not made yet</strong>${esc(out.books.error)} They will be retried; see Settings → Zoho Books.</div>`
+          : `<div class="callout ${out.books.failed ? 'rust' : 'ok'}"><strong>Zoho Books</strong>
+              ${out.books.made} bill${out.books.made === 1 ? '' : 's'} made with receipts attached${out.books.left ? `; ${out.books.left} more within 15 minutes` : ''}.
+              ${out.books.failed ? `${out.books.failed} could not be made — see Settings → Zoho Books.` : ''}</div>`) : ''}
         <div class="m-actions"><button class="btn primary" onclick="closeModal();render()">Done</button></div>`);
     } catch (e) {
       const mailOff = /mail|smtp|not configured/i.test(e.message || '');
@@ -5577,11 +5796,11 @@ async function sendToAccounting() {
 }
 
 function exportAccounting() {
-  const rows = [['Type', 'Rep', 'Date', 'Category', 'Hours', 'Amount', 'Description', 'Status']];
+  const rows = [['Type', 'Rep', 'Date', 'Category', 'Vendor', 'Hours', 'Amount', 'Description', 'Status']];
   S.timeEntries.filter(t => !isRep() || t.repId === ui.me)
-    .forEach(t => rows.push(['Hours', pname(t.repId), t.date, t.category, t.hours, '', t.description, t.status]));
+    .forEach(t => rows.push(['Hours', pname(t.repId), t.date, t.category, '', t.hours, '', t.description, t.status]));
   S.expenses.filter(x => !isRep() || x.repId === ui.me)
-    .forEach(x => rows.push(['Expense', pname(x.repId), x.date, x.category, '', x.amount.toFixed(2), x.description, x.status]));
+    .forEach(x => rows.push(['Expense', pname(x.repId), x.date, x.category, x.vendor || '', '', x.amount.toFixed(2), x.description, x.status]));
   downloadCSV(`hours-and-expenses-${TODAY_S}.csv`, rows);
 }
 
@@ -5600,10 +5819,10 @@ function exportAccountingPDF() {
       <tbody>${time.slice().sort(byDate).map(t => `<tr><td>${esc(pname(t.repId))}</td><td>${fmt(t.date)}</td>
         <td>${esc(t.category)}</td><td>${esc(t.description)}</td><td>${esc(t.status)}</td><td class="num">${t.hours}</td></tr>`).join('')}</tbody>
       <tfoot><tr><td colspan="5">Total hours</td><td class="num">${hours}</td></tr></tfoot></table>` : ''}
-    ${exp.length ? `<table><thead><tr><th>Rep</th><th>Date</th><th>Category</th><th>Description</th><th>Status</th><th class="num">Amount</th></tr></thead>
+    ${exp.length ? `<table><thead><tr><th>Rep</th><th>Date</th><th>Category</th><th>Vendor</th><th>Description</th><th>Status</th><th class="num">Amount</th></tr></thead>
       <tbody>${exp.slice().sort(byDate).map(x => `<tr><td>${esc(pname(x.repId))}</td><td>${fmt(x.date)}</td>
-        <td>${esc(x.category)}</td><td>${esc(x.description)}</td><td>${esc(x.status)}</td><td class="num">${money(x.amount)}</td></tr>`).join('')}</tbody>
-      <tfoot><tr><td colspan="5">Total expenses</td><td class="num">${money(amount)}</td></tr></tfoot></table>` : ''}
+        <td>${esc(x.category)}</td><td>${esc(x.vendor || '—')}</td><td>${esc(x.description)}</td><td>${esc(x.status)}</td><td class="num">${money(x.amount)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="6">Total expenses</td><td class="num">${money(amount)}</td></tr></tfoot></table>` : ''}
     <p class="note">Use your browser's print dialog and choose "Save as PDF".</p>`);
 }
 
@@ -5649,7 +5868,11 @@ function openExpense() {
         <div class="field"><label>Date</label><input type="date" name="date" value="${TODAY_S}" required></div>
         <div class="field"><label>Amount</label><input type="number" name="amount" step="0.01" min="0" placeholder="0.00" required></div>
       </div>
-      <div class="field"><label>Category</label><select name="category">${EXPENSE_CATEGORIES.map(c => `<option>${c}</option>`).join('')}</select></div>
+      <div class="two">
+        <div class="field"><label>Category</label><select name="category">${EXPENSE_CATEGORIES.map(c => `<option>${c}</option>`).join('')}</select></div>
+        <div class="field"><label>Vendor / paid to</label>
+          <input name="vendor" required maxlength="120" placeholder="e.g. Sheetz, Staples, Hampton Inn" autocomplete="off"></div>
+      </div>
       <div class="field"><label>What was it for?</label><textarea name="description" required placeholder="Mileage to which group, supplies for which event"></textarea></div>
       <div class="field"><label>Receipt</label>
         <!-- Two separate inputs on purpose. A single input with capture="environment"
@@ -5675,6 +5898,7 @@ async function submitExpense(e) {
   const base = {
     date: fv(f, 'date'), amount: parseFloat(fv(f, 'amount')) || 0,
     category: fv(f, 'category'), description: fv(f, 'description'),
+    vendor: (fv(f, 'vendor') || '').trim(),
   };
 
   if (API.live) {

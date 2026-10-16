@@ -28,6 +28,21 @@ module.exports = {
   },
 
   /**
+   * Zoho Books, for turning approved expenses into bills. Switched on by
+   * setting ZOHO_BOOKS_ORG_ID. It can share the CRM's Zoho client; give it
+   * its own refresh token (with ZohoBooks scopes) so the CRM one is untouched.
+   */
+  books: {
+    orgId: process.env.ZOHO_BOOKS_ORG_ID || '',
+    clientId: process.env.ZOHO_BOOKS_CLIENT_ID || process.env.ZOHO_CLIENT_ID || 'test-id',
+    clientSecret: process.env.ZOHO_BOOKS_CLIENT_SECRET || process.env.ZOHO_CLIENT_SECRET || 'test-secret',
+    refreshToken: process.env.ZOHO_BOOKS_REFRESH_TOKEN || process.env.ZOHO_REFRESH_TOKEN || 'test-refresh',
+    apiBase: process.env.ZOHO_BOOKS_API_DOMAIN
+      || `${process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com'}/books/v3`,
+    accountsDomain: process.env.ZOHO_ACCOUNTS_DOMAIN || 'https://accounts.zoho.com',
+  },
+
+  /**
    * Zoho module API names. These MUST match what exists in the org.
    * If Symbiz is not on an edition that allows custom modules, point
    * RING and ACTIVITY at standard modules instead and the rest of the

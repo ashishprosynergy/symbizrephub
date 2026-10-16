@@ -170,6 +170,14 @@ ALTER TABLE login_tokens ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE;
 
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS vendor TEXT;
+
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS books_bill_id TEXT;
+
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS books_error TEXT;
+
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS books_queued BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE INDEX IF NOT EXISTS idx_token_user ON login_tokens (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_writes (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries (user_id, entry_date);
@@ -268,18 +276,33 @@ const q = {
   /* ── expenses ── */
   addExpense: x => query(
     `INSERT INTO expenses (user_id,rep_name,entry_date,amount,category,description,ring_id,
-                           receipt_name,receipt_type,receipt_data,status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Submitted') RETURNING id`,
+                           receipt_name,receipt_type,receipt_data,vendor,status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'Submitted') RETURNING id`,
     [x.userId, x.repName, x.date, x.amount, x.category, x.description, x.ringId || null,
-     x.receiptName || null, x.receiptType || null, x.receiptData || null]),
+     x.receiptName || null, x.receiptType || null, x.receiptData || null, x.vendor || null]),
   expensesFor: userId => query(
-    `SELECT id,user_id,rep_name,entry_date,amount,category,description,ring_id,
-            receipt_name,receipt_type,status,created_at
+    `SELECT id,user_id,rep_name,entry_date,amount,category,description,ring_id,vendor,
+            receipt_name,receipt_type,status,created_at,approved_by,books_bill_id,books_error
      FROM expenses WHERE user_id = $1 ORDER BY entry_date DESC LIMIT 500`, [userId]),
   allExpenses: () => query(
-    `SELECT id,user_id,rep_name,entry_date,amount,category,description,ring_id,
-            receipt_name,receipt_type,status,created_at
+    `SELECT id,user_id,rep_name,entry_date,amount,category,description,ring_id,vendor,
+            receipt_name,receipt_type,status,created_at,approved_by,books_bill_id,books_error
      FROM expenses ORDER BY entry_date DESC LIMIT 1000`),
+  // Zoho Books. Only expenses sent to accounting after Books was connected are
+  // queued, so a batch already handled by hand is never billed a second time.
+  queueBills: ids => ids.length ? query(
+    `UPDATE expenses SET books_queued = TRUE WHERE id IN (${ids.map((_, i) => '$' + (i + 1)).join(',')})`,
+    ids.map(Number)) : Promise.resolve([]),
+  billsToMake: (limit, includeFailed) => query(
+    `SELECT id,user_id,rep_name,entry_date,amount,category,description,vendor,receipt_name,receipt_type,
+            approved_by,books_error
+     FROM expenses WHERE books_queued = TRUE AND books_bill_id IS NULL
+       AND ($2::boolean OR books_error IS NULL)
+     ORDER BY id LIMIT $1`, [limit, !!includeFailed]),
+  // Remember the bill made for an expense so it is never made twice
+  setExpenseBill: (id, billId, error) => query(
+    'UPDATE expenses SET books_bill_id = COALESCE($2, books_bill_id), books_error = $3 WHERE id = $1',
+    [id, billId || null, error || null]),
   receiptFor: id => one('SELECT receipt_name,receipt_type,receipt_data FROM expenses WHERE id = $1', [id]),
   approveExpense: (id, by) => query(
     "UPDATE expenses SET status='Approved', approved_at=now(), approved_by=$2 WHERE id = $1", [id, by]),
