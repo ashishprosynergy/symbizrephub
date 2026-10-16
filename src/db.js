@@ -19,7 +19,9 @@ function getPool() {
       connectionString: cs,
       // Serverless: keep the pool tiny, connections are precious
       max: parseInt(process.env.PG_MAX || '3', 10),
-      idleTimeoutMillis: 10_000,
+      // Long enough to span typing a password or a code, so the next step
+      // doesn't pay for a fresh encrypted connection; Neon sleeps after 5 min.
+      idleTimeoutMillis: 120_000,
       connectionTimeoutMillis: 8_000,
       ssl: cs.includes('localhost') ? false : { rejectUnauthorized: false },
     });
@@ -28,9 +30,16 @@ function getPool() {
   return pool;
 }
 
+// A connection kept open while the function was frozen can be dead on thaw.
+// That is a broken socket, not a bad query, so it is tried once more.
+const DEAD_SOCKET = /Connection terminated|ECONNRESET|EPIPE|Client has encountered a connection error|terminating connection/i;
 async function query(text, params = []) {
-  const res = await getPool().query(text, params);
-  return res.rows;
+  try {
+    return (await getPool().query(text, params)).rows;
+  } catch (e) {
+    if (!DEAD_SOCKET.test(e.message || '')) throw e;
+    return (await getPool().query(text, params)).rows;
+  }
 }
 async function one(text, params = []) {
   const rows = await query(text, params);

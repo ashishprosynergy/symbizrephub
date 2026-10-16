@@ -42,11 +42,11 @@ async function trustDevice(userId, label) {
     new Date(Date.now() + DEVICE_DAYS * 86400000).toISOString());
   return raw;
 }
-async function deviceTrusted(userId, raw) {
+async function deviceTrusted(userId, raw, { touch = true } = {}) {
   if (!raw) return false;
   const row = await q.deviceByHash(sha(raw));
   if (!row || row.user_id !== userId || new Date(row.expires_at) < new Date()) return false;
-  await q.touchDevice(row.token_hash).catch(() => {});
+  if (touch) await q.touchDevice(row.token_hash).catch(() => {});
   return true;
 }
 
@@ -77,24 +77,33 @@ const maskEmail = e => String(e || '').replace(/^(.)(.*)(.@.*)$/, (m, a, mid, b)
  * Password check. Returns null (wrong), { locked }, { unverified, user },
  * { twoStep, user } when the emailed code is still needed, or a session.
  */
-async function login(email, password, ip, device) {
+async function login(email, password, ip, device, gate = true) {
   const user = await q.userByEmail(String(email || '').trim());
-  if (user) {
-    const fails = (await q.failsSinceOk(user.id, LOCK_MINUTES))?.c || 0;
-    if (fails >= LOCK_AFTER) {
-      await audit(user.id, 'login.locked', { email }, ip);
-      return { locked: true };
-    }
+  const access = require('./access');
+  // Everything after the lookup runs side by side: the password check (which
+  // yields while it works), the lock-out count, the 2-step rule and the
+  // remembered device. One after another, each database trip added up.
+  const [ok, fails, twoStep, trusted] = await Promise.all([
+    bcrypt.compare(password || '', user ? user.password_hash : DUMMY).catch(() => false),
+    user ? q.failsSinceOk(user.id, LOCK_MINUTES).then(r => r?.c || 0) : 0,
+    user ? access.needsTwoStep(user) : false,
+    user ? deviceTrusted(user.id, device, { touch: false }) : false,
+  ]);
+  // The robot check runs alongside the reads above; nothing is recorded
+  // (a failed attempt, a sign-in) unless it passed.
+  if (!(await gate)) return { blocked: true };
+  if (trusted) q.touchDevice(sha(device)).catch(() => {});
+  if (user && fails >= LOCK_AFTER) {
+    await audit(user.id, 'login.locked', { email }, ip);
+    return { locked: true };
   }
-  const ok = verify(password || '', user ? user.password_hash : DUMMY);
   if (!user || !ok) {
     await audit(user?.id, 'login.failed', { email }, ip);
     return null;
   }
   // Right password, but they never typed the code from the sign-up email
   if (user.email_verified === false) return { unverified: true, user };
-  const access = require('./access');
-  if (await access.needsTwoStep(user) && !(await deviceTrusted(user.id, device))) {
+  if (twoStep && !trusted) {
     await audit(user.id, 'login.passwordOk', null, ip);
     return { twoStep: true, user };
   }

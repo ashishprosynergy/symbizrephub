@@ -672,9 +672,13 @@ r.post('/auth/verify-link', wrap(async (req, res) => {
 }));
 
 r.post('/auth/login', wrap(async (req, res) => {
-  if (!(await humanCheck(req, res))) return;
   const { email, password, device } = req.body || {};
-  const out = await auth.login(email, password, req.ip, device);
+  // Google's robot check and the password check run together. Nothing is
+  // answered until both are done, so a failed robot check still reveals nothing.
+  // Nothing is written (failed attempts, sign-in records) until it passes.
+  const human = humanCheck(req, res);
+  const out = await auth.login(email, password, req.ip, device, human);
+  if (!(await human)) return;       // humanCheck has already answered
   if (!out) return res.status(401).json({ error: 'Email or password is incorrect' });
   if (out.locked) {
     return res.status(429).json({ error: `Too many wrong passwords. For your safety this account is paused for ${auth.LOCK_MINUTES} minutes — ` +

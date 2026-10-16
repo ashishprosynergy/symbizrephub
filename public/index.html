@@ -5939,7 +5939,7 @@ function captchaSlot(){
    so pressing the button doesn't wait on Google. Tokens last two minutes;
    one older than 100 seconds is replaced. If Google is blocked (ad
    blockers do), give up after 2.5 seconds rather than hang. */
-var v3Pending = null, v3At = 0;
+var v3Pending = null, v3At = 0, captchaKeepFresh = null;
 function fetchV3(action){
   if(!captchaSiteKey || captchaType !== 'v3' || !window.grecaptcha || !grecaptcha.execute) return Promise.resolve('');
   return new Promise(ok => {
@@ -5968,12 +5968,17 @@ function mountCaptcha(){
   captchaWidget = null;
   if(!slot || !captchaSiteKey) return;
   if(captchaType === 'v3'){
+    // The check runs as soon as Google's script is here, not when the button
+    // is pressed: saved passwords mean people often press it straight away.
     if(!document.getElementById('gcaptcha')){
       const s = document.createElement('script');
       s.id = 'gcaptcha'; s.async = true;
+      s.onload = () => warmCaptcha('login');
       s.src = 'https://www.google.com/recaptcha/api.js?render=' + encodeURIComponent(captchaSiteKey);
       document.head.appendChild(s);
-    }
+    } else warmCaptcha('login');
+    // A token lasts two minutes; keep a fresh one ready while the screen is open
+    if(!captchaKeepFresh) captchaKeepFresh = setInterval(() => { if(!ui.me) warmCaptcha('login'); }, 45000);
     return;
   }
   const dark = matchMedia && matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light';

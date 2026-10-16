@@ -1165,6 +1165,14 @@ describe('owner, permissions and 2-step sign-in', () => {
       assert.equal(none.statusCode, 400); assert.equal(json(none).captcha, true);
       const robot = await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse', captcha: 'bad' } });
       assert.equal(robot.statusCode, 400);
+      // The robot check runs alongside the password check, but a robot's wrong
+      // guesses must never count towards locking the real person out
+      const rep = await db.q.userByEmail('rep@test.org');
+      const failsBefore = (await db.q.failsSinceOk(rep.id, 15))?.c || 0;
+      for (let i = 0; i < 3; i++) {
+        assert.equal((await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'wrong-guess', captcha: 'bad' } })).statusCode, 400);
+      }
+      assert.equal((await db.q.failsSinceOk(rep.id, 15))?.c || 0, failsBefore, 'blocked attempts are not recorded');
       assert.equal((await invoke('POST', '/auth/forgot', { body: { email: 'rep@test.org' } })).statusCode, 400, 'forgot needs it too');
 
       // A score (v3) key saved as "v2" is recognised and stored as v3
