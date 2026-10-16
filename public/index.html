@@ -1342,42 +1342,75 @@ function toast(msg){
 }
 
 /* ══════════════════ NOTIFICATIONS ══════════════════ */
+/**
+ * Notifications someone has cleared, per person, kept on this device.
+ * Each notification has a key naming the thing it is about, so clearing
+ * "Visit to Elm Ring" hides that visit only — a new visit still shows. A key
+ * that carries a date or count (renewal date, overdue total) comes back by
+ * itself when that changes, which is when it is worth seeing again.
+ */
+function dismissedNotifs(){
+  S.dismissedNotifs = S.dismissedNotifs || {};
+  return S.dismissedNotifs[ui.me] = S.dismissedNotifs[ui.me] || {};
+}
 function notifications(){
+  const gone = dismissedNotifs();
+  return allNotifications().filter(n => !gone[n.k]);
+}
+function dismissNotif(k){
+  dismissedNotifs()[k] = Date.now(); save();
+  openNotifs(); render();
+}
+function clearAllNotifs(){
+  const gone = dismissedNotifs();
+  notifications().forEach(n => { gone[n.k] = Date.now(); });
+  save(); openNotifs(); render();
+  toast('Notifications cleared');
+}
+function restoreNotifs(){
+  S.dismissedNotifs[ui.me] = {}; save();
+  openNotifs(); render();
+}
+
+function allNotifications(){
   const out=[];
   if(isOffice()){
     S.rings.filter(r=>r.status==='pending').forEach(r=>
-      out.push({t:`${r.name} is waiting on approval`, s:`Submitted by ${pname(r.repId)}`, go:()=>setView('approvals')}));
+      out.push({k:'pending:'+r.id, t:`${r.name} is waiting on approval`, s:`Submitted by ${pname(r.repId)}`, go:()=>setView('approvals')}));
     const od=dueItems(null).filter(a=>days(a.nextDue)<-30);
-    if(od.length) out.push({t:`${od.length} contact${od.length===1?' is':'s are'} more than a month overdue`, s:'Across the network', go:()=>setView('coverage')});
+    if(od.length) out.push({k:'od-network:'+od.length, t:`${od.length} contact${od.length===1?' is':'s are'} more than a month overdue`, s:'Across the network', go:()=>setView('coverage')});
     // Only genuinely rated, genuinely struggling rings. An alert that fires
     // on everything is noise, and gets ignored.
     const risky = S.rings.filter(r=>r.status==='active')
       .map(r=>({r,h:ringHealth(r)}))
       .filter(x=>x.h!==null && x.h<50);
     risky.slice(0,5).forEach(x=>
-      out.push({t:`${x.r.name} is at risk`, s:`Health ${x.h} · ${x.r.repName||pname(x.r.repId)}`, go:()=>setView('allrings')}));
-    if(risky.length>5) out.push({t:`${risky.length-5} more rings at risk`, s:'See the Rings screen', go:()=>setView('allrings')});
+      out.push({k:'risk:'+x.r.id, t:`${x.r.name} is at risk`, s:`Health ${x.h} · ${x.r.repName||pname(x.r.repId)}`, go:()=>setView('allrings')}));
+    if(risky.length>5) out.push({k:'risk-more:'+risky.length, t:`${risky.length-5} more rings at risk`, s:'See the Rings screen', go:()=>setView('allrings')});
     return out;
   }
   dueItems(ui.me).forEach(a=>{
     const n=days(a.nextDue);
-    if(n<0) out.push({t:`${a.who} is ${Math.abs(n)} days overdue`, s:`${a.type} · ${ring(a.ringId)?ring(a.ringId).name:''}`, go:()=>openLog({ringId:a.ringId,who:a.who,type:a.type,memberId:a.memberId,facId:a.facId})});
-    else if(n<=S.settings.dueWindow) out.push({t:`${a.who} is due in ${n} days`, s:`${a.type} · ${ring(a.ringId)?ring(a.ringId).name:''}`, go:()=>openLog({ringId:a.ringId,who:a.who,type:a.type,memberId:a.memberId,facId:a.facId})});
+    const key = (a.id||a.memberId||a.who)+':'+a.nextDue;
+    // Separate keys for "due" and "overdue": clearing a heads-up still lets
+    // the overdue warning through once the date passes.
+    if(n<0) out.push({k:'od:'+key, t:`${a.who} is ${Math.abs(n)} days overdue`, s:`${a.type} · ${ring(a.ringId)?ring(a.ringId).name:''}`, go:()=>openLog({ringId:a.ringId,who:a.who,type:a.type,memberId:a.memberId,facId:a.facId})});
+    else if(n<=S.settings.dueWindow) out.push({k:'due:'+key, t:`${a.who} is due in ${n} days`, s:`${a.type} · ${ring(a.ringId)?ring(a.ringId).name:''}`, go:()=>openLog({ringId:a.ringId,who:a.who,type:a.type,memberId:a.memberId,facId:a.facId})});
   });
   S.rings.filter(r=>r.repId===ui.me&&r.status==='rejected').forEach(r=>
-    out.push({t:`${r.name} needs changes`, s:'Tap to edit and resubmit', go:()=>openRing(r.id)}));
+    out.push({k:'rejected:'+r.id, t:`${r.name} needs changes`, s:'Tap to edit and resubmit', go:()=>openRing(r.id)}));
   S.rings.filter(r=>r.repId===ui.me&&r.status==='active'&&!launchDone(r)).forEach(r=>
-    out.push({t:`${r.name} launch is unfinished`, s:`${r.launchSteps.length} of ${LAUNCH_STEPS.length} steps done`, go:()=>openRing(r.id)}));
+    out.push({k:'launch:'+r.id, t:`${r.name} launch is unfinished`, s:`${r.launchSteps.length} of ${LAUNCH_STEPS.length} steps done`, go:()=>openRing(r.id)}));
   S.members.filter(m=>m.repId===ui.me&&m.status==='active'&&m.renews&&days(m.renews)<=45&&days(m.renews)>=0).forEach(m=>
-    out.push({t:`${m.name} renews in ${days(m.renews)} days`, s:'Worth a call before then', go:()=>openMember(m.id)}));
+    out.push({k:'renew:'+m.id+':'+m.renews, t:`${m.name} renews in ${days(m.renews)} days`, s:'Worth a call before then', go:()=>openMember(m.id)}));
   (S.visits||[]).filter(v=>v.repId===ui.me&&v.status==='Scheduled'&&days(v.date)>=0&&days(v.date)<=14).forEach(v=>{
     const g=ring(v.ringId);
-    out.push({t:`Visit to ${g?g.name:'a ring'} in ${days(v.date)} days`, s:`${fmt(v.date)} · ${v.location||''}`, go:()=>setView('visits')});
+    out.push({k:'visit:'+v.id, t:`Visit to ${g?g.name:'a ring'} in ${days(v.date)} days`, s:`${fmt(v.date)} · ${v.location||''}`, go:()=>setView('visits')});
   });
   (S.events||[]).filter(e=>e.repId===ui.me&&days(e.date)>=0&&days(e.date)<=21).forEach(e=>
-    out.push({t:`${e.title} in ${days(e.date)} days`, s:`${eventRegs(e.id).length} registered · ${e.location}`, go:()=>openEvent(e.id)}));
+    out.push({k:'event:'+e.id, t:`${e.title} in ${days(e.date)} days`, s:`${eventRegs(e.id).length} registered · ${e.location}`, go:()=>openEvent(e.id)}));
   const noRing=S.members.filter(m=>m.repId===ui.me&&m.status==='active'&&!m.ringId).length;
-  if(noRing) out.push({t:`${noRing} member${noRing===1?'':'s'} not in a Growth Ring`, s:'They are paying but have no group', go:()=>setView('unaffiliated')});
+  if(noRing) out.push({k:'noring:'+noRing, t:`${noRing} member${noRing===1?'':'s'} not in a Growth Ring`, s:'They are paying but have no group', go:()=>setView('unaffiliated')});
   return out;
 }
 
@@ -3592,12 +3625,21 @@ function toggleLaunch(id,i){
 let notifActions=[];
 function openNotifs(){
   const list=notifications(); notifActions=list;
+  const cleared=Object.keys(dismissedNotifs()).length;
   const s=document.getElementById('sheet');
-  s.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <h3>Notifications</h3><button class="btn sm ghost" onclick="closeSheet()">Close</button></div>
-    ${list.length?list.map((n,i)=>`<div class="row clicky" onclick="notifGo(${i})"><div class="row-main">
-      <div class="row-title">${esc(n.t)}</div><div class="row-sub">${esc(n.s)}</div></div></div>`).join('')
-      :`<div class="empty">Nothing needs your attention.</div>`}`;
+  s.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
+      <h3>Notifications</h3>
+      <div class="btnrow" style="margin:0">
+        ${list.length?`<button class="btn sm" onclick="clearAllNotifs()">Clear all</button>`:''}
+        <button class="btn sm ghost" onclick="closeSheet()">Close</button></div></div>
+    ${list.length?list.map((n,i)=>`<div class="row" style="align-items:center">
+      <div class="row-main clicky" onclick="notifGo(${i})">
+        <div class="row-title">${esc(n.t)}</div><div class="row-sub">${esc(n.s)}</div></div>
+      <button class="btn sm ghost" title="Remove" aria-label="Remove this notification"
+        onclick="event.stopPropagation();dismissNotif('${esc(n.k)}')">✕</button></div>`).join('')
+      :`<div class="empty">Nothing needs your attention.</div>`}
+    ${cleared?`<div style="text-align:center;margin-top:10px">
+      <button class="btn sm ghost" onclick="restoreNotifs()">Show ${cleared} cleared</button></div>`:''}`;
   s.classList.add('open');
 }
 function openRepSheet(repId){
@@ -4640,13 +4682,25 @@ async function retryLoad(){
  * a different screen starts at the top.
  */
 var scrollTopNext = false;   // var, not let: render() may run before this line does
-function goingTo(){ scrollTopNext = true; }
+// Where the reader was on each screen, so coming back (say, Back from a
+// member to the People list) returns them to the same spot instead of
+// throwing them to the top.
+var placeByScreen = {};
+function screenKey(){ return [ui.view, ui.ringId, ui.memberId, ui.facId, ui.eventId].join('|'); }
+function goingTo(){
+  if (ui && ui.me) placeByScreen[screenKey()] = window.scrollY;
+  scrollTopNext = true;
+}
 function keepPlace(draw){
   const y = window.scrollY;
   const rail = document.querySelector('.rail');
   const railY = rail ? rail.scrollTop : 0;
   draw();
-  if (scrollTopNext) { scrollTopNext = false; window.scrollTo(0, 0); }
+  if (scrollTopNext) {
+    scrollTopNext = false;
+    const back = placeByScreen[screenKey()] || 0;    // a screen not seen before opens at the top
+    if (window.scrollY !== back) window.scrollTo(0, back);
+  }
   else if (window.scrollY !== y) window.scrollTo(0, y);
   const rail2 = document.querySelector('.rail');
   if (rail2 && rail2.scrollTop !== railY) rail2.scrollTop = railY;

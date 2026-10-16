@@ -628,6 +628,48 @@ describe('hours and expenses', () => {
     assert.equal((await invoke('POST',`/expenses/${rows[0].id}/approve`,{token:officeToken})).statusCode, 200);
   });
 
+  test('the accounting email carries each receipt, named by its line, plus data for bill entry', async () => {
+    // A photographed receipt, approved, alongside the PDF one above
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    await invoke('POST', '/expenses', { token: repToken,
+      body: { date: '2026-10-02', amount: 23.5, category: 'Meals', description: 'Lunch with facilitator',
+              receiptName: 'lunch.png', receiptType: 'image/png', receiptData: png } });
+    for (const x of JSON.parse((await invoke('GET','/expenses',{token:officeToken})).body)) {
+      if (x.status === 'Submitted') await invoke('POST', `/expenses/${x.id}/approve`, { token: officeToken });
+    }
+
+    const cfg = require('../src/config');
+    const reminders = require('../src/reminders');
+    const realSend = reminders.sendEmail, realMail = { ...cfg.mail };
+    let mail = null;
+    cfg.mail.enabled = true; cfg.mail.host = 'smtp.test';
+    reminders.sendEmail = async (to, subject, html, opts) => { mail = { to, subject, html, opts }; return { ok: true }; };
+    try {
+      const res = await invoke('POST', '/accounting/send', { token: officeToken });
+      assert.equal(res.statusCode, 200, res.body);
+    } finally {
+      reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
+    }
+
+    const files = mail.opts.attachments.map(a => a.filename);
+    const receiptFiles = files.filter(f => /^E\d+-receipt-/.test(f));
+    assert.ok(receiptFiles.length >= 2, 'both receipts attached: ' + files.join(', '));
+    assert.ok(receiptFiles.some(f => /\.png$/.test(f)) && receiptFiles.some(f => /\.pdf$/.test(f)));
+    const img = mail.opts.attachments.find(a => /\.png$/.test(a.filename));
+    assert.ok(Buffer.isBuffer(img.content) && img.content.length > 0, 'image bytes, not the data URL text');
+    assert.ok(img.cid && mail.html.includes(`cid:${img.cid}`), 'image shown in the body too');
+
+    // Dates read as dates, not "Fri Oct 02 2026 00:00:00 GMT"
+    assert.ok(!/GMT|00:00:00/.test(mail.html));
+    const json = JSON.parse(mail.html.match(/<pre[^>]*>([\s\S]*?)<\/pre>/)[1]
+      .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'));
+    const lunch = json.expenses.find(x => x.description === 'Lunch with facilitator');
+    assert.equal(lunch.date, '2026-10-02');
+    assert.equal(lunch.amount, 23.5);
+    assert.equal(lunch.receiptStatus, 'attached');
+    assert.ok(receiptFiles.includes(lunch.receiptFile), 'the data names the attached file');
+  });
+
   test('the accounting payload totals only approved items', async () => {
     const body = JSON.parse((await invoke('GET','/accounting/pending',{token:officeToken})).body);
     assert.equal(typeof body.amount, 'number');

@@ -1343,10 +1343,42 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
       fix: 'Set MAIL_ENABLED, SMTP_HOST, SMTP_USER and SMTP_PASS, then try again.',
     });
   }
-  const rows = [['Type', 'Rep', 'Date', 'Category', 'Hours', 'Amount', 'Description', 'Receipt']];
-  t.forEach(x => rows.push(['Hours', x.rep_name, x.entry_date, x.category, x.hours, '', x.description, '']));
-  e.forEach(x => rows.push(['Expense', x.rep_name, x.entry_date, x.category, '', x.amount, x.description,
-                            x.receipt_name || 'MISSING']));
+  // Postgres hands DATE columns back as Date objects, which printed as
+  // "Fri Sep 18 2026 00:00:00 GMT…". Accounting wants 2026-09-18.
+  const day = d => (d instanceof Date ? d.toISOString() : String(d || '')).slice(0, 10);
+
+  /**
+   * Receipts go with the expenses, one file per expense, named by its line
+   * number (E1, E2…) so a person — or Claude reading this email to enter
+   * bills in Zoho Books — can match each image to its line without guessing.
+   */
+  const MAX_ATTACH = 18 * 1024 * 1024;   // stay well under Gmail's 25 MB per message
+  let attachedBytes = 0;
+  const receipts = [];
+  for (const [i, x] of e.entries()) {
+    const ref = `E${i + 1}`;
+    x.ref = ref;
+    if (!x.receipt_name) { x.receiptNote = 'MISSING'; continue; }
+    const row = await q.receiptFor(x.id).catch(() => null);
+    const m = row && String(row.receipt_data || '').match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+    if (!m) { x.receiptNote = 'MISSING'; continue; }
+    const buf = m[2] ? Buffer.from(m[3], 'base64') : Buffer.from(decodeURIComponent(m[3]));
+    const type = row.receipt_type || m[1] || 'application/octet-stream';
+    const ext = (String(row.receipt_name).match(/\.([a-z0-9]{2,5})$/i) || [])[1]
+      || ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/heic': 'heic', 'image/webp': 'webp', 'application/pdf': 'pdf' }[type] || 'bin');
+    const slug = s => String(s || '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 30);
+    const filename = `${ref}-receipt-${slug(x.rep_name)}-${day(x.entry_date)}-${Number(x.amount).toFixed(2)}.${ext}`;
+    if (attachedBytes + buf.length > MAX_ATTACH) { x.receiptNote = 'TOO LARGE — download from Rep Hub'; continue; }
+    attachedBytes += buf.length;
+    x.receiptNote = filename;
+    x.receiptCid = /^image\//.test(type) ? `${ref.toLowerCase()}@rephub` : null;
+    receipts.push({ filename, content: buf, contentType: type, ...(x.receiptCid ? { cid: x.receiptCid } : {}) });
+  }
+
+  const rows = [['Ref', 'Type', 'Rep', 'Date', 'Category', 'Hours', 'Amount', 'Description', 'Receipt']];
+  t.forEach((x, i) => rows.push([`H${i + 1}`, 'Hours', x.rep_name, day(x.entry_date), x.category, x.hours, '', x.description, '']));
+  e.forEach(x => rows.push([x.ref, 'Expense', x.rep_name, day(x.entry_date), x.category, '', x.amount, x.description,
+                            x.receiptNote]));
   const csv = rows.map(r => r.map(c => {
     const v = String(c ?? '');
     return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
@@ -1367,13 +1399,13 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
     title: 'Rep hours and expenses',
     subtitle: `Approved for payment · ${today()}${byLine ? ' · ' + byLine : ''}`,
     columns: [
-      { label: 'Type', width: 7 }, { label: 'Rep', width: 14 }, { label: 'Date', width: 9 },
-      { label: 'Category', width: 13 }, { label: 'Hours', width: 6, align: 'right' },
-      { label: 'Amount', width: 9, align: 'right' }, { label: 'Description', width: 28 },
-      { label: 'Receipt', width: 14 },
+      { label: 'Ref', width: 4 }, { label: 'Type', width: 7 }, { label: 'Rep', width: 13 }, { label: 'Date', width: 9 },
+      { label: 'Category', width: 12 }, { label: 'Hours', width: 6, align: 'right' },
+      { label: 'Amount', width: 9, align: 'right' }, { label: 'Description', width: 25 },
+      { label: 'Receipt', width: 15 },
     ],
-    rows: rows.slice(1).map(r => r.map((c, i) => (i === 5 && c !== '' ? '$' + Number(c).toFixed(2) : c))),
-    footer: ['Total', '', '', '', totalHours, '$' + totalAmount.toFixed(2), '', ''],
+    rows: rows.slice(1).map(r => r.map((c, i) => (i === 6 && c !== '' ? '$' + Number(c).toFixed(2) : c))),
+    footer: ['', 'Total', '', '', '', totalHours, '$' + totalAmount.toFixed(2), '', ''],
     note: 'Expenses marked MISSING have no receipt attached in Rep Hub.',
   });
 
@@ -1383,17 +1415,49 @@ r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (re
     ${rows.slice(1).map(r => `<tr>${r.map(c => `<td style="${cellStyle}">${esc(c)}</td>`).join('')}</tr>`).join('')}
   </table>`;
 
+  // One block per expense with its receipt beside it, ready to key in as a
+  // bill — or for Claude to read and enter in Zoho Books with the image
+  // attached. The JSON at the end carries the same facts without any layout.
+  const expenseBlocks = e.map(x => `
+    <div style="border:1px solid #E9ECDF;border-radius:8px;padding:10px 12px;margin:0 0 12px;max-width:760px">
+      <p style="margin:0 0 6px;font-size:14px"><strong>${esc(x.ref)} · $${Number(x.amount).toFixed(2)} · ${esc(x.category)}</strong></p>
+      <p style="margin:0 0 6px;font-size:13px;color:#444">
+        Rep: ${esc(x.rep_name)}<br>Date: ${esc(day(x.entry_date))}<br>
+        Description: ${esc(x.description || '—')}<br>
+        Receipt: ${esc(x.receiptNote)}</p>
+      ${x.receiptCid ? `<img src="cid:${x.receiptCid}" alt="Receipt ${esc(x.ref)}" style="max-width:420px;width:100%;border:1px solid #ddd;border-radius:6px">` : ''}
+    </div>`).join('');
+
+  const forBills = {
+    purpose: 'Approved rep expenses to enter as bills. Each receipt is attached; its filename starts with the ref.',
+    approvedBy: approverUsers.map(u => u.name),
+    expenses: e.map(x => ({
+      ref: x.ref, rep: x.rep_name, date: day(x.entry_date), amount: Number(Number(x.amount).toFixed(2)),
+      currency: 'USD', category: x.category, description: x.description || '',
+      receiptFile: x.receiptNote === 'MISSING' || /^TOO LARGE/.test(x.receiptNote) ? null : x.receiptNote,
+      receiptStatus: x.receiptNote === 'MISSING' ? 'missing' : /^TOO LARGE/.test(x.receiptNote) ? 'too large to attach' : 'attached',
+    })),
+    hours: t.map((x, i) => ({ ref: `H${i + 1}`, rep: x.rep_name, date: day(x.entry_date), hours: Number(x.hours),
+      category: x.category, description: x.description || '' })),
+  };
+
   const stamp = today();
+  const missing = e.filter(x => x.receiptNote === 'MISSING').length;
   const sent = await reminders.sendEmail(to, `Rep hours and expenses — ${stamp}`,
     `<p>${t.length} time entries and ${e.length} expenses approved for payment. ${esc(byLine)}</p>
      <p>Total: ${totalHours} hours, $${totalAmount.toFixed(2)}</p>
-     <p>The same list is attached as a spreadsheet (CSV) and a PDF.</p>
-     ${table}`,
+     <p>Attached: the full list as a spreadsheet (CSV) and a PDF, and ${receipts.length} receipt${receipts.length === 1 ? '' : 's'},
+        each named by its line (E1, E2…).${missing ? ` <strong>${missing} expense${missing === 1 ? ' has' : 's have'} no receipt.</strong>` : ''}</p>
+     ${table}
+     ${e.length ? `<h3 style="font-size:15px;margin:22px 0 10px">Expenses with receipts</h3>${expenseBlocks}` : ''}
+     <h3 style="font-size:13px;margin:22px 0 6px;color:#666">Data for bill entry (JSON)</h3>
+     <pre style="font:12px/1.45 ui-monospace,Menlo,monospace;background:#f5f5f0;padding:10px;border-radius:6px;white-space:pre-wrap">${esc(JSON.stringify(forBills, null, 2))}</pre>`,
     { userId: req.user.id, kind: 'accounting',
       replyTo: approverUsers.length === 1 ? approverUsers[0].email : req.user.email,
       attachments: [
         { filename: `rep-hours-and-expenses-${stamp}.csv`, content: csv, contentType: 'text/csv' },
         { filename: `rep-hours-and-expenses-${stamp}.pdf`, content: pdf, contentType: 'application/pdf' },
+        ...receipts,
       ] });
 
   if (sent && sent.ok === false) {
