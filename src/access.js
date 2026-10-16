@@ -23,6 +23,7 @@ const CAPS = {
   unaffiliated: screen('No ring yet', 'Members who are not in a Growth Ring.'),
   reports:      screen('Reports, coverage and retention', 'The reports, the coverage map and retention.'),
   team:         screen('Reps screen', 'Who covers what, and seeing a rep\'s own view.'),
+  summits:      screen('Summits', 'Summit history, planning checklists, forms and notes.'),
   reminders:    screen('Reminders', 'The reminder emails reps get, and sending them now.'),
   accounting: { group: 'sensitive', label: 'Hours, expenses and accounting',
     detail: 'Approve hours and expenses, send them to accounting and give the final approval.',

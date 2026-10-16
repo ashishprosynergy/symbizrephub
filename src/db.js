@@ -204,6 +204,37 @@ CREATE TABLE IF NOT EXISTS trusted_devices (
 
 CREATE INDEX IF NOT EXISTS idx_device_user ON trusted_devices (user_id);
 
+CREATE TABLE IF NOT EXISTS summit_tasks (
+  id          SERIAL PRIMARY KEY,
+  event_id    TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  stage       TEXT,
+  due_offset  INTEGER,
+  owner       TEXT,
+  done        BOOLEAN NOT NULL DEFAULT FALSE,
+  done_by     TEXT,
+  done_at     TIMESTAMPTZ,
+  position    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS summit_links (
+  id          SERIAL PRIMARY KEY,
+  event_id    TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  url         TEXT NOT NULL,
+  added_by    TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS summit_notes (
+  event_id    TEXT PRIMARY KEY,
+  notes       TEXT,
+  updated_by  TEXT,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_summit_tasks ON summit_tasks (event_id, position);
+
 CREATE TABLE IF NOT EXISTS geocodes (
   address_key TEXT PRIMARY KEY,
   lat         DOUBLE PRECISION,
@@ -311,6 +342,29 @@ const q = {
   forgetDevice: (hash, userId) => query('DELETE FROM trusted_devices WHERE token_hash = $1 AND user_id = $2', [hash, userId]),
   forgetDevicesFor: userId => query('DELETE FROM trusted_devices WHERE user_id = $1', [userId]),
   setRole: (id, role) => query('UPDATE users SET role = $1 WHERE id = $2', [role, id]),
+  /* ── summits ── */
+  summitTasks: eventId => query('SELECT * FROM summit_tasks WHERE event_id = $1 ORDER BY position, id', [eventId]),
+  summitTaskCounts: () => query('SELECT event_id, count(*)::int AS total, sum(CASE WHEN done THEN 1 ELSE 0 END)::int AS done FROM summit_tasks GROUP BY event_id'),
+  addSummitTask: t => query(
+    `INSERT INTO summit_tasks (event_id,title,stage,due_offset,owner,position) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [t.eventId, t.title, t.stage || null, t.dueOffset ?? null, t.owner || null, t.position || 0]),
+  updateSummitTask: (id, eventId, f) => query(
+    `UPDATE summit_tasks SET title = COALESCE($3,title), owner = $4, due_offset = $5, done = $6,
+       done_by = CASE WHEN $6 THEN COALESCE(done_by,$7) ELSE NULL END,
+       done_at = CASE WHEN $6 THEN COALESCE(done_at, now()) ELSE NULL END
+     WHERE id = $1 AND event_id = $2`,
+    [id, eventId, f.title ?? null, f.owner ?? null, f.dueOffset ?? null, !!f.done, f.doneBy || null]),
+  deleteSummitTask: (id, eventId) => query('DELETE FROM summit_tasks WHERE id = $1 AND event_id = $2', [id, eventId]),
+  summitLinks: eventId => query('SELECT * FROM summit_links WHERE event_id = $1 ORDER BY id', [eventId]),
+  addSummitLink: (eventId, label, url, by) => query(
+    'INSERT INTO summit_links (event_id,label,url,added_by) VALUES ($1,$2,$3,$4) RETURNING id', [eventId, label, url, by]),
+  deleteSummitLink: (id, eventId) => query('DELETE FROM summit_links WHERE id = $1 AND event_id = $2', [id, eventId]),
+  summitNotes: eventId => one('SELECT * FROM summit_notes WHERE event_id = $1', [eventId]),
+  allSummitNotes: () => query('SELECT event_id, notes, updated_at FROM summit_notes'),
+  saveSummitNotes: (eventId, notes, by) => query(
+    `INSERT INTO summit_notes (event_id,notes,updated_by,updated_at) VALUES ($1,$2,$3,now())
+     ON CONFLICT (event_id) DO UPDATE SET notes = EXCLUDED.notes, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+    [eventId, notes, by]),
   allGeocodes: () => query('SELECT address_key, lat, lng, source, created_at FROM geocodes'),
   saveGeocode: (key, lat, lng, source) => query(
     `INSERT INTO geocodes (address_key, lat, lng, source) VALUES ($1,$2,$3,$4)

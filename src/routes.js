@@ -1328,6 +1328,178 @@ r.get('/members/map', auth.authRequired, auth.requireOffice, access.requirePerm(
     noAddress: members.filter(m => !geo.hasAddress(m)).length, pending });
 }));
 
+/* ═══════════ SUMMITS (Mel: history, planning, checklists, forms) ═══════════
+ * The summits themselves live in Zoho (Symbiz_Events, Regional and Global
+ * Summit). The planning around them — checklist, forms and documents, notes
+ * on what to do differently — is kept here, per summit. */
+const SUMMIT_TYPES = ['Regional Summit', 'Global Summit'];
+/* Every new summit starts from this list. Days are relative to the summit. */
+const SUMMIT_CHECKLIST = [
+  ['3 months out', -90, 'Confirm the date and book the venue'],
+  ['3 months out', -84, 'Choose the theme and invite the speakers'],
+  ['2 months out', -60, 'Set the summit up in Zoho and show it on the portal'],
+  ['2 months out', -56, 'Agree the meal, room layout and AV with the venue'],
+  ['2 months out', -50, 'Open registration and send the first invitation'],
+  ['1 month out', -30, 'Ask every rep to invite the members in their rings'],
+  ['1 month out', -28, 'Confirm speakers, programme and running order'],
+  ['1 month out', -25, 'Order printing: programmes, signage, handouts'],
+  ['2 weeks out', -14, 'Send the reminder to everyone registered'],
+  ['2 weeks out', -12, 'Give the venue the meal head-count'],
+  ['2 weeks out', -10, 'Arrange volunteers: welcome desk, set-up, clear-up'],
+  ['Week of', -5, 'Print name tags and the sign-in sheet'],
+  ['Week of', -3, 'Final head-count to the venue; test the AV'],
+  ['Week of', -2, 'Pack the event box: name tags, sign-in sheet, forms, gifts'],
+  ['Day of', 0, 'Set up the room and welcome desk'],
+  ['Day of', 0, 'Sign everyone in and collect guest details'],
+  ['After', 2, 'Send thank-you emails to attendees and speakers'],
+  ['After', 5, 'Record attendance in Zoho'],
+  ['After', 7, 'Follow up new guests and leads with their rep'],
+  ['After', 14, 'Debrief: note what worked and what to change next time'],
+];
+function toEastern(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return { date: String(iso || '').slice(0, 10), time: '' };
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit',
+    day: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true }).formatToParts(d).map(x => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute} ${p.dayPeriod}` };
+}
+async function summitEvents() {
+  const rows = await zoho.coql(`select id, Name, Event_Type, Event_Date_and_Time, Event_City, Event_State, Event_Venue,
+      Registration_Count, Total_Registered_People, Attendance_Count, Event_Status
+    from ${M.EVENT} where Event_Type in (${SUMMIT_TYPES.map(t => `'${t}'`).join(',')}) limit 200`);
+  return rows.filter(e => !/\btest\b/i.test(e.Name || '')).map(e => {
+    const when = toEastern(e.Event_Date_and_Time);
+    return { id: e.id, name: e.Name, type: e.Event_Type, date: when.date, time: when.time,
+      city: String(e.Event_City || '').replace(/,\s*$/, ''), state: e.Event_State || '', venue: e.Event_Venue || '',
+      registered: e.Total_Registered_People ?? e.Registration_Count ?? null, attended: e.Attendance_Count ?? null,
+      status: e.Event_Status || '' };
+  }).sort((a, b) => b.date.localeCompare(a.date));
+}
+const summitGuard = [auth.authRequired, auth.requireOffice, access.requirePerm('summits')];
+
+r.get('/summits', ...summitGuard, wrap(async (req, res) => {
+  const [events, counts, notes] = await Promise.all([summitEvents(), q.summitTaskCounts(), q.allSummitNotes()]);
+  const c = new Map(counts.map(x => [x.event_id, x])), n = new Set(notes.filter(x => x.notes).map(x => x.event_id));
+  res.json(events.map(e => ({ ...e, tasksDone: c.get(e.id)?.done || 0, tasksTotal: c.get(e.id)?.total || 0, hasNotes: n.has(e.id) })));
+}));
+
+r.get('/summits/:id', ...summitGuard, wrap(async (req, res) => {
+  const events = await summitEvents();
+  const e = events.find(x => x.id === req.params.id);
+  if (!e) return res.status(404).json({ error: 'That summit was not found in Zoho' });
+  let tasks = await q.summitTasks(e.id);
+  if (!tasks.length) {
+    // First time it is opened: start from the standard checklist
+    for (let i = 0; i < SUMMIT_CHECKLIST.length; i++) {
+      const [stage, dueOffset, title] = SUMMIT_CHECKLIST[i];
+      await q.addSummitTask({ eventId: e.id, title, stage, dueOffset, position: i });
+    }
+    tasks = await q.summitTasks(e.id);
+  }
+  const [links, notes, allNotes] = await Promise.all([q.summitLinks(e.id), q.summitNotes(e.id), q.allSummitNotes()]);
+  const notesBy = new Map(allNotes.map(x => [x.event_id, x.notes]));
+  // History: earlier summits in the same state (or of the same kind), with what was learned
+  const history = events.filter(x => x.id !== e.id && x.date < e.date && (x.state === e.state || (!e.state && x.type === e.type)))
+    .map(x => ({ ...x, notes: notesBy.get(x.id) || '' }));
+  res.json({ summit: e, tasks, links, notes: notes ? notes.notes : '', notesBy: notes ? notes.updated_by : null,
+    notesAt: notes ? notes.updated_at : null, history });
+}));
+
+r.post('/summits/:id/tasks', ...summitGuard, wrap(async (req, res) => {
+  const title = String(req.body?.title || '').trim().slice(0, 300);
+  if (!title) return res.status(400).json({ error: 'What needs doing?' });
+  const n = (await q.summitTasks(req.params.id)).length;
+  const dueOffset = req.body?.dueOffset === '' || req.body?.dueOffset == null ? null : parseInt(req.body.dueOffset, 10);
+  await q.addSummitTask({ eventId: req.params.id, title, stage: 'Added', dueOffset: isNaN(dueOffset) ? null : dueOffset,
+    owner: String(req.body?.owner || '').slice(0, 120) || null, position: n + 100 });
+  res.json(await q.summitTasks(req.params.id));
+}));
+r.patch('/summits/:id/tasks/:taskId', ...summitGuard, wrap(async (req, res) => {
+  const cur = (await q.summitTasks(req.params.id)).find(t => String(t.id) === String(req.params.taskId));
+  if (!cur) return res.status(404).json({ error: 'No such task' });
+  const b = req.body || {};
+  await q.updateSummitTask(cur.id, req.params.id, {
+    title: b.title != null ? String(b.title).slice(0, 300) : null,
+    owner: b.owner !== undefined ? (String(b.owner || '').slice(0, 120) || null) : cur.owner,
+    dueOffset: b.dueOffset !== undefined ? (b.dueOffset === '' || b.dueOffset == null ? null : parseInt(b.dueOffset, 10)) : cur.due_offset,
+    done: b.done !== undefined ? !!b.done : cur.done, doneBy: req.user.name,
+  });
+  res.json(await q.summitTasks(req.params.id));
+}));
+r.delete('/summits/:id/tasks/:taskId', ...summitGuard, wrap(async (req, res) => {
+  await q.deleteSummitTask(parseInt(req.params.taskId, 10), req.params.id);
+  res.json(await q.summitTasks(req.params.id));
+}));
+r.post('/summits/:id/links', ...summitGuard, wrap(async (req, res) => {
+  const label = String(req.body?.label || '').trim().slice(0, 200), url = String(req.body?.url || '').trim().slice(0, 1000);
+  if (!label || !/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Give it a name and a link starting with https://' });
+  await q.addSummitLink(req.params.id, label, url, req.user.name);
+  res.json(await q.summitLinks(req.params.id));
+}));
+r.delete('/summits/:id/links/:linkId', ...summitGuard, wrap(async (req, res) => {
+  await q.deleteSummitLink(parseInt(req.params.linkId, 10), req.params.id);
+  res.json(await q.summitLinks(req.params.id));
+}));
+r.put('/summits/:id/notes', ...summitGuard, wrap(async (req, res) => {
+  await q.saveSummitNotes(req.params.id, String(req.body?.notes || '').slice(0, 20000), req.user.name);
+  res.json({ ok: true });
+}));
+
+/**
+ * Retention, from Zoho Memberships (start and end dates), not the contact's
+ * Inactive flag — which has no date, so "left this year" was unanswerable.
+ *   left       = members with no current membership whose last one ended this year
+ *   retention  = of the members whose membership was running on 1 January,
+ *                the share still a member now
+ */
+r.get('/stats/retention', auth.authRequired, auth.requireOffice, access.requirePerm('reports'), wrap(async (req, res) => {
+  const yr = String(new Date().getFullYear()), jan1 = `${yr}-01-01`;
+  const [deals, joins] = await Promise.all([
+    zoho.coql(`select Contact_Name, Membership_Tier, Stage, Start_Date, Expiry_Date, Reason_For_Loss__s
+      from Deals where Contact_Name is not null limit 200`),
+    zoho.coql(`select id, Full_Name, Paid_Membership_StartDate from Contacts
+      where (Active = true and Status = 'Active') and Paid_Membership_StartDate >= '${jan1}' limit 200`),
+  ]);
+  const isTest = n => /\btest\b/i.test(n || '');
+  const live = s => !/inactive/i.test(s || '');             // Closed Won/Active, New, Invoice Generated…
+  const byContact = new Map();
+  deals.forEach(d => {
+    const id = d.Contact_Name?.id; if (!id || isTest(d.Contact_Name?.name)) return;
+    (byContact.get(id) || byContact.set(id, { name: d.Contact_Name.name, deals: [] }).get(id)).deals.push(d);
+  });
+  const left = [], leftNoDate = [], tiers = {};
+  let base = 0, retained = 0;
+  for (const [id, c] of byContact) {
+    const current = c.deals.some(d => live(d.Stage));
+    const latest = c.deals.slice().sort((a, b) => String(b.Expiry_Date || b.Start_Date || '').localeCompare(String(a.Expiry_Date || a.Start_Date || '')))[0];
+    if (current) {
+      const t = (c.deals.find(d => live(d.Stage)) || {}).Membership_Tier || 'Not set';
+      tiers[t] = (tiers[t] || 0) + 1;
+    } else if (latest.Expiry_Date && latest.Expiry_Date >= jan1) {
+      left.push({ id, name: c.name, tier: latest.Membership_Tier || '', ended: latest.Expiry_Date, reason: latest.Reason_For_Loss__s || '' });
+    } else if (!latest.Expiry_Date) {
+      leftNoDate.push({ id, name: c.name, tier: latest.Membership_Tier || '' });
+    }
+    // Running on 1 January: started before then (or no start recorded) and not ended before then
+    const runningJan1 = c.deals.some(d => (!d.Start_Date || d.Start_Date < jan1) && (!d.Expiry_Date || d.Expiry_Date >= jan1));
+    if (runningJan1) { base++; if (current) retained++; }
+  }
+  const months = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, joined: 0, left: 0 }));
+  joins.forEach(c => { const m = Number(String(c.Paid_Membership_StartDate || '').slice(5, 7)); if (!isTest(c.Full_Name) && m) months[m - 1].joined++; });
+  left.forEach(l => { const m = Number(l.ended.slice(5, 7)); if (l.ended.slice(0, 4) === yr && m) months[m - 1].left++; });
+  const reasons = {};
+  left.forEach(l => { const k = l.reason || 'Not recorded'; reasons[k] = (reasons[k] || 0) + 1; });
+  res.json({
+    year: yr,
+    joined: joins.filter(c => !isTest(c.Full_Name)).length,
+    left: left.length, leftNoDate: leftNoDate.length,
+    retention: base ? Math.round(retained / base * 1000) / 10 : null, base, retained,
+    activeMemberships: Object.values(tiers).reduce((s, n) => s + n, 0), tiers,
+    months: months.filter(m => m.month <= new Date().getMonth() + 1),
+    reasons, leftList: left.sort((a, b) => b.ended.localeCompare(a.ended)), leftNoDateList: leftNoDate,
+  });
+}));
+
 /** The Overview's headline numbers, counted by Zoho — the same figure every time. */
 r.get('/stats', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
   const year = String(new Date().getFullYear());

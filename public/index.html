@@ -128,6 +128,37 @@
   .nv-row{padding:9px 0 9px 37px;}
   .nv-row[hidden],.nv-grp[hidden]{display:none;}
   .inline-link{color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;}
+  /* Summits */
+  .summit-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin-bottom:6px;}
+  .summit-card{margin:0;transition:transform .15s,box-shadow .15s;}
+  .summit-card:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(20,30,15,.08);}
+  .summit-nums{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--ink-muted);margin:10px 0 6px;}
+  .summit-nums strong{color:var(--ink);}
+  .hist-year{font-family:var(--serif);font-size:15px;padding:10px 0 2px;color:var(--ink-muted);}
+  .hist-nums{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:12px;color:var(--ink-muted);white-space:nowrap;}
+  .hist-nums strong{color:var(--ink);}
+  .summit-hero{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;padding:16px 18px;}
+  .summit-stats{display:flex;gap:18px;}
+  .summit-stats > div{display:flex;flex-direction:column;align-items:center;min-width:64px;}
+  .chk-stage{padding:4px 15px;margin-bottom:8px;}
+  .chk-head{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);padding:10px 0 4px;}
+  .chk-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line-soft);}
+  .chk-row input[type=checkbox]{width:19px;height:19px;accent-color:var(--primary);flex:none;cursor:pointer;}
+  .chk-main{flex:1;min-width:0;}
+  .chk-title{font-size:14px;}
+  .chk-row.done .chk-title{text-decoration:line-through;color:var(--ink-faint);}
+  .chk-late{color:var(--rust);font-weight:600;}
+  .chk-owner{width:110px;font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--line-soft);border-radius:7px;background:var(--surface-2);color:var(--ink);}
+  .chk-add{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;}
+  .chk-add input{font:inherit;font-size:13.5px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);}
+  .chk-add input[name=title],.chk-add input[name=label],.chk-add input[name=url]{flex:1;min-width:180px;}
+  .chk-add input[name=dueOffset]{width:150px;} .chk-add input[name=owner]{width:120px;}
+  .summit-notes{width:100%;min-height:120px;font:inherit;font-size:14px;line-height:1.55;padding:10px 12px;border:1px solid var(--line);
+    border-radius:9px;background:var(--surface-2);color:var(--ink);resize:vertical;margin-bottom:6px;}
+  .hist-card{padding:12px 15px;margin-bottom:8px;}
+  .hist-notes{margin-top:8px;padding:9px 11px;background:var(--surface-2);border-radius:8px;font-size:13px;white-space:pre-wrap;line-height:1.5;}
+  @media (max-width:560px){ .chk-owner{width:80px;} .summit-stats{width:100%;justify-content:space-around;} }
+
   /* Member map */
   .map-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
   .map-tools .chip{display:inline-flex;align-items:center;gap:6px;}
@@ -142,6 +173,26 @@
   .map-pop .mp-actions{display:flex;gap:12px;margin-top:8px;font-weight:600;}
   .map-pop .mp-actions a{color:#2E5132;}
   .d-dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex:none;}
+  .jl-key{display:flex;gap:12px;font-size:11.5px;color:var(--ink-muted);}
+  .jl-key i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px;}
+  /* Pie charts */
+  .donut-card{padding:14px 15px;}
+  .donut-wrap{display:flex;align-items:center;gap:16px;margin-top:8px;}
+  .donut{position:relative;width:118px;height:118px;flex:none;}
+  .donut svg{width:100%;height:100%;transform:rotate(-90deg);}
+  .d-bg{fill:none;stroke:var(--line-soft);stroke-width:15;}
+  .d-seg{fill:none;stroke-width:15;cursor:pointer;transition:opacity .15s;}
+  .d-seg:hover{opacity:.8;}
+  .d-in{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  .d-n{font-family:var(--serif);font-size:24px;line-height:1;}
+  .d-l{font-size:10.5px;color:var(--ink-muted);margin-top:2px;}
+  .d-legend{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+  .d-key{display:flex;align-items:center;gap:8px;padding:4px 6px;border:0;border-radius:7px;background:none;font:inherit;
+    font-size:13px;color:var(--ink);text-align:left;cursor:pointer;}
+  .d-key:hover:not([disabled]){background:var(--surface-2);}
+  .d-key[disabled]{cursor:default;}
+  .d-lab{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .d-pct{font-size:11px;color:var(--ink-faint);min-width:30px;text-align:right;}
 
   /* Membership levels */
   .tag.tier{background:var(--line-soft);color:var(--ink-muted);}
@@ -1543,7 +1594,7 @@ const isAdmin = () => me().role==='admin';
 const isOwner = () => !!me().owner;
 /* What this person may do, as the server decided (see src/access.js).
    Reps: nothing office-side. Without a server (demo), the office can do all. */
-const SCREEN_CAPS = ['manager','approvals','calendar','members','rings','visits','unaffiliated','reports','team','reminders'];
+const SCREEN_CAPS = ['manager','approvals','calendar','members','rings','visits','unaffiliated','reports','team','reminders','summits'];
 function can(cap){
   const m = me();
   if(!m || m.role === 'rep') return false;
@@ -1554,7 +1605,7 @@ function can(cap){
   return !!m.perms[cap];
 }
 /* Which switch each office screen sits behind (Overview is always there) */
-const VIEW_CAP = { manager:'manager', approvals:'approvals', calendar:'calendar', members:'members', map:'members', allrings:'rings',
+const VIEW_CAP = { manager:'manager', approvals:'approvals', calendar:'calendar', members:'members', map:'members', summits:'summits', summitDetail:'summits', allrings:'rings',
   visits:'visits', unaffiliated:'unaffiliated', reports:'reports', coverage:'reports', insights:'reports', team:'team',
   reminders:'reminders', timesheet:'accounting', checks:'system' };
 function canView(v){
@@ -1785,11 +1836,12 @@ const ICON_PATHS = {
   logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   key:'<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3"/>',
   shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
+  flag:'<path d="M4 22V4"/><path d="M4 4h13l-2 4 2 4H4"/>',
 };
 const VIEW_ICONS = { today:'home', dash:'grid', rings:'ring', allrings:'ring', people:'users', members:'users',
   calendar:'calendar', timesheet:'clock', resources:'folder', callsheet:'printer', manager:'briefcase',
   approvals:'check', visits:'pin', unaffiliated:'userplus', reports:'chart', coverage:'map', insights:'trend',
-  progress:'trend', team:'user', reminders:'bell', settings:'sliders', checks:'pulse', requests:'inbox', access:'shield', map:'pin' };
+  progress:'trend', team:'user', reminders:'bell', settings:'sliders', checks:'pulse', requests:'inbox', access:'shield', map:'pin', summits:'flag' };
 function icon(name, size){
   const p = ICON_PATHS[VIEW_ICONS[name] || name] || ICON_PATHS.grid;
   const fill = name === 'more' ? 'currentColor' : 'none';
@@ -3078,37 +3130,63 @@ function vAllRings(){
     ${moreButton('rings', Math.min(pageOf('rings'), ringsOfType(S.rings).length), ringsOfType(S.rings).length)}`;
 }
 
+/* Retention, worked out on the server from Zoho Memberships (see /stats/retention) */
+var retentionData = null, retentionBusy = false;
+function loadRetention(force){
+  if(retentionBusy || (retentionData && !force) || !API.live) return;
+  retentionBusy = true;
+  API.call('/stats/retention').then(v => { retentionData = v; }).catch(e => { retentionData = { error: e.message }; })
+    .finally(() => { retentionBusy = false; if(ui.view === 'insights') renderContent(); });
+}
+const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+/* Joined vs left, month by month: two bars a month */
+function joinLeftChart(months){
+  const max = Math.max(1, ...months.map(m => Math.max(m.joined, m.left)));
+  const w = 100 / Math.max(1, months.length);
+  return `<div class="card trend"><div class="trend-head"><div><div class="trend-t">Joined and left, month by month</div></div>
+      <div class="jl-key"><span><i style="background:var(--primary)"></i>Joined</span><span><i style="background:var(--rust)"></i>Left</span></div></div>
+    <svg class="trend-bars" viewBox="0 0 100 100" preserveAspectRatio="none" style="height:110px">
+      ${months.map((m, i) => { const x = i * w, bw = w * 0.32, hj = Math.round(m.joined / max * 96), hl = Math.round(m.left / max * 96);
+        return `<rect x="${(x + w*0.16).toFixed(2)}" y="${100-hj}" width="${bw.toFixed(2)}" height="${Math.max(hj, m.joined?2:0)}" rx="1" style="fill:var(--primary)"><title>${MONTH_SHORT[m.month-1]}: ${m.joined} joined</title></rect>
+          <rect x="${(x + w*0.52).toFixed(2)}" y="${100-hl}" width="${bw.toFixed(2)}" height="${Math.max(hl, m.left?2:0)}" rx="1" style="fill:var(--rust)"><title>${MONTH_SHORT[m.month-1]}: ${m.left} left</title></rect>`; }).join('')}
+    </svg>
+    <div class="trend-foot" style="justify-content:space-around">${months.map(m => `<span>${MONTH_SHORT[m.month-1]}</span>`).join('')}</div></div>`;
+}
 function vInsights(){
   const exits=S.activities.filter(a=>a.type==='Exit Interview');
   const counts={}; exits.forEach(e=>{const k=e.exitReason||'Not recorded'; counts[k]=(counts[k]||0)+1;});
   const max=Math.max(1,...Object.values(counts));
-  const yr = String(new Date().getFullYear());
-  const joined = S.members.filter(m => m.status==='active' && m.joined && m.joined >= yr+'-01-01').length;
-  // Exit interviews logged here. Separate from Zoho's Inactive flag, which
-  // carries no date, so the two numbers answer different questions.
-  const left = exits.filter(e => e.date >= yr+'-01-01').length;
-  const inactive = S.members.filter(m => m.status !== 'active').length;
-  const net = joined - left;
-  const retention=S.members.length?Math.round(S.members.filter(m=>m.status==='active').length/S.members.length*100):0;
-  return `<div class="section-head"><div><h2>Retention insights</h2><div class="sub">Why members leave, and whether the network is growing.</div></div>
-    <button class="btn" onclick="ui.report='exit-interviews';exportReport()">Export CSV</button></div>
-    <div class="callout"><strong>Where these numbers come from</strong>
-      <em>Joined</em> counts the paid membership start date held in Zoho.
-      <em>Exit interviews</em> counts those logged here by reps.
-      <em>Inactive in Zoho</em> is a running total, not a figure for this year —
-      Zoho records that someone is inactive but not the date they left.
-      Adding a "date left" field in Zoho would let this show a proper yearly figure.</div>
+  const head = `<div class="section-head"><div><h2>Retention insights</h2><div class="sub">Who joins, who leaves, and whether the network is growing.</div></div>
+    <button class="btn" onclick="ui.report='exit-interviews';exportReport()">Export CSV</button></div>`;
+  loadRetention();
+  const R = retentionData;
+  const top = !R ? skeleton(3) : R.error ? `<div class="callout rust"><strong>Could not work out retention</strong>${esc(R.error)}</div>` : `
     <div class="stats">
-      <div class="stat"><div class="n" style="color:var(--primary)">+${joined}</div><div class="l">Joined in ${yr}</div></div>
-      <div class="stat"><div class="n" style="color:var(--rust)">−${left}</div><div class="l">Exit interviews in ${yr}</div></div>
-      <div class="stat"><div class="n">${inactive}</div><div class="l">Inactive in Zoho</div></div>
-      <div class="stat"><div class="n">${retention}%</div><div class="l">Retention</div></div>
+      <div class="stat"><div class="n" style="color:var(--primary)">+${R.joined}</div><div class="l">Joined in ${R.year}</div></div>
+      <div class="stat click" onclick="document.getElementById('leftList').scrollIntoView({behavior:'smooth'})"><div class="n" style="color:var(--rust)">−${R.left}</div><div class="l">Left in ${R.year}</div></div>
+      <div class="stat"><div class="n">${R.retention == null ? '—' : R.retention + '%'}</div><div class="l">Retained since 1 Jan<br><span style="font-size:10px;opacity:.7">${R.retained} of ${R.base}</span></div></div>
+      <div class="stat"><div class="n">${R.activeMemberships}</div><div class="l">Current memberships</div></div>
     </div>
+    <div class="dash-pair">${joinLeftChart(R.months)}
+      ${donut('Current members by level', Object.entries(R.tiers).sort((a,b)=>b[1]-a[1]).map(([t,n]) =>
+        ({ label: t, value: n, color: TIER_COLOURS[t] || '#8A9284' })), R.activeMemberships, 'members')}</div>
+    <div class="callout"><strong>Where these numbers come from</strong>
+      All from Zoho. <em>Joined</em> is the paid membership start date on the member.
+      <em>Left</em> is a member with no current membership whose last one ended (Membership End Date) this year.
+      <em>Retained</em> is, of everyone whose membership was running on 1 January, how many still have one.
+      ${R.leftNoDate ? `<br><strong style="display:inline">${R.leftNoDate} inactive membership${R.leftNoDate===1?' has':'s have'} no end date</strong> in Zoho, so ${R.leftNoDate===1?'it is':'they are'} not counted in a month — filling those in makes Left exact.` : ''}</div>
+    <h3 class="sub-h" id="leftList">Who left in ${R.year} · ${R.left}</h3>
+    ${R.leftList.length ? `<div class="card" style="padding:4px 15px">${R.leftList.map(l => `<div class="row ${S.members.some(m=>m.id===l.id)?'clicky':''}" ${S.members.some(m=>m.id===l.id)?`onclick="openMember('${l.id}')"`:''}>
+      <div class="row-main"><div class="row-title">${esc(l.name)} ${l.tier?`<span class="tag tier tier-${esc(l.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(l.tier)}</span>`:''}</div>
+        <div class="row-sub">Membership ended ${fmt(l.ended)}${l.reason?' · reason: '+esc(l.reason):''}</div></div></div>`).join('')}</div>`
+      : `<div class="empty">Nobody has left this year.</div>`}`;
+  return head + top + `
     <h3 class="sub-h">Reasons given for leaving</h3>
+    ${R && R.reasons && Object.keys(R.reasons).length ? `<div class="row-sub" style="margin:-4px 0 8px">From Zoho's "Reason for loss": ${Object.entries(R.reasons).map(([k,v])=>`${esc(k)} ${v}`).join(' · ')}</div>` : ''}
     ${Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div style="margin-bottom:11px">
       <div style="display:flex;justify-content:space-between;font-size:13.5px"><span>${esc(k)}</span><strong>${v}</strong></div>
       <div class="bar"><span style="width:${(v/max)*100}%"></span></div></div>`).join('')||`<div class="empty">No exit interviews recorded yet.</div>`}
-    <h3 class="sub-h">Each interview</h3>
+    ${exits.length ? `<h3 class="sub-h">Each exit interview</h3>` : ''}
     ${exits.map(e=>`<div class="row"><div class="row-main"><div class="row-title">${esc(e.who)}</div>
       <div class="row-sub">${pname(e.repId)} · ${fmt(e.date)} · would return: ${esc(e.wouldReturn||'—')}${e.notes?' · '+esc(e.notes):''}</div></div>
       <span class="tag later">${esc(e.exitReason||'—')}</span></div>`).join('')}`;
@@ -3764,7 +3842,7 @@ function vAccess(){
 function myAccessSummary(){
   const p = me().perms || {};
   const labels = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', rings:'Rings',
-    visits:'Visits', unaffiliated:'No ring yet', reports:'Reports, coverage and retention', team:'Reps screen', reminders:'Reminders',
+    visits:'Visits', unaffiliated:'No ring yet', reports:'Reports, coverage and retention', team:'Reps screen', reminders:'Reminders', summits:'Summits',
     accounting:'Hours, expenses and accounting', books:'Zoho Books and accounting settings', users:'Rep accounts',
     settings:'App settings', system:'System check and activity log' };
   Object.keys(labels).forEach(k => { if(!(k in p)) p[k] = SCREEN_CAPS.includes(k); });
@@ -4297,6 +4375,165 @@ function mgrRefilter(){
   document.querySelectorAll('.mgr-card').forEach(c => { const hit = !q || c.dataset.name.includes(q); c.hidden = !hit; if(hit) n++; });
   const none = document.getElementById('mgrNone'); if(none) none.hidden = n > 0;
 }
+/* ══════════════ SUMMITS (Mel) ══════════════
+ * Every Regional and Global Summit from Zoho: the ones coming up with their
+ * planning checklist, and the history of past ones with what was learned. */
+var summitList = null, summitBusy = false, summitDetail = null, summitDetailId = null;
+function loadSummits(force){
+  if(summitBusy || (summitList && !force) || !API.live) return;
+  summitBusy = true;
+  API.call('/summits').then(v => { summitList = v; }).catch(e => { summitList = { error: e.message }; })
+    .finally(() => { summitBusy = false; if(ui.view === 'summits') renderContent(); });
+}
+function openSummit(id){
+  goingTo(); ui.view = 'summitDetail'; ui.summitId = id;
+  if(summitDetailId !== id){ summitDetail = null; summitDetailId = id; }
+  render();
+  API.call('/summits/' + id).then(v => { summitDetail = v; }).catch(e => { summitDetail = { error: e.message }; })
+    .finally(() => { if(ui.view === 'summitDetail' && ui.summitId === id) renderContent(); });
+}
+const summitPlace = s => [s.venue, [s.city, s.state].filter(Boolean).join(', ')].filter(Boolean).join(', ');
+function vSummits(){
+  const head = `<div class="section-head"><div><h2>Summits</h2>
+    <div class="sub">Every Regional and Global Summit: planning for the next ones, and how past ones went.</div></div>
+    ${summitList && !summitList.error ? `<button class="btn sm" onclick="loadSummits(true)">Refresh</button>` : ''}</div>`;
+  if(!API.live) return head + `<div class="empty">Summits need the live server.</div>`;
+  loadSummits();
+  if(!summitList) return head + skeleton(4);
+  if(summitList.error) return head + `<div class="callout rust"><strong>Could not load summits</strong>${esc(summitList.error)}</div>`;
+  const ahead = summitList.filter(s => s.date >= TODAY_S).sort((a,b) => a.date.localeCompare(b.date));
+  const past = summitList.filter(s => s.date < TODAY_S);
+  const pct = s => s.tasksTotal ? Math.round(s.tasksDone / s.tasksTotal * 100) : 0;
+  const byYear = {};
+  past.forEach(s => (byYear[s.date.slice(0,4)] = byYear[s.date.slice(0,4)] || []).push(s));
+  return head + `
+    <h3 class="sub-h">Coming up · ${ahead.length}</h3>
+    ${ahead.length ? `<div class="summit-grid">${ahead.map(s => { const d = days(s.date);
+      return `<div class="card summit-card clicky" onclick="openSummit('${s.id}')">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+          <div style="min-width:0"><div class="row-title">${esc(s.name)}</div>
+            <div class="row-sub">${fmt(s.date)}${s.time ? ' · ' + esc(s.time) : ''}</div>
+            <div class="row-sub">${mapLink(summitPlace(s))}</div></div>
+          <span class="tag ${d <= 14 ? 'soon' : 'info'}">${d === 0 ? 'today' : d === 1 ? 'tomorrow' : 'in ' + d + ' days'}</span></div>
+        <div class="summit-nums"><span><strong>${s.registered ?? 0}</strong> registered</span>
+          <span>${s.tasksTotal ? `<strong>${s.tasksDone}/${s.tasksTotal}</strong> planning done` : 'Planning not started'}</span></div>
+        <div class="load"><span style="width:${pct(s)}%;background:${pct(s) >= 80 ? 'var(--primary)' : d <= 14 ? 'var(--accent)' : 'var(--primary)'}"></span></div>
+      </div>`; }).join('')}</div>` : `<div class="empty">No summits scheduled in Zoho yet.</div>`}
+
+    <h3 class="sub-h">History</h3>
+    ${Object.keys(byYear).sort().reverse().map(y => `<div class="card" style="padding:4px 15px;margin-bottom:10px">
+      <div class="hist-year">${y}</div>
+      ${byYear[y].map(s => { const rate = s.registered && s.attended != null ? Math.round(s.attended / s.registered * 100) : null;
+        return `<div class="row clicky" onclick="openSummit('${s.id}')"><div class="row-main">
+          <div class="row-title">${esc(s.name)} ${s.hasNotes ? '<span class="tag ok">notes</span>' : ''}</div>
+          <div class="row-sub">${fmt(s.date)} · ${esc(summitPlace(s) || '—')}</div></div>
+          <div class="hist-nums"><span><strong>${s.registered ?? '—'}</strong> reg.</span>
+            <span><strong>${s.attended ?? '—'}</strong> came${rate != null ? ` · ${rate}%` : ''}</span></div></div>`; }).join('')}</div>`).join('')
+      || `<div class="empty">No past summits in Zoho.</div>`}`;
+}
+function vSummitDetail(){
+  const back = `<button class="back" onclick="setView('summits')">‹ All summits</button>`;
+  const D = summitDetail;
+  if(!D) return back + skeleton(6);
+  if(D.error) return back + `<div class="callout rust"><strong>Could not open this summit</strong>${esc(D.error)}</div>`;
+  const s = D.summit, done = D.tasks.filter(t => t.done).length, total = D.tasks.length;
+  const dueOf = t => t.due_offset == null ? null : addDays(s.date, t.due_offset);
+  const stages = [...new Set(D.tasks.map(t => t.stage || 'Other'))];
+  const pastEvent = s.date < TODAY_S;
+  return back + `
+    <div class="summit-hero card">
+      <div style="min-width:0;flex:1"><h2 style="font-size:22px">${esc(s.name)}</h2>
+        <div class="row-sub" style="font-size:13.5px;margin-top:4px">${fmt(s.date)}${s.time ? ' · ' + esc(s.time) : ''} · ${mapLink(summitPlace(s))}</div>
+        <div class="btnrow" style="margin-top:10px">
+          ${S.events.some(e => e.id === s.id) ? `<button class="btn sm" onclick="openEvent('${s.id}')">Registrations</button>
+            <button class="btn sm" onclick="printSignInSheet('${s.id}')">Sign-in sheet</button>` : ''}</div></div>
+      <div class="summit-stats">
+        <div><span class="kpi-n">${s.registered ?? 0}</span><span class="kpi-l">registered</span></div>
+        ${pastEvent ? `<div><span class="kpi-n">${s.attended ?? '—'}</span><span class="kpi-l">attended</span></div>` : `<div><span class="kpi-n">${Math.max(0, days(s.date))}</span><span class="kpi-l">days to go</span></div>`}
+        <div><span class="kpi-n">${done}/${total}</span><span class="kpi-l">planning done</span></div>
+      </div>
+    </div>
+
+    <h3 class="sub-h">Planning checklist</h3>
+    <div class="load" style="margin:-2px 0 10px"><span style="width:${total ? Math.round(done/total*100) : 0}%"></span></div>
+    ${stages.map(st => `<div class="card chk-stage"><div class="chk-head">${esc(st)}</div>
+      ${D.tasks.filter(t => (t.stage || 'Other') === st).map(t => { const due = dueOf(t), late = !t.done && due && due < TODAY_S;
+        return `<div class="chk-row ${t.done ? 'done' : ''}">
+          <input type="checkbox" ${t.done ? 'checked' : ''} onchange="summitTask(${t.id},{done:this.checked})" aria-label="Done">
+          <div class="chk-main"><div class="chk-title">${esc(t.title)}</div>
+            <div class="row-sub">${due ? `<span class="${late ? 'chk-late' : ''}">${late ? 'Was due ' : 'Due '}${fmtShort(due)}</span>` : 'No date'}
+              ${t.done && t.done_by ? ` · done by ${esc(t.done_by)}` : ''}</div></div>
+          <input class="chk-owner" placeholder="Who" value="${esc(t.owner || '')}" onchange="summitTask(${t.id},{owner:this.value})">
+          <button class="btn sm ghost" title="Remove" onclick="summitTaskDelete(${t.id})">✕</button></div>`; }).join('')}</div>`).join('')}
+    <form class="card chk-add" onsubmit="event.preventDefault();summitTaskAdd(this)">
+      <input name="title" placeholder="Add a task…" required>
+      <input name="dueOffset" type="number" placeholder="Days before (−) / after" title="Days before the summit (negative) or after it">
+      <input name="owner" placeholder="Who">
+      <button class="btn sm primary" type="submit">Add</button></form>
+
+    <h3 class="sub-h">Forms and documents</h3>
+    <div class="card" style="padding:4px 15px">
+      ${(() => { const folder = (S.settings.links || {}).d_summit;
+        return folder && folder !== '#' ? `<div class="row"><div class="row-main"><div class="row-title">Regional Summits folder</div>
+          <div class="row-sub">The shared Drive folder, set in Settings</div></div><a class="btn sm" href="${esc(folder)}" target="_blank" rel="noopener">Open</a></div>` : ''; })()}
+      ${D.links.map(l => `<div class="row"><div class="row-main"><div class="row-title">${esc(l.label)}</div>
+        <div class="row-sub">${esc(l.added_by || '')}</div></div>
+        <div class="row-actions"><a class="btn sm" href="${esc(l.url)}" target="_blank" rel="noopener">Open</a>
+          <button class="btn sm ghost" onclick="summitLinkDelete(${l.id})">✕</button></div></div>`).join('')}
+      <form class="chk-add" style="border:0;padding:12px 0" onsubmit="event.preventDefault();summitLinkAdd(this)">
+        <input name="label" placeholder="Name, e.g. Registration form" required>
+        <input name="url" placeholder="https://…" required>
+        <button class="btn sm" type="submit">Add link</button></form>
+    </div>
+
+    <h3 class="sub-h">Notes for next time</h3>
+    <div class="card">
+      <textarea id="summitNotes" class="summit-notes" placeholder="What worked, what to change, numbers to remember…"
+        onchange="summitNotesSave(this.value)">${esc(D.notes || '')}</textarea>
+      <div class="row-sub" id="summitNotesSaved">${D.notesBy ? `Last saved by ${esc(D.notesBy)}` : 'Saved automatically when you click away.'}</div>
+    </div>
+
+    <h3 class="sub-h">Earlier summits${s.state ? ' in ' + esc(s.state) : ''}</h3>
+    ${D.history.length ? D.history.map(h => `<div class="card hist-card">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div><div class="row-title clicky" onclick="openSummit('${h.id}')">${esc(h.name)}</div>
+          <div class="row-sub">${fmt(h.date)} · ${esc(summitPlace(h) || '—')}</div></div>
+        <div class="hist-nums"><span><strong>${h.registered ?? '—'}</strong> registered</span><span><strong>${h.attended ?? '—'}</strong> attended</span></div></div>
+      ${h.notes ? `<div class="hist-notes">${esc(h.notes)}</div>` : ''}</div>`).join('')
+      : `<div class="empty">No earlier summit${s.state ? ' in ' + esc(s.state) : ''} in Zoho.</div>`}`;
+}
+async function summitCall(path, opts, what){
+  try{ return await API.call('/summits/' + ui.summitId + path, opts); }
+  catch(e){ toast(e.message || 'Could not save ' + (what || 'that')); return null; }
+}
+async function summitTask(id, change){
+  const tasks = await summitCall('/tasks/' + id, { method: 'PATCH', body: JSON.stringify(change) }, 'the task');
+  if(tasks && summitDetail){ summitDetail.tasks = tasks; summitList = null; renderContent(); }
+}
+async function summitTaskAdd(form){
+  const f = form.elements;
+  const tasks = await summitCall('/tasks', { method: 'POST', body: JSON.stringify({ title: f.title.value, dueOffset: f.dueOffset.value, owner: f.owner.value }) });
+  if(tasks){ summitDetail.tasks = tasks; summitList = null; renderContent(); toast('Task added'); }
+}
+async function summitTaskDelete(id){
+  if(!confirm('Remove this task?')) return;
+  const tasks = await summitCall('/tasks/' + id, { method: 'DELETE' });
+  if(tasks){ summitDetail.tasks = tasks; summitList = null; renderContent(); }
+}
+async function summitLinkAdd(form){
+  const f = form.elements;
+  const links = await summitCall('/links', { method: 'POST', body: JSON.stringify({ label: f.label.value, url: f.url.value }) }, 'the link');
+  if(links){ summitDetail.links = links; renderContent(); toast('Link added'); }
+}
+async function summitLinkDelete(id){
+  const links = await summitCall('/links/' + id, { method: 'DELETE' });
+  if(links){ summitDetail.links = links; renderContent(); }
+}
+async function summitNotesSave(text){
+  const ok = await summitCall('/notes', { method: 'PUT', body: JSON.stringify({ notes: text }) }, 'the notes');
+  if(ok){ summitDetail.notes = text; summitList = null; const n = document.getElementById('summitNotesSaved'); if(n) n.textContent = 'Saved'; }
+}
+
 /* ══════════════ MEMBER MAP (Mel) ══════════════
  * Every active member pinned at their mailing address, coloured by
  * membership level, filterable by rep. OpenStreetMap tiles via Leaflet; each
@@ -5021,7 +5258,7 @@ function navGroups(){
     ['Admin', [['timesheet','Hours & expenses'],['resources','Web Toolbox'],['callsheet','Call sheet']]],
   ];
   const office = [
-    ['', [['dash','Overview'],['manager','Rep manager'],['approvals','Approvals'],['calendar','Calendar']]],
+    ['', [['dash','Overview'],['manager','Rep manager'],['approvals','Approvals'],['calendar','Calendar'],['summits','Summits']]],
     ['Records', [['members','Members'],['map','Member map'],['allrings','Rings'],['visits','Visits'],['unaffiliated','No ring yet']]],
     ['Reporting', [['reports','Reports'],['coverage','Coverage'],['insights','Retention'],['timesheet','Hours & expenses']]],
     ['Setup', [['team','Reps'],['reminders','Reminders'],['settings','Settings'],
@@ -6302,7 +6539,7 @@ function renderContentSafe(el){
       </div>`;
   }
 }
-const VIEW_TITLE = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', map:'Member map', allrings:'Rings',
+const VIEW_TITLE = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', map:'Member map', summits:'Summits', summitDetail:'Summits', allrings:'Rings',
   visits:'Visits', unaffiliated:'No ring yet', reports:'Reports', coverage:'Coverage', insights:'Retention', team:'Reps',
   reminders:'Reminders', timesheet:'Hours and expenses', checks:'System check', settings:'Settings', access:'Access & security' };
 function renderContentInner(el){
@@ -6328,7 +6565,7 @@ function renderContentInner(el){
     :v==='members'?vMembersAll():v==='allrings'?vAllRings():v==='insights'?vInsights()
     :v==='team'?(API.live ? (setTimeout(()=>loadUsers(),0), vTeam()) : vTeam()):v==='reminders'?vReminders()
     :v==='settings'?((can('settings')||can('books'))?vSettings():noAccess('Settings'))
-    :v==='access'?vAccess():v==='map'?vMemberMap():vOfficeDash();
+    :v==='access'?vAccess():v==='map'?vMemberMap():v==='summits'?vSummits():v==='summitDetail'?vSummitDetail():vOfficeDash();
 }
 
 /**

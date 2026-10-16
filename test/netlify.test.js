@@ -1222,6 +1222,47 @@ describe("ring meetings, membership levels and the member map", () => {
     assert.equal(m.renewalDate, '2027-01-01');
   });
 
+  test('summits: list, standard checklist, tasks, links, notes and history', async () => {
+    store.Symbiz_Events = [
+      { id: 'SU1', Name: 'PA Regional Summit 2027', Event_Type: 'Regional Summit', Event_Date_and_Time: '2027-10-21T18:00:00-04:00',
+        Event_State: 'PA', Event_City: 'East Earl', Event_Venue: 'Shady Maple', Total_Registered_People: 50 },
+      { id: 'SU0', Name: 'PA Regional Summit 2025', Event_Type: 'Regional Summit', Event_Date_and_Time: '2025-10-15T18:30:00-04:00',
+        Event_State: 'PA', Total_Registered_People: 95, Attendance_Count: 71 },
+      { id: 'SUX', Name: 'Test Summit', Event_Type: 'Regional Summit', Event_Date_and_Time: '2026-10-12T12:00:00-04:00' },
+    ];
+    const list = JSON.parse((await invoke('GET', '/summits', { token })).body);
+    assert.deepEqual(list.map(s => s.id).sort(), ['SU0', 'SU1'], 'test summits left out');
+    const d = JSON.parse((await invoke('GET', '/summits/SU1', { token })).body);
+    assert.equal(d.summit.date, '2027-10-21');
+    assert.ok(d.tasks.length >= 15, 'starts from the standard checklist');
+    assert.deepEqual(d.history.map(h => h.id), ['SU0'], 'earlier summit in the same state');
+
+    const t = d.tasks[0];
+    const after = JSON.parse((await invoke('PATCH', `/summits/SU1/tasks/${t.id}`, { token, body: { done: true, owner: 'Mel' } })).body);
+    const changed = after.find(x => x.id === t.id);
+    assert.equal(changed.done, true); assert.equal(changed.owner, 'Mel'); assert.ok(changed.done_by);
+    const added = JSON.parse((await invoke('POST', '/summits/SU1/tasks', { token, body: { title: 'Book the bus', dueOffset: -20 } })).body);
+    assert.ok(added.some(x => x.title === 'Book the bus' && x.due_offset === -20));
+    assert.equal((await invoke('POST', '/summits/SU1/links', { token, body: { label: 'Form', url: 'not a link' } })).statusCode, 400);
+    const links = JSON.parse((await invoke('POST', '/summits/SU1/links', { token, body: { label: 'Registration form', url: 'https://forms.example/x' } })).body);
+    assert.equal(links.length, 1);
+    await invoke('PUT', '/summits/SU0/notes', { token, body: { notes: 'Start registration earlier' } });
+    const again = JSON.parse((await invoke('GET', '/summits/SU1', { token })).body);
+    assert.equal(again.history[0].notes, 'Start registration earlier', "last year's notes show on this year's summit");
+    const list2 = JSON.parse((await invoke('GET', '/summits', { token })).body);
+    assert.equal(list2.find(s => s.id === 'SU1').tasksDone, 1);
+  });
+
+  test('retention is worked out from membership start and end dates', async () => {
+    store.Deals.push({ id: 'D3', Contact_Name: { id: 'C10', name: 'Gone Member #10' }, Membership_Tier: 'Sapling',
+      Stage: 'Inactive', Start_Date: '2024-02-01', Expiry_Date: `${new Date().getFullYear()}-03-31`, Reason_For_Loss__s: 'Other' });
+    const r = JSON.parse((await invoke('GET', '/stats/retention', { token })).body);
+    assert.equal(r.left, 1); assert.equal(r.leftList[0].name, 'Gone Member #10');
+    assert.equal(r.base, 2); assert.equal(r.retained, 1); assert.equal(r.retention, 50);
+    assert.equal(r.tiers.Sapling, 1);
+    assert.equal(r.reasons.Other, 1);
+  });
+
   test('the member map places addresses once and keeps them', async () => {
     await invoke('GET', '/members/map', { token });        // looks the address up
     const map = JSON.parse((await invoke('GET', '/members/map', { token })).body);
