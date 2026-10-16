@@ -334,6 +334,28 @@ describe('netlify function handler', () => {
     assert.equal((await invoke('GET', '/reports', { token: officeToken })).statusCode, 200);
   });
 
+  test('event guests come from the Guests subform, with their names', async () => {
+    // As Zoho behaves: the registration list carries no subform rows and the
+    // flat Guest_* fields are empty; the names live only in Guests.
+    store.Event_Registrations = [{ id: 'REG1', Name: '1193', Event: { id: '999', name: 'PA Summit' },
+      Registrant_Name: { id: 'C1', name: 'James Zimmerman #0535' }, Bringing_Guest: 'Yes',
+      Guest_First_Name: null, Guest_Last_Name: null, Registration_Status: 'Attending' }];
+    store.Guests = [{ id: 'G1', Parent_Id: { id: 'REG1', name: '1193' }, Guest_First_Name: 'Mrs. James',
+      Guest_Last_Name: 'Zimmerman', Guest_Type: 'Spouse', Guest_Organization: 'J&M Doorcraft LLC', Guest_City: 'Newville' }];
+    try {
+      const res = await invoke('GET', '/events/999/registrations', { token: repToken });
+      assert.equal(res.statusCode, 200, res.body);
+      const [reg] = JSON.parse(res.body);
+      assert.equal(reg.guests.length, 1);
+      assert.equal(reg.guests[0].name, 'Mrs. James Zimmerman');
+      assert.equal(reg.guests[0].type, 'Spouse');
+      assert.equal(reg.guests[0].business, 'J&M Doorcraft LLC');
+      assert.ok(zohoCalls.some(c => c.path === '/crm/v8/coql'), 'read through COQL on the subform');
+    } finally {
+      delete store.Event_Registrations; delete store.Guests;
+    }
+  });
+
   test('sync push is idempotent through the handler', async () => {
     const payload = { items: [{ clientUuid: 'fn-1', module: 'Rep_Activities', op: 'insert', payload: { type: 'Member Call', who: 'Z', date: '2026-09-18' } }] };
     const first = JSON.parse((await invoke('POST', '/sync/push', { token: repToken, body: payload })).body);

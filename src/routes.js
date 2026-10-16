@@ -874,23 +874,42 @@ r.get('/events', auth.authRequired, wrap(async (req, res) => {
  * Only one registration in forty-six has the flat Guest_* fields filled; the
  * rest are all subform. Both are read below.
  */
+/** Every guest row for one event, paging past COQL's 200-row limit. */
+async function guestsForEvent(eventId) {
+  const out = [];
+  for (let offset = 0; offset < 2000; offset += 200) {
+    const page = await zoho.coql(
+      `select Guest_First_Name, Guest_Last_Name, Guest_Type, Guest_Organization, Guest_Email, Guest_Phone,
+              Guest_City, Guest_State, Guest_Street, Guest_Zip_Code, Guest_Attended, Registration_Status,
+              Same_As_Main_Registrant, Parent_Id
+       from Guests where Parent_Id.Event = '${eventId}' limit ${offset}, 200`);
+    out.push(...page);
+    if (page.length < 200) break;
+  }
+  return out;
+}
+
 r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
   const eventId = String(req.params.id).replace(/[^0-9]/g, '');
-  const rows = await zoho.getRecords(M.REGISTRATION, {
-    criteria: `(Event:equals:${eventId})`,
-    perPage: 200,
-  }).catch(async () => {
-    // If search is unavailable, fall back to COQL. Guests from the subform
-    // will be missing, which is worse, but the registrants still come through.
-    const fb = await zoho.coql(queries.registrationsFor(eventId)).catch(() => []);
-    return fb;
-  });
+  /**
+   * Guests are read straight from the Guests subform, all of an event's in
+   * one query. Zoho's list and search APIs never return subform rows — only
+   * a one-record fetch does — so every guest used to arrive nameless
+   * ("guest name not in Zoho") even though Zoho had the name.
+   */
+  const [rows, guestRows] = await Promise.all([
+    zoho.getRecords(M.REGISTRATION, { criteria: `(Event:equals:${eventId})`, perPage: 200 })
+      .catch(() => zoho.coql(queries.registrationsFor(eventId)).catch(() => [])),
+    guestsForEvent(eventId).catch(e => { console.error('[registrations] guests query failed:', e.message); return []; }),
+  ]);
+  const guestsByReg = {};
+  guestRows.forEach(g => { const id = g.Parent_Id?.id; if (id) (guestsByReg[id] = guestsByReg[id] || []).push(g); });
 
   res.json((rows || []).map(z => {
     const base = fromZoho.registration(z);
 
     // Guests from the subform, then the flat fields as a fallback.
-    const sub = Array.isArray(z.Guests) ? z.Guests : [];
+    const sub = guestsByReg[z.id] || (Array.isArray(z.Guests) ? z.Guests : []);
     const guests = sub.map(g => ({
       name: [g.Guest_First_Name, g.Guest_Last_Name].filter(Boolean).join(' '),
       type: g.Guest_Type || 'Guest',

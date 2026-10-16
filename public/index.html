@@ -1975,6 +1975,24 @@ function vOfficeDash(){
         </div></div>`;
     })()}
 
+    ${(() => {
+      // The next few events, with who is coming — names behind "See the list"
+      const soon = (S.events||[]).filter(e => e.date && days(e.date) >= 0 && days(e.date) <= 21)
+        .sort((a,b) => a.date.localeCompare(b.date)).slice(0, 3);
+      if(!soon.length) return '';
+      return `<h3 class="sub-h">Upcoming events</h3>
+        ${soon.map(e => `<div class="card" style="margin-bottom:10px;padding:13px 15px">
+          <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+            <div style="flex:1;min-width:180px">
+              <div class="row-title clicky" onclick="openEvent('${e.id}')">${esc(e.title)}</div>
+              <div class="row-sub">${fmt(e.date)}${e.time?' · '+esc(e.time):''}${e.location?' · '+esc(e.location):''}</div>
+            </div>
+            <span class="tag info">${days(e.date)===0?'today':days(e.date)===1?'tomorrow':'in '+days(e.date)+' days'}</span>
+          </div>
+          ${attendeeBlock(e.id, e.registrationCount)}
+        </div>`).join('')}`;
+    })()}
+
     <h3 class="sub-h">Needs your attention</h3>
     ${S.rings.filter(r=>r.status==='pending').map(r=>`<div class="row clicky" onclick="setView('approvals')">
       <div class="row-main"><div class="row-title">${esc(r.name)}</div><div class="row-sub">${pname(r.repId)} · submitted ${fmt(r.createdAt)}</div></div>
@@ -4834,6 +4852,8 @@ function screenKey(){ return [ui.view, ui.ringId, ui.memberId, ui.facId, ui.even
 function goingTo(){
   if (ui && ui.me) placeByScreen[screenKey()] = window.scrollY;
   scrollTopNext = true;
+  // Attendee lists start closed again on every screen you come to
+  if (ui) ui.calLists = {};
 }
 function keepPlace(draw){
   const y = window.scrollY;
@@ -5388,12 +5408,6 @@ function vCalendar() {
 
     ${ui.calDay ? `<h3 class="sub-h">${fmt(ui.calDay)}</h3>
       ${dayList.length ? dayList.map(i=>{
-        // The head count shows straight away; the names wait behind a button.
-        // A long attendee list on every tapped day buried the rest of the day.
-        const coming = i.kind==='event' ? attendeeList(i.id) : [];
-        const guests = coming.filter(a=>a.guestOf);
-        const listOpen = !!(ui.calLists && ui.calLists[i.id]);
-        if(i.kind==='event' && API.live && !S.registrations.some(r=>r.eventId===i.id)) loadRegs(i.id);
         return `<div class="card" style="margin-bottom:10px;padding:13px 15px">
           <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
             <div style="flex:1;min-width:180px">
@@ -5403,31 +5417,47 @@ function vCalendar() {
             <span class="tag ${i.kind==='event'?'info':i.kind==='visit'?'soon':'later'}">
               ${i.kind==='event'?'Local event':i.kind==='visit'?'Ring visit':'Group meeting'}</span>
           </div>
-          ${i.kind==='event' ? (coming.length ? `
-            <div class="row-sub" style="margin-top:9px;font-weight:600">
-              ${coming.length} coming — ${coming.length-guests.length} registered${guests.length?`, ${guests.length} guest${guests.length===1?'':'s'}`:''}</div>
-            ${listOpen ? `<div style="margin-top:6px">${coming.map(a=>`<div class="kv" style="padding:5px 0">
-              <span>${a.name?esc(a.name):'<span style="color:var(--ink-muted)">guest name not in Zoho</span>'}
-                ${a.guestOf?`<span class="tag later">${esc(a.kind)}</span>`:''}</span>
-              <span class="row-sub">${a.guestOf?`${esc(a.kind.toLowerCase())} of ${esc(a.guestOf)}`:esc(a.business||'')}${a.phone?' · '+esc(a.phone):''}</span>
-            </div>`).join('')}</div>` : ''}
-            <div class="btnrow" style="margin-top:9px">
-              <button class="btn sm ${listOpen?'':'primary'}" onclick="toggleCalList('${i.id}')">
-                ${listOpen ? 'Hide the list' : `See the list · ${coming.length}`}</button>
-              <button class="btn sm" onclick="openEvent('${i.id}')">Full details</button>
-              <button class="btn sm" onclick="printSignInSheet('${i.id}')">Sign-in sheet</button>
-            </div>`
-            : `<div class="row-sub" style="margin-top:8px">${i.regs?'Loading who is coming…':'Nobody registered yet.'}</div>
-               <div class="btnrow" style="margin-top:9px">
-                 <button class="btn sm" onclick="openEvent('${i.id}')">Full details</button>
-                 <button class="btn sm" onclick="printSignInSheet('${i.id}')">Blank sign-in sheet</button>
-               </div>`) : `<div class="btnrow" style="margin-top:9px">${actions(i)}</div>`}
+          ${i.kind==='event' ? attendeeBlock(i.id, i.regs) : `<div class="btnrow" style="margin-top:9px">${actions(i)}</div>`}
         </div>`;
       }).join('')
         : `<div class="empty">Nothing on this day.</div>`}` : ''}
     </div>
 
     ${!items.length ? emptyState('events and meetings', 'Nothing scheduled yet.') : ''}`;
+}
+
+/**
+ * Who is coming to one event: the head count straight away, the names
+ * behind "See the list". Used on the calendar and the Overview. The list
+ * starts closed every time the screen is opened, and has a Hide button at
+ * the top as well as the bottom, so a long list can be closed from where
+ * you are.
+ */
+function attendeeBlock(eventId, regCount){
+  if(API.live && !regsFresh[eventId] && !regsError[eventId]) loadRegs(eventId);
+  const coming = attendeeList(eventId);
+  const guests = coming.filter(a=>a.guestOf);
+  const open = !!(ui.calLists && ui.calLists[eventId]);
+  if(!coming.length) return `<div class="row-sub" style="margin-top:8px">${regsError[eventId] ? esc(regsError[eventId])
+      : regCount || regsLoading[eventId] ? 'Loading who is coming…' : 'Nobody registered yet.'}</div>
+    <div class="btnrow" style="margin-top:9px">
+      <button class="btn sm" onclick="openEvent('${eventId}')">Full details</button>
+      <button class="btn sm" onclick="printSignInSheet('${eventId}')">Blank sign-in sheet</button></div>`;
+  const toggle = `<button class="btn sm ${open?'':'primary'}" onclick="toggleCalList('${eventId}')">
+      ${open ? 'Hide the list' : `See the list · ${coming.length}`}</button>`;
+  return `<div class="row-sub" style="margin-top:9px;font-weight:600">
+      ${coming.length} coming — ${coming.length-guests.length} registered${guests.length?`, ${guests.length} guest${guests.length===1?'':'s'}`:''}</div>
+    ${open ? `<div class="btnrow" style="margin-top:8px">${toggle}</div>
+      <div style="margin-top:6px">${coming.map(a=>`<div class="kv" style="padding:5px 0">
+        <span>${a.name?esc(a.name):'<span style="color:var(--ink-muted)">name not given</span>'}
+          ${a.guestOf?`<span class="tag later">${esc(a.kind)}</span>`:''}</span>
+        <span class="row-sub">${a.guestOf?`${esc(a.kind.toLowerCase())} of ${esc(a.guestOf)}`:esc(a.business||'')}${a.phone?' · '+esc(a.phone):''}</span>
+      </div>`).join('')}</div>` : ''}
+    <div class="btnrow" style="margin-top:9px">
+      ${toggle}
+      <button class="btn sm" onclick="openEvent('${eventId}')">Full details</button>
+      <button class="btn sm" onclick="printSignInSheet('${eventId}')">Sign-in sheet</button>
+    </div>`;
 }
 
 /** Show or hide one event's attendee list under a tapped calendar day. */
@@ -5464,7 +5494,7 @@ function vEventDetail() {
       const cancelled = regs.filter(r=>r.attending==='Cancelled');
       const maybe = regs.filter(r=>r.attending==='Maybe');
       const attended = coming.filter(a=>a.attended==='Yes').length;
-      if(API.live && !S.registrations.some(r=>r.eventId===e.id)) loadRegs(e.id);
+      if(API.live && !regsFresh[e.id] && !regsError[e.id]) loadRegs(e.id);
 
       const person = a => `<div class="att">
         <div class="att-av">${a.name?initials(a.name):'?'}</div>
@@ -6300,15 +6330,23 @@ function submitPlaceMember(e, memberId) {
 }
 
 /** Fetch an event's registrations in the background for the day panel. */
-let regsLoading = {}, regsError = {};
+// var, not let: the first screen can draw before this line runs
+var regsLoading = {}, regsError = {};
+// Events whose registrations were fetched since the page opened. What is
+// saved on the device is shown first, but always refreshed once: saved copies
+// from before guests were read properly had no guest names, and would
+// otherwise never have been replaced.
+var regsFresh = {};
 function loadRegs(eventId){
   if(regsLoading[eventId]) return;
   regsLoading[eventId] = true;
   API.registrations(eventId)
     .then(rows=>{
+      regsFresh[eventId] = true;
       S.registrations = S.registrations.filter(r=>r.eventId!==eventId)
         .concat((rows||[]).map(adapt.registration));
       save();
+      if(ui.view === 'dash') renderContent();
       // Redraw wherever the person actually is. This only checked the
       // calendar, so opening an event left "Loading 46 registrations…" on
       // screen forever even though they had arrived.
