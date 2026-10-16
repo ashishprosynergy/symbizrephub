@@ -1456,13 +1456,14 @@ async function deliverToAccounting({ timeIds, expenseIds, actor, ip } = {}) {
       ${x.receiptCid ? `<img src="cid:${x.receiptCid}" alt="Receipt ${esc(x.ref)}" style="max-width:420px;width:100%;border:1px solid #ddd;border-radius:6px">` : ''}
     </div>`).join('');
 
+  const booksOn = await books.configured();
   const forBills = {
     purpose: 'Approved rep expenses to enter as bills. Each receipt is attached; its filename starts with the ref.',
     approvedBy: approverUsers.map(u => u.name),
     expenses: e.map(x => ({
       ref: x.ref, rep: x.rep_name, date: day(x.entry_date), amount: Number(Number(x.amount).toFixed(2)),
       currency: 'USD', category: x.category, vendor: x.vendor || null, description: x.description || '',
-      zohoBooksBillNumber: books.configured() ? `RH-${x.id}` : null,
+      zohoBooksBillNumber: booksOn ? `RH-${x.id}` : null,
       receiptFile: x.receiptNote === 'MISSING' || /^TOO LARGE/.test(x.receiptNote) ? null : x.receiptNote,
       receiptStatus: x.receiptNote === 'MISSING' ? 'missing' : /^TOO LARGE/.test(x.receiptNote) ? 'too large to attach' : 'attached',
     })),
@@ -1501,7 +1502,7 @@ async function deliverToAccounting({ timeIds, expenseIds, actor, ip } = {}) {
   // Bills in Zoho Books, as many as fit in this request; the 15-minute job
   // finishes the rest. A Books problem never undoes the email that went.
   let booksOut = null;
-  if (books.configured() && (await setting('booksAuto', 'on')) !== 'off' && e.length) {
+  if (booksOn && (await setting('booksAuto', 'on')) !== 'off' && e.length) {
     await q.queueBills(e.map(x => x.id));
     booksOut = await books.makeBills({ budgetMs: 5000 })
       .catch(err => ({ configured: true, made: 0, failed: 0, left: e.length, error: err.message }));
@@ -2069,7 +2070,7 @@ r.get('/admin/audit', auth.authRequired, auth.requireOffice, wrap(async (req, re
 const OFFICE_SETTINGS = {
   retryDays: '4', rescheduleDays: '7', dueWindow: String(cfg.reminders.dueWindowDays), announcement: '',
   accountingEmail: 'accounting@symbiz.org', accountingDay: '1',
-  booksAuto: 'on', booksPayee: 'rep', booksAccount: '',
+  booksAuto: 'on', booksPayee: 'rep', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
 };
 
 r.get('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
@@ -2090,6 +2091,13 @@ r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
     if (k === 'accountingDay' && !['1', '15', 'Last', 'Off'].includes(val)) continue;
     if (k === 'booksPayee' && !['rep', 'vendor'].includes(val)) continue;
     if (k === 'booksAuto' && !['on', 'off'].includes(val)) continue;
+    if (k === 'booksAccountMap') {
+      // { category: account name } — stored as JSON, nothing else
+      let m; try { m = typeof v === 'object' ? v : JSON.parse(val); } catch (_) { continue; }
+      if (!m || typeof m !== 'object' || Array.isArray(m)) continue;
+      val = JSON.stringify(Object.fromEntries(Object.entries(m).slice(0, 30)
+        .map(([c, a]) => [String(c).slice(0, 60), String(a ?? '').slice(0, 120)])));
+    }
     await q.setSetting(k, val);
     saved[k] = val;
   }
@@ -2100,7 +2108,7 @@ r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
 /* ═══════════ ZOHO BOOKS ═══════════ */
 r.get('/admin/books-status', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
   const st = await books.status();
-  const pending = books.configured() ? (await q.billsToMake(500, true)) : [];
+  const pending = st.configured ? (await q.billsToMake(500, true)) : [];
   res.json({ ...st,
     waiting: pending.filter(x => !x.books_error).length,
     failed: pending.filter(x => x.books_error).map(x => ({ id: x.id, rep: x.rep_name, amount: Number(x.amount), error: x.books_error })),
@@ -2109,10 +2117,26 @@ r.get('/admin/books-status', auth.authRequired, auth.requireOffice, wrap(async (
 
 /** Try again, including ones that failed — after fixing an account name, say. */
 r.post('/accounting/books-retry', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
-  if (!books.configured()) return res.status(400).json({ error: 'Zoho Books is not connected yet' });
+  if (!(await books.configured())) return res.status(400).json({ error: 'Zoho Books is not connected yet' });
   const out = await books.makeBills({ includeFailed: true });
   await audit(req.user.id, 'books.retry', out, req.ip);
   res.json(out);
+}));
+
+/** An admin pastes a Self Client grant code; Rep Hub keeps the token. */
+r.post('/admin/books-connect', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+  const code = String(req.body?.code || '').trim();
+  if (!/^1000\.[\w.]+$/.test(code)) return res.status(400).json({ error: 'That does not look like a Zoho grant code (it starts with 1000.)' });
+  try { await books.connect(code); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  await audit(req.user.id, 'books.connected', {}, req.ip);
+  res.json({ ok: true, ...(await books.status()) });
+}));
+
+r.post('/admin/books-disconnect', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+  await books.disconnect();
+  await audit(req.user.id, 'books.disconnected', {}, req.ip);
+  res.json({ ok: true });
 }));
 
 /* ═══════════ REMINDERS (manual trigger / preview) ═══════════ */

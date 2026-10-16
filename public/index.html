@@ -67,6 +67,21 @@
   .viewas .sel{max-width:230px;}
   @media (max-width:760px){ .viewas span{display:none;} .viewas .sel{max-width:150px;font-size:12.5px;} }
 
+  /* Zoho Books card */
+  .books-steps{margin:0 0 4px;padding-left:20px;font-size:14px;line-height:1.6;color:var(--ink);}
+  .books-steps li{margin-bottom:6px;}
+  .copyline{display:flex;align-items:center;gap:8px;margin-top:5px;}
+  .copyline code{background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:13px;}
+  .acct-map{border:1px solid var(--line);border-radius:10px;overflow:hidden;}
+  .acct-row{display:flex;align-items:center;gap:12px;padding:8px 12px;border-top:1px solid var(--line-soft);}
+  .acct-row:first-child{border-top:0;}
+  .acct-cat{flex:0 0 120px;font-weight:600;font-size:14px;}
+  .acct-row select,#booksCode{flex:1;min-width:0;font-family:inherit;font-size:14px;padding:8px 10px;
+    border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);}
+  #booksCode{font-family:ui-monospace,Menlo,monospace;}
+  .acct-row select:focus,#booksCode:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);}
+  @media (max-width:560px){ .acct-row{flex-direction:column;align-items:stretch;gap:4px;} .acct-cat{flex:none;} }
+
   /* Rep picker */
   .rp{position:relative;display:inline-block;}
   .rp-btn{display:flex;align-items:center;gap:9px;min-width:220px;max-width:300px;padding:6px 12px 6px 6px;
@@ -784,6 +799,8 @@ const API = {
   approveBatch(id){ return this.call('/accounting/batches/'+id+'/approve',{method:'POST'}); },
   returnBatch(id,note){ return this.call('/accounting/batches/'+id+'/return',{method:'POST',body:JSON.stringify({note})}); },
   booksRetry(){ return this.call('/accounting/books-retry',{method:'POST'}); },
+  booksConnect(code){ return this.call('/admin/books-connect',{method:'POST',body:JSON.stringify({code})}); },
+  booksDisconnect(){ return this.call('/admin/books-disconnect',{method:'POST'}); },
   checkSetup(token){ return this.call('/auth/check-setup',{method:'POST',body:JSON.stringify({token})}); },
   setPassword(token,password){ return this.call('/auth/set-password',{method:'POST',body:JSON.stringify({token,password})}); },
   me(){ return this.call('/auth/me'); },
@@ -2999,10 +3016,23 @@ function booksCard(){
   if(!booksInfo){ loadBooksStatus(); return `<div class="row-sub">Checking the Zoho Books connection…</div>`; }
   const b = booksInfo;
   if(b.error && b.configured === undefined) return `<div class="callout rust" style="margin:0"><strong>Could not check Zoho Books</strong>${esc(b.error)}</div>`;
-  if(!b.configured) return `<div class="row-sub" style="line-height:1.6">
-      Not connected. Once it is, every expense sent to accounting becomes a bill in Zoho Books with its receipt attached.
-      Connecting needs three settings in Netlify — ZOHO_BOOKS_ORG_ID, ZOHO_BOOKS_REFRESH_TOKEN and, if Books uses
-      its own Zoho client, ZOHO_BOOKS_CLIENT_ID and ZOHO_BOOKS_CLIENT_SECRET.</div>`;
+  if(!b.configured) return !isAdmin()
+    ? `<div class="row-sub" style="line-height:1.6">Not connected yet. An admin can connect Zoho Books here; after that every
+        expense sent to accounting becomes a bill with its receipt attached.</div>`
+    : `<div class="row-sub" style="line-height:1.6;margin-bottom:10px">Not connected yet. Once it is, every expense sent to
+        accounting becomes a bill in the Symbiz Network books, with its receipt attached. It takes about two minutes:</div>
+      <ol class="books-steps">
+        <li>Open <a href="https://api-console.zoho.com" target="_blank" rel="noopener">api-console.zoho.com</a>, signed in as
+          someone who can create bills in Zoho Books, and open the <strong>Self Client</strong> Rep Hub already uses.</li>
+        <li>On the <strong>Generate Code</strong> tab, paste this scope:
+          <div class="copyline"><code>ZohoBooks.fullaccess.all</code>
+            <button class="btn sm" type="button" onclick="copyText('ZohoBooks.fullaccess.all',this)">Copy</button></div></li>
+        <li>Pick <strong>10 minutes</strong>, add any description, click <strong>Create</strong> and copy the code.</li>
+        <li>Paste it here:</li>
+      </ol>
+      <div class="btnrow" style="margin:6px 0 0;align-items:stretch">
+        <input id="booksCode" placeholder="1000.xxxxxxxx…" style="flex:1;min-width:200px" autocomplete="off" spellcheck="false">
+        <button class="btn primary" onclick="connectBooks(this)">Connect</button></div>`;
   if(!b.connected) return `<div class="callout rust" style="margin:0"><strong>Zoho Books is set up but not answering</strong>${esc(b.error||'')}
       <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="booksInfo=null;loadBooksStatus(true)">Check again</button></div></div>`;
   const s = S.settings;
@@ -3019,16 +3049,49 @@ function booksCard(){
           <option value="rep" ${(s.booksPayee||'rep')==='rep'?'selected':''}>The rep (they are reimbursed)</option>
           <option value="vendor" ${s.booksPayee==='vendor'?'selected':''}>The vendor on the receipt</option></select></div>
     </div>
-    <div class="field"><label>Expense account when none matches the category</label>
+    <div class="field" style="margin-bottom:6px"><label>Which account each expense goes to</label></div>
+    <div class="acct-map">
+      ${EXPENSE_CATEGORIES.map(c => { const cur = (b.accountMap||{})[c] || '';
+        return `<div class="acct-row"><span class="acct-cat">${esc(c)}</span>
+          <select onchange="setBooksAccount('${esc(c)}', this.value)">
+            ${cur && !accts.includes(cur) ? `<option selected value="${esc(cur)}">${esc(cur)} (not found in Books)</option>` : ''}
+            ${accts.map(a => `<option ${cur===a?'selected':''} value="${esc(a)}">${esc(a)}</option>`).join('')}</select></div>`; }).join('')}
+    </div>
+    <div class="field" style="margin-top:12px"><label>Anything else</label>
       <select onchange="setSetting('booksAccount', this.value)">
-        <option value="">— none: the category must match an account —</option>
-        ${accts.map(a => `<option ${s.booksAccount===a?'selected':''}>${esc(a)}</option>`).join('')}</select>
-      <div class="hint">Each expense goes to the account with the same name as its category (${EXPENSE_CATEGORIES.map(esc).join(', ')}) if there is one, otherwise this one.</div></div>
+        ${accts.map(a => `<option ${(s.booksAccount||'5310 Contractor Reimbursements - Other')===a?'selected':''} value="${esc(a)}">${esc(a)}</option>`).join('')}</select>
+      <div class="hint">Used if a category's account is missing in Books.</div></div>
+    ${isAdmin() ? `<div class="btnrow" style="margin-top:10px"><button class="btn sm ghost" onclick="disconnectBooks()">Disconnect Zoho Books</button></div>` : ''}
     ${b.waiting ? `<div class="row-sub">${b.waiting} bill${b.waiting===1?' is':'s are'} queued and will be made within 15 minutes.</div>` : ''}
     ${b.failed && b.failed.length ? `<div class="callout rust" style="margin:10px 0 0">
       <strong>${b.failed.length} bill${b.failed.length===1?'':'s'} could not be made</strong>
       ${b.failed.slice(0,5).map(f => `E${f.id} · ${esc(f.rep)} · ${money(f.amount)} — ${esc(f.error)}`).join('<br>')}
       <div class="btnrow" style="margin-top:9px"><button class="btn sm primary" onclick="retryBooks(this)">Try again</button></div></div>` : ''}`;
+}
+async function connectBooks(btn){
+  const code = (document.getElementById('booksCode').value || '').trim();
+  if(!code){ toast('Paste the code from the Zoho API console first'); return; }
+  btn.disabled = true; btn.textContent = 'Connecting…';
+  try{
+    booksInfo = await API.booksConnect(code);
+    toast('Zoho Books connected');
+  }catch(e){ toast(e.message || 'Could not connect'); btn.disabled = false; btn.textContent = 'Connect'; return; }
+  const el = document.getElementById('booksCard'); if(el) el.innerHTML = booksCard();
+}
+async function disconnectBooks(){
+  if(!confirm('Disconnect Zoho Books? Expenses will still be emailed to accounting, but no bills will be made.')) return;
+  try{ await API.booksDisconnect(); toast('Zoho Books disconnected'); }catch(e){ toast(e.message); }
+  booksInfo = null; loadBooksStatus(true);
+}
+function setBooksAccount(cat, acct){
+  const map = { ...((booksInfo && booksInfo.accountMap) || {}), [cat]: acct };
+  if(booksInfo) booksInfo.accountMap = map;
+  API.call('/admin/settings',{method:'PUT',body:JSON.stringify({booksAccountMap: map})})
+    .then(() => toast(`${cat} → ${acct}`)).catch(e => toast(e.message || 'Could not save'));
+}
+function copyText(t, btn){
+  const done = () => { if(btn){ const o = btn.textContent; btn.textContent = 'Copied'; setTimeout(()=>btn.textContent=o, 1400); } };
+  (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(done).catch(() => prompt('Copy this:', t));
 }
 async function retryBooks(btn){
   if(btn){ btn.disabled = true; btn.textContent = 'Working…'; }

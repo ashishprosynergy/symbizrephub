@@ -33,10 +33,13 @@ module.exports = {
    * its own refresh token (with ZohoBooks scopes) so the CRM one is untouched.
    */
   books: {
-    orgId: process.env.ZOHO_BOOKS_ORG_ID || '',
+    // Symbiz Network's Books organisation (read from Zoho on 16 Oct 2026)
+    orgId: process.env.ZOHO_BOOKS_ORG_ID || '915946356',
     clientId: process.env.ZOHO_BOOKS_CLIENT_ID || process.env.ZOHO_CLIENT_ID || 'test-id',
     clientSecret: process.env.ZOHO_BOOKS_CLIENT_SECRET || process.env.ZOHO_CLIENT_SECRET || 'test-secret',
-    refreshToken: process.env.ZOHO_BOOKS_REFRESH_TOKEN || process.env.ZOHO_REFRESH_TOKEN || 'test-refresh',
+    // Usually empty: an admin connects Books from Settings and the token is
+    // kept in the database. The CRM's token has no Books access, so no fallback.
+    refreshToken: process.env.ZOHO_BOOKS_REFRESH_TOKEN || '',
     apiBase: process.env.ZOHO_BOOKS_API_DOMAIN
       || `${process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com'}/books/v3`,
     accountsDomain: process.env.ZOHO_ACCOUNTS_DOMAIN || 'https://accounts.zoho.com',

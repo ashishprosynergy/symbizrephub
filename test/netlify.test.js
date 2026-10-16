@@ -49,7 +49,14 @@ const fakeZoho = http.createServer((req, res) => {
     zohoCalls.push({ method: req.method, path: url.pathname });
     const json = d => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(d)); };
 
-    if (url.pathname === '/oauth/v2/token') return json({ access_token: 'fake-' + Date.now(), expires_in: 3600 });
+    if (url.pathname === '/oauth/v2/token') {
+      if (url.searchParams.get('grant_type') === 'authorization_code') {
+        return url.searchParams.get('code') === '1000.good.code'
+          ? json({ access_token: 'fake-' + Date.now(), refresh_token: '1000.books-refresh', expires_in: 3600 })
+          : json({ error: 'invalid_code' });
+      }
+      return json({ access_token: 'fake-' + Date.now(), expires_in: 3600 });
+    }
 
     // ── fake Zoho Books ──
     if (url.pathname.startsWith('/books/v3/')) {
@@ -732,7 +739,7 @@ describe('hours and expenses', () => {
     const reminders = require('../src/reminders');
     const realSend = reminders.sendEmail, realMail = { ...cfg.mail };
     const billsBefore = booksStore.bills.length;
-    cfg.books.orgId = 'ORG1'; books._resetForTests();
+    cfg.books.orgId = 'ORG1'; cfg.books.refreshToken = 'test-refresh'; books._resetForTests();
     cfg.mail.enabled = true; cfg.mail.host = 'smtp.test';
     reminders.sendEmail = async () => ({ ok: true });
     try {
@@ -782,7 +789,41 @@ describe('hours and expenses', () => {
       assert.ok(rows.filter(x => x.books_bill_id).length >= 2);
       assert.ok(rows.some(x => x.vendor === 'Sheetz'));
     } finally {
-      cfg.books.orgId = ''; reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
+      cfg.books.orgId = ''; cfg.books.refreshToken = ''; reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
+    }
+  });
+
+  test('an admin connects Zoho Books from Settings with a grant code', async () => {
+    const cfg = require('../src/config');
+    const books = require('../src/lib/books');
+    cfg.books.orgId = 'ORG1'; cfg.books.refreshToken = ''; books._resetForTests();
+    try {
+      assert.equal(await books.configured(), false);
+      const staff = await invoke('POST', '/admin/books-connect', { token: officeToken, body: { code: '1000.good.code' } });
+      assert.equal(staff.statusCode, 403, 'office staff cannot connect it');
+      const bad = await invoke('POST', '/admin/books-connect', { token: adminToken, body: { code: '1000.used.code' } });
+      assert.equal(bad.statusCode, 400);
+      assert.match(JSON.parse(bad.body).error, /expired or was already used/);
+      assert.equal(await books.configured(), false);
+
+      const ok = await invoke('POST', '/admin/books-connect', { token: adminToken, body: { code: '1000.good.code' } });
+      assert.equal(ok.statusCode, 200, ok.body);
+      const st = JSON.parse(ok.body);
+      assert.equal(st.connected, true);
+      assert.equal(st.accountMap.Mileage, '5300 Contractor Reimbursements - Mileage');
+      assert.equal(await books.configured(), true);
+
+      // The office maps a category to an account
+      await invoke('PUT', '/admin/settings', { token: officeToken, body: { booksAccountMap: { Meals: 'Rep Reimbursements' } } });
+      const st2 = JSON.parse((await invoke('GET', '/admin/books-status', { token: officeToken })).body);
+      assert.equal(st2.accountMap.Meals, 'Rep Reimbursements');
+      assert.equal(st2.accountMap.Mileage, '5300 Contractor Reimbursements - Mileage', 'others keep their default');
+
+      await invoke('POST', '/admin/books-disconnect', { token: adminToken });
+      assert.equal(await books.configured(), false);
+    } finally {
+      cfg.books.orgId = ''; books._resetForTests();
+      await invoke('PUT', '/admin/settings', { token: officeToken, body: { booksAccountMap: {} } });
     }
   });
 
