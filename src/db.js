@@ -165,6 +165,8 @@ CREATE TABLE IF NOT EXISTS login_tokens (
   ip         TEXT
 );
 
+ALTER TABLE login_tokens ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'signin';
+
 CREATE INDEX IF NOT EXISTS idx_token_user ON login_tokens (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_writes (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries (user_id, entry_date);

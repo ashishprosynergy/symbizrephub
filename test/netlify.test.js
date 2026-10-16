@@ -128,6 +128,30 @@ describe('postgres layer', () => {
     await db.q.setSetting('retryDays', '9');
     assert.equal(await db.setting('retryDays'), '9');
   });
+
+  test('migrate adds purpose to a login_tokens table created before it existed', async () => {
+    // Production already had login_tokens, so CREATE TABLE IF NOT EXISTS
+    // skipped the new column and every code insert failed.
+    const old = newDb();
+    const OldPool = old.adapters.createPg().Pool;
+    old.public.none(`CREATE TABLE login_tokens (
+      token TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), ip TEXT)`);
+    db._setPoolForTests(new OldPool());
+    try {
+      // pg-mem cannot replay CREATE TABLE IF NOT EXISTS over an existing table
+      // (real Postgres skips it), so run the schema's ALTER on its own.
+      const alter = db.SCHEMA.split(';').map(s => s.trim())
+        .find(s => /ALTER TABLE login_tokens ADD COLUMN IF NOT EXISTS purpose/i.test(s));
+      assert.ok(alter, 'schema must upgrade existing login_tokens tables');
+      await db.query(alter);
+      await db.q.addLoginToken('otp:u1:123456', 'u1', new Date(Date.now() + 60000).toISOString(), null, 'otp');
+      const row = await db.q.findLoginToken('otp:u1:123456');
+      assert.equal(row.purpose, 'otp');
+    } finally {
+      db._setPoolForTests(new pgAdapter.Pool());
+    }
+  });
 });
 
 /* ═══════════ AUTH ═══════════ */
