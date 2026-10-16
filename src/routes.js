@@ -1452,7 +1452,11 @@ r.put('/summits/:id/notes', ...summitGuard, wrap(async (req, res) => {
  *   retention  = of the members whose membership was running on 1 January,
  *                the share still a member now
  */
+let retentionCache = null;
 r.get('/stats/retention', auth.authRequired, auth.requireOffice, access.requirePerm('reports'), wrap(async (req, res) => {
+  // Membership history changes a few times a month; reading every membership
+  // from Zoho on each visit was the slow part. Kept 10 minutes unless asked fresh.
+  if (retentionCache && Date.now() - retentionCache.at < 600000 && req.query.fresh !== '1') return res.json(retentionCache.body);
   const yr = String(new Date().getFullYear()), jan1 = `${yr}-01-01`;
   const [deals, joins] = await Promise.all([
     zoho.coql(`select Contact_Name, Membership_Tier, Stage, Start_Date, Expiry_Date, Reason_For_Loss__s
@@ -1489,15 +1493,21 @@ r.get('/stats/retention', auth.authRequired, auth.requireOffice, access.requireP
   left.forEach(l => { const m = Number(l.ended.slice(5, 7)); if (l.ended.slice(0, 4) === yr && m) months[m - 1].left++; });
   const reasons = {};
   left.forEach(l => { const k = l.reason || 'Not recorded'; reasons[k] = (reasons[k] || 0) + 1; });
-  res.json({
-    year: yr,
+  const joinedList = joins.filter(c => !isTest(c.Full_Name))
+    .map(c => ({ id: c.id, name: c.Full_Name, joined: c.Paid_Membership_StartDate,
+      tier: (byContact.get(c.id)?.deals.find(d => live(d.Stage)) || {}).Membership_Tier || '' }))
+    .sort((a, b) => String(b.joined).localeCompare(String(a.joined)));
+  const body = {
+    year: yr, at: new Date().toISOString(), joinedList,
     joined: joins.filter(c => !isTest(c.Full_Name)).length,
     left: left.length, leftNoDate: leftNoDate.length,
     retention: base ? Math.round(retained / base * 1000) / 10 : null, base, retained,
     activeMemberships: Object.values(tiers).reduce((s, n) => s + n, 0), tiers,
     months: months.filter(m => m.month <= new Date().getMonth() + 1),
     reasons, leftList: left.sort((a, b) => b.ended.localeCompare(a.ended)), leftNoDateList: leftNoDate,
-  });
+  };
+  retentionCache = { at: Date.now(), body };
+  res.json(body);
 }));
 
 /** The Overview's headline numbers, counted by Zoho — the same figure every time. */

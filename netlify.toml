@@ -42,6 +42,12 @@
 [functions."accounting-auto"]
   schedule = "0 13 * * *"
 
+# The offline worker must always be checked for a newer version
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
 [[headers]]
   for = "/*"
   [headers.values]

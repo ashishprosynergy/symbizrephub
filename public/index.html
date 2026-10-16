@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rep Hub — Symbiz Network</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<meta name="theme-color" content="#2E5132">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -166,8 +172,33 @@
     border-radius:999px;background:var(--surface);color:var(--ink);}
   .map-search:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);}
   .map-meta{font-size:12.5px;color:var(--ink-muted);margin:4px 0 10px;}
-  .member-map{height:68vh;min-height:360px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface-2);}
-  @media (max-width:900px){ .member-map{height:60vh;} }
+  /* The map library stacks its layers up to z-index 1000; keep them inside
+     the map so dropdowns above it (the rep picker) are not hidden behind */
+  .member-map{height:68vh;min-height:360px;border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    background:var(--surface-2);position:relative;z-index:0;isolation:isolate;}
+  .rp-pop{z-index:1200;}
+  .content[data-view="map"]{max-width:1240px;}
+  .map-wrap{display:grid;grid-template-columns:1fr 300px;gap:10px;}
+  .map-list{height:68vh;min-height:360px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line);
+    border-radius:14px;background:var(--surface);padding:4px;}
+  .map-item{display:flex;align-items:center;gap:9px;width:100%;padding:8px 9px;border:0;border-radius:9px;background:none;
+    font:inherit;color:var(--ink);text-align:left;cursor:pointer;}
+  .map-item:hover{background:var(--surface-2);}
+  .map-item.unplaced{opacity:.6;}
+  .mi-main{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .mi-name{font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mi-sub{font-size:11.5px;color:var(--ink-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mi-tag{font-size:10.5px;color:var(--ink-faint);white-space:nowrap;}
+  .map-tabs{display:none;gap:6px;margin-bottom:8px;}
+  .map-cluster{background:var(--primary);color:#fff;border-radius:50%;display:grid !important;place-items:center;
+    font-weight:700;font-size:13px;border:3px solid rgba(255,255,255,.85);box-shadow:0 2px 8px rgba(0,0,0,.25);}
+  @media (max-width:900px){
+    .map-wrap{grid-template-columns:1fr;}
+    .map-tabs{display:flex;}
+    .map-wrap[data-pane="map"] .map-list{display:none;}
+    .map-wrap[data-pane="list"] .member-map{display:none;}
+    .member-map,.map-list{height:62vh;}
+  }
   .map-pop{font-family:var(--sans);font-size:13px;line-height:1.45;min-width:190px;}
   .map-pop .mp-sub{color:#5A6455;font-size:12px;margin-top:2px;}
   .map-pop .mp-actions{display:flex;gap:12px;margin-top:8px;font-weight:600;}
@@ -1673,10 +1704,14 @@ function fmt(d){ if(!d) return '—'; return new Date(d+'T09:00:00').toLocaleDat
 function fmtShort(d){ if(!d) return '—'; return new Date(d+'T09:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
 function addDays(d,n){ const x=new Date(d+'T09:00:00'); x.setDate(x.getDate()+n); return x.toISOString().slice(0,10); }
 function freqDays(f){ return f==='Quarterly'?91 : f==='Semi-Annual'?182 : 365; }
+/* In words, not shorthand: Keturah asked what "in 33d" meant */
+function daysWords(n){ n = Math.abs(n); return n === 1 ? '1 day' : n + ' days'; }
+function whenWords(d){ const n = days(d); return n === 0 ? 'today' : n === 1 ? 'tomorrow' : n === -1 ? 'yesterday' : n > 0 ? 'in ' + daysWords(n) : daysWords(n) + ' ago'; }
 function tag(d){
   const n=days(d); if(n===null) return '';
-  if(n<0) return `<span class="tag overdue">${Math.abs(n)}d overdue</span>`;
-  if(n<=S.settings.dueWindow) return `<span class="tag soon">due in ${n}d</span>`;
+  if(n<0) return `<span class="tag overdue">${daysWords(n)} overdue</span>`;
+  if(n===0) return `<span class="tag soon">due today</span>`;
+  if(n<=S.settings.dueWindow) return `<span class="tag soon">due ${whenWords(d)}</span>`;
   return `<span class="tag later">${fmtShort(d)}</span>`;
 }
 function statusText(s){ return s==='active'?'Active':s==='pending'?'Awaiting approval':s==='rejected'?'Needs changes':s==='paused'?'Paused':'Discontinued'; }
@@ -1742,6 +1777,14 @@ function filterRepPicker(input){
 function pickRep(key, id){
   closeRepPickers();
   ui[key] = id;
+  if(key === 'mapRep' && ui.view === 'map' && mapData && mapData.members){
+    // The map stays as it is; only the button and the pins change
+    const reps = [...new Map(mapData.members.filter(m=>m.repId).map(m=>[m.repId,{id:m.repId,name:m.rep}])).values()];
+    const box = document.querySelector('.rp[data-rp="mapRep"]');
+    if(box) box.outerHTML = repPicker('mapRep', reps, id, 'All reps');
+    drawMemberMap(true);
+    return;
+  }
   if(key==='calRep') ui.calDay = null;
   renderContent();
 }
@@ -1977,27 +2020,36 @@ function launchDone(r){ return r.launchSteps.length===LAUNCH_STEPS.length; }
  */
 function ringHealth(r){
   if(r.status !== 'active') return null;
-  const mts = S.meetings.filter(m => m.ringId === r.id);
+  // Only meetings that took place count; planned and cancelled ones say nothing yet
+  const held = S.meetings.filter(m => m.ringId === r.id && (m.status || 'held') === 'held' && m.date && m.date <= TODAY_S)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const members = ringMembers(r.id).length || r.serverMemberCount || 0;
+  const visit = lastVisitOf(r);
   // Member count alone says how big a group is, not whether it is working.
   // Health needs evidence of activity: meetings held, a rep visit, or at
   // least an agreed meeting rhythm.
-  const hasSignal = mts.length || r.lastRepVisit || r.meetingRhythm;
+  const hasSignal = held.length || visit || r.meetingRhythm;
   if(!hasSignal) return null;              // nothing recorded — unrated
 
   let score = 0, weight = 0;
 
-  if(mts.length){
-    const recent = mts.slice(0,3);
-    const rate = recent.reduce((a,m)=>{
-      const total = (m.attended||[]).length + (m.absent||[]).length;
-      return a + (total ? (m.attended||[]).length/total : 0);
-    },0)/recent.length;
-    score += rate*40; weight += 40;
+  if(held.length){
+    // Attendance when it was recorded; otherwise how regularly the group met.
+    // Zoho's GR Meetings carry no attendance, and reading that as 0% present
+    // marked 64 healthy groups "at risk".
+    const n = x => Array.isArray(x) ? x.length : (Number(x) || 0);
+    const withAtt = held.filter(m => n(m.attended) + n(m.absent) > 0).slice(0, 3);
+    if(withAtt.length){
+      score += withAtt.reduce((a, m) => a + n(m.attended) / (n(m.attended) + n(m.absent)), 0) / withAtt.length * 40;
+    } else {
+      const last120 = held.filter(m => days(m.date) >= -120).length;   // monthly ≈ 4
+      score += Math.min(40, last120 * 10);
+    }
+    weight += 40;
   }
 
-  if(r.lastRepVisit){
-    const gap = Math.abs(days(r.lastRepVisit));
+  if(visit){
+    const gap = Math.abs(days(visit));
     score += gap<=180 ? 30 : gap<=365 ? 18 : 5;
     weight += 30;
   }
@@ -2213,7 +2265,7 @@ function vToday(){
       return next.length?`<h3 class="sub-h">On your calendar</h3>`+next.map(i=>`<div class="row ${i.kind==='event'?'clicky':''}" ${i.kind==='event'?`onclick="openEvent('${i.id}')"`:''}>
         <div class="row-main"><div class="row-title">${esc(i.title)}</div>
         <div class="row-sub">${fmt(i.date)}${i.time?' at '+esc(i.time):''}${i.sub?' · '+esc(i.sub):''}${i.where?' · '+mapLink(i.where):''}</div></div>
-        <span class="tag ${i.kind==='event'?'info':i.kind==='visit'?'ok':'later'}">${days(i.date)===0?'today':'in '+days(i.date)+'d'}</span></div>`).join(''):''; })()}
+        <span class="tag ${i.kind==='event'?'info':i.kind==='visit'?'ok':'later'}">${whenWords(i.date)}</span></div>`).join(''):''; })()}
     <div class="section-head"><div><h2>Who to contact</h2><div class="sub">Facilitators and members, soonest first.</div></div></div>
     ${body}
     <div class="btnrow" style="margin-top:20px;">
@@ -2550,7 +2602,7 @@ function vReminders(){
         ${p.email ? esc(p.email) : '<span style="color:var(--rust)">no email on file</span>'}
         · ${items.length} call${items.length===1?'':'s'}${overdue?` · <span style="color:var(--rust)">${overdue} overdue</span>`:''}</div>
       ${items.slice(0,5).map(a=>`<div class="kv"><span>${esc(a.who||a.ringName||a.type)} — ${esc(String(a.type).replace(' Call',''))}</span>
-        <span class="${days(a.nextDue)<0?'':''}" style="${days(a.nextDue)<0?'color:var(--rust)':''}">${days(a.nextDue)<0?Math.abs(days(a.nextDue))+'d overdue':'due '+fmtShort(a.nextDue)}</span></div>`).join('')}
+        <span class="${days(a.nextDue)<0?'':''}" style="${days(a.nextDue)<0?'color:var(--rust)':''}">${days(a.nextDue)<0?daysWords(days(a.nextDue))+' overdue':'due '+fmtShort(a.nextDue)}</span></div>`).join('')}
       ${items.length>5?`<div class="row-sub" style="margin-top:4px">and ${items.length-5} more</div>`:''}
       ${p.email ? `<div class="btnrow" style="margin-top:10px">
         <button class="btn sm" onclick="sendDigestTest('${esc(p.id)}','${esc(p.email)}')">Send this to me as a test</button></div>` : ''}
@@ -2639,7 +2691,7 @@ function vOfficeDash(){
         const show = risky.slice(0,6).map(x=>esc(x.r.name)).join(', ');
         out += `<div class="callout rust"><strong>${risky.length} ring${risky.length===1?'':'s'} at risk</strong>
           ${show}${risky.length>6?` and ${risky.length-6} more`:''}
-          <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="setView('allrings')">See them</button></div></div>`;
+          <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="setView('allrings');ui.ringHealth='risk';renderContent()">See the ${risky.length}</button></div></div>`;
       } else if(rated.length){
         out += `<div class="callout ok"><strong>No rings at risk</strong>Every rated group is scoring above 50.</div>`;
       }
@@ -2857,7 +2909,7 @@ const REPORTS={
     name:'Contacts due and overdue',
     desc:'Every facilitator and member call coming up or past due, by rep.',
     cols:['Who','Type','Ring','Rep','Due','Status'],
-    rows:()=>dueItems(null).map(a=>[a.who,a.type,ring(a.ringId)?ring(a.ringId).name:'',pname(a.repId),a.nextDue,days(a.nextDue)<0?`${Math.abs(days(a.nextDue))}d overdue`:`in ${days(a.nextDue)}d`])
+    rows:()=>dueItems(null).map(a=>[a.who,a.type,ring(a.ringId)?ring(a.ringId).name:'',pname(a.repId),a.nextDue,days(a.nextDue)<0?daysWords(days(a.nextDue))+' overdue':whenWords(a.nextDue)])
   },
   'contact-history':{
     name:'Contact history',
@@ -3096,8 +3148,15 @@ function ringsOfType(list){
   return ui.ringType ? list.filter(r => (r.groupType||'Growth Ring') === ui.ringType) : list;
 }
 
+/* Ring health groups, shared by the Overview's "at risk" line and the Rings screen's chips */
+const HEALTH_GROUPS = [['all','All'],['risk','At risk'],['watch','Needs attention'],['healthy','Healthy'],['unrated','Not rated']];
+function healthGroup(h){ return h === null ? 'unrated' : h < 50 ? 'risk' : h < 75 ? 'watch' : 'healthy'; }
 function vAllRings(){
   const missing = S.rings.filter(r=>r.status==='active' && (!r.meetingRhythm || !r.meetingFormat)).length;
+  const hf = ui.ringHealth || 'all';
+  const groupOf = new Map(S.rings.map(r => [r.id, healthGroup(ringHealth(r))]));
+  const countIn = k => S.rings.filter(r => r.status === 'active' && (k === 'all' || groupOf.get(r.id) === k)).length;
+  const listed = ringsOfType(S.rings).filter(r => hf === 'all' || (r.status === 'active' && groupOf.get(r.id) === hf));
   return `<div class="section-head"><div><h2>All Growth Rings</h2><div class="sub">Every ring across every rep, with health.</div></div>
     <button class="btn" onclick="ui.report='ring-roster';exportReport()">Export CSV</button></div>
     ${missing?`<div class="callout"><strong>${missing} ring${missing===1?'':'s'} missing meeting details</strong>
@@ -3107,11 +3166,14 @@ function vAllRings(){
         <button class="btn sm primary" onclick="bulkPickAllMissing()">Select all ${missing}</button>
       </div></div>`:''}
     ${typeFilterChips()}
+    <div class="chips">${HEALTH_GROUPS.map(([k,l]) => `<button class="chip ${hf===k?'on':''}"
+      onclick="ui.ringHealth='${k}';resetPaging();renderContent()">${l} · ${countIn(k)}</button>`).join('')}</div>
     <div id="bulkBanner">${bulkPick.size?`<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <span><strong>${bulkPick.size} selected</strong></span>
       <span class="btnrow"><button class="btn sm primary" onclick="openBulkEdit()">Set details</button>
       <button class="btn sm" onclick="bulkClear()">Clear</button></span></div>`:''}</div>
-    ${ringsOfType(S.rings).slice(0, pageOf('rings')).map(r=>{
+    ${listed.length ? '' : `<div class="empty">No rings in this group.</div>`}
+    ${listed.slice(0, pageOf('rings')).map(r=>{
       const h = ringHealth(r);
       const picked = bulkPick.has(r.id);
       return `<div class="row">
@@ -3127,15 +3189,21 @@ function vAllRings(){
         </div>
       </div>`;
     }).join('')}
-    ${moreButton('rings', Math.min(pageOf('rings'), ringsOfType(S.rings).length), ringsOfType(S.rings).length)}`;
+    ${moreButton('rings', Math.min(pageOf('rings'), listed.length), listed.length)}`;
 }
 
 /* Retention, worked out on the server from Zoho Memberships (see /stats/retention) */
-var retentionData = null, retentionBusy = false;
+// The last answer is kept on this device, so the screen opens at once and
+// quietly updates; it is also fetched in the background after sign-in.
+var retentionData = (() => { try{ return JSON.parse(localStorage.getItem('rephub_retention') || 'null'); }catch(e){ return null; } })();
+var retentionBusy = false, retentionFresh = false;
 function loadRetention(force){
-  if(retentionBusy || (retentionData && !force) || !API.live) return;
+  if(retentionBusy || (retentionFresh && !force) || !API.live) return;
   retentionBusy = true;
-  API.call('/stats/retention').then(v => { retentionData = v; }).catch(e => { retentionData = { error: e.message }; })
+  API.call('/stats/retention' + (force ? '?fresh=1' : '')).then(v => {
+    retentionData = v; retentionFresh = true;
+    try{ localStorage.setItem('rephub_retention', JSON.stringify(v)); }catch(e){}
+  }).catch(e => { if(!retentionData) retentionData = { error: e.message }; })
     .finally(() => { retentionBusy = false; if(ui.view === 'insights') renderContent(); });
 }
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -3156,13 +3224,15 @@ function vInsights(){
   const exits=S.activities.filter(a=>a.type==='Exit Interview');
   const counts={}; exits.forEach(e=>{const k=e.exitReason||'Not recorded'; counts[k]=(counts[k]||0)+1;});
   const max=Math.max(1,...Object.values(counts));
-  const head = `<div class="section-head"><div><h2>Retention insights</h2><div class="sub">Who joins, who leaves, and whether the network is growing.</div></div>
-    <button class="btn" onclick="ui.report='exit-interviews';exportReport()">Export CSV</button></div>`;
+  const head = `<div class="section-head"><div><h2>Retention insights</h2><div class="sub">Who joins, who leaves, and whether the network is growing.
+      ${retentionData && retentionData.at ? `<span class="row-sub">· updated ${esc(new Date(retentionData.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}))}${retentionBusy ? ' · checking…' : ''}</span>` : ''}</div></div>
+    <div class="btnrow"><button class="btn sm" onclick="loadRetention(true);renderContent()" ${retentionBusy?'disabled':''}>${retentionBusy?'Refreshing…':'Refresh'}</button>
+    <button class="btn" onclick="ui.report='exit-interviews';exportReport()">Export CSV</button></div></div>`;
   loadRetention();
   const R = retentionData;
   const top = !R ? skeleton(3) : R.error ? `<div class="callout rust"><strong>Could not work out retention</strong>${esc(R.error)}</div>` : `
     <div class="stats">
-      <div class="stat"><div class="n" style="color:var(--primary)">+${R.joined}</div><div class="l">Joined in ${R.year}</div></div>
+      <div class="stat click" onclick="document.getElementById('joinedList').scrollIntoView({behavior:'smooth'})"><div class="n" style="color:var(--primary)">+${R.joined}</div><div class="l">Joined in ${R.year}</div></div>
       <div class="stat click" onclick="document.getElementById('leftList').scrollIntoView({behavior:'smooth'})"><div class="n" style="color:var(--rust)">−${R.left}</div><div class="l">Left in ${R.year}</div></div>
       <div class="stat"><div class="n">${R.retention == null ? '—' : R.retention + '%'}</div><div class="l">Retained since 1 Jan<br><span style="font-size:10px;opacity:.7">${R.retained} of ${R.base}</span></div></div>
       <div class="stat"><div class="n">${R.activeMemberships}</div><div class="l">Current memberships</div></div>
@@ -3179,7 +3249,13 @@ function vInsights(){
     ${R.leftList.length ? `<div class="card" style="padding:4px 15px">${R.leftList.map(l => `<div class="row ${S.members.some(m=>m.id===l.id)?'clicky':''}" ${S.members.some(m=>m.id===l.id)?`onclick="openMember('${l.id}')"`:''}>
       <div class="row-main"><div class="row-title">${esc(l.name)} ${l.tier?`<span class="tag tier tier-${esc(l.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(l.tier)}</span>`:''}</div>
         <div class="row-sub">Membership ended ${fmt(l.ended)}${l.reason?' · reason: '+esc(l.reason):''}</div></div></div>`).join('')}</div>`
-      : `<div class="empty">Nobody has left this year.</div>`}`;
+      : `<div class="empty">Nobody has left this year.</div>`}
+    <h3 class="sub-h" id="joinedList">Who joined in ${R.year} · ${R.joined}</h3>
+    ${(R.joinedList || []).length ? `<div class="card" style="padding:4px 15px">${R.joinedList.map(j => { const here = S.members.some(m => m.id === j.id);
+      return `<div class="row ${here?'clicky':''}" ${here?`onclick="openMember('${j.id}')"`:''}>
+      <div class="row-main"><div class="row-title">${esc(j.name)} ${j.tier?`<span class="tag tier tier-${esc(j.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(j.tier)}</span>`:''}</div>
+        <div class="row-sub">Paid membership started ${fmt(j.joined)}</div></div></div>`; }).join('')}</div>`
+      : (R.joinedList ? `<div class="empty">Nobody has joined yet this year.</div>` : `<div class="row-sub">Refresh to see the list.</div>`)}`;
   return head + top + `
     <h3 class="sub-h">Reasons given for leaving</h3>
     ${R && R.reasons && Object.keys(R.reasons).length ? `<div class="row-sub" style="margin:-4px 0 8px">From Zoho's "Reason for loss": ${Object.entries(R.reasons).map(([k,v])=>`${esc(k)} ${v}`).join(' · ')}</div>` : ''}
@@ -4382,7 +4458,9 @@ var summitList = null, summitBusy = false, summitDetail = null, summitDetailId =
 function loadSummits(force){
   if(summitBusy || (summitList && !force) || !API.live) return;
   summitBusy = true;
-  API.call('/summits').then(v => { summitList = v; }).catch(e => { summitList = { error: e.message }; })
+  if(force && ui.view === 'summits') renderContent();          // show "Refreshing…" at once
+  API.call('/summits').then(v => { summitList = v; if(force) toast('Summits are up to date with Zoho'); })
+    .catch(e => { if(!summitList || force) toast(e.message || 'Could not refresh'); if(!summitList) summitList = { error: e.message }; })
     .finally(() => { summitBusy = false; if(ui.view === 'summits') renderContent(); });
 }
 function openSummit(id){
@@ -4396,7 +4474,7 @@ const summitPlace = s => [s.venue, [s.city, s.state].filter(Boolean).join(', ')]
 function vSummits(){
   const head = `<div class="section-head"><div><h2>Summits</h2>
     <div class="sub">Every Regional and Global Summit: planning for the next ones, and how past ones went.</div></div>
-    ${summitList && !summitList.error ? `<button class="btn sm" onclick="loadSummits(true)">Refresh</button>` : ''}</div>`;
+    ${summitList && !summitList.error ? `<button class="btn sm" onclick="loadSummits(true)" ${summitBusy?'disabled':''}>${summitBusy?'Refreshing…':'Refresh'}</button>` : ''}</div>`;
   if(!API.live) return head + `<div class="empty">Summits need the live server.</div>`;
   loadSummits();
   if(!summitList) return head + skeleton(4);
@@ -4538,84 +4616,132 @@ async function summitNotesSave(text){
  * Every active member pinned at their mailing address, coloured by
  * membership level, filterable by rep. OpenStreetMap tiles via Leaflet; each
  * pin also opens the address in Google Maps. */
-var mapData = null, mapBusy = false, leafletMap = null, leafletP = null;
+var mapData = null, mapBusy = false, leafletMap = null, leafletP = null, mapCluster = null, mapMarkers = new Map(), mapEl = null;
 const TIER_COLOURS = { 'Seedling':'#7FB24F', 'Sapling':'#2E5132', 'Mighty Oak':'#AD7E21', 'Bookshelf':'#2C5A6E' };
+function addCss(href){ const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l); }
+function addScript(src){ return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
+/* Leaflet and its pin-grouping plug-in, loaded the first time the map opens */
 function ensureLeaflet(){
-  if(window.L) return Promise.resolve();
+  if(window.L && L.markerClusterGroup) return Promise.resolve();
   if(leafletP) return leafletP;
-  leafletP = new Promise((ok, no) => {
-    const css = document.createElement('link');
-    css.rel = 'stylesheet'; css.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
-    document.head.appendChild(css);
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
-    s.onload = ok; s.onerror = () => { leafletP = null; no(new Error('The map could not load')); };
-    document.head.appendChild(s);
-  });
+  const cdn = 'https://cdnjs.cloudflare.com/ajax/libs/';
+  addCss(cdn + 'leaflet/1.9.4/leaflet.min.css');
+  addCss(cdn + 'leaflet.markercluster/1.5.3/MarkerCluster.min.css');
+  leafletP = addScript(cdn + 'leaflet/1.9.4/leaflet.min.js')
+    .then(() => addScript(cdn + 'leaflet.markercluster/1.5.3/leaflet.markercluster.min.js'))
+    .catch(() => { leafletP = null; throw new Error('The map could not load. Check the internet connection and press Refresh.'); });
   return leafletP;
 }
 function loadMapData(force){
   if(mapBusy || (mapData && !force)) return;
   mapBusy = true;
-  API.call('/members/map').then(v => { mapData = v; }).catch(e => { mapData = { error: e.message }; })
+  if(force && ui.view === 'map') renderContent();
+  API.call('/members/map').then(v => { mapData = v; if(force) toast(v.pending ? `${v.located} placed, ${v.pending} still being placed` : 'Every address is on the map'); })
+    .catch(e => { if(!mapData) mapData = { error: e.message }; else toast(e.message); })
     .finally(() => { mapBusy = false; if(ui.view === 'map') renderContent(); });
 }
 function mapShown(){
   const q = (ui.mapQ || '').trim().toLowerCase();
   return (mapData.members || []).filter(m =>
     (!ui.mapRep || m.repId === ui.mapRep) && (!ui.mapTier || m.tier === ui.mapTier) &&
-    (!q || [m.name, m.business, m.address, (m.rings||[]).join(' ')].join(' ').toLowerCase().includes(q)));
+    (!ui.mapRing || (ui.mapRing === 'in' ? (m.rings||[]).length : !(m.rings||[]).length)) &&
+    (!q || [m.name, m.business, m.address, (m.rings||[]).join(' '), m.rep].join(' ').toLowerCase().includes(q)));
 }
 function vMemberMap(){
   const head = `<div class="section-head"><div><h2>Member map</h2>
-    <div class="sub">Every active member at their mailing address. Tap a pin for details.</div></div>
-    ${mapData && !mapData.error ? `<button class="btn sm" onclick="loadMapData(true)">Refresh</button>` : ''}</div>`;
+    <div class="sub">Every active member at their mailing address. Tap a pin or a name for details.</div></div>
+    ${mapData && !mapData.error ? `<button class="btn sm" onclick="loadMapData(true)" ${mapBusy?'disabled':''}>${mapBusy?'Refreshing…':'Refresh'}</button>` : ''}</div>`;
   if(!API.live) return head + `<div class="empty">The map needs the live server.</div>`;
   if(!mapData){ loadMapData(); return head + `<div class="card skel-card" style="height:60vh"></div>`; }
   if(mapData.error) return head + `<div class="callout rust"><strong>Could not load the map</strong>${esc(mapData.error)}
     <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="mapData=null;renderContent()">Try again</button></div></div>`;
   const reps = [...new Map((mapData.members||[]).filter(m=>m.repId).map(m=>[m.repId,{id:m.repId,name:m.rep}])).values()];
-  const shown = mapShown(), placed = shown.filter(m => m.lat != null);
-  setTimeout(drawMemberMap, 0);
+  setTimeout(() => drawMemberMap(true), 0);
+  const chip = (key, val, label, dot) => `<button class="chip ${(ui[key]||'')===val?'on':''}" data-mk="${key}" data-mv="${val}"
+    onclick="setMapFilter('${key}','${val}')">${dot ? `<span class="d-dot" style="background:${dot}"></span>` : ''}${label}</button>`;
   return head + `
     <div class="map-tools">
       ${repPicker('mapRep', reps, ui.mapRep, 'All reps')}
-      <div class="chips" style="margin:0">${['', ...Object.keys(TIER_COLOURS)].map(t =>
-        `<button class="chip ${(ui.mapTier||'')===t?'on':''}" onclick="ui.mapTier='${t}';renderContent()">
-          ${t ? `<span class="d-dot" style="background:${TIER_COLOURS[t]}"></span>${esc(t)}` : 'All levels'}</button>`).join('')}</div>
-      <input class="map-search" placeholder="Find a member, business or town…" value="${esc(ui.mapQ||'')}"
-        oninput="ui.mapQ=this.value;clearTimeout(window.__mq);window.__mq=setTimeout(drawMemberMap,200)">
+      <input class="map-search" placeholder="Find a member, business, ring or town…" value="${esc(ui.mapQ||'')}"
+        oninput="ui.mapQ=this.value;clearTimeout(window.__mq);window.__mq=setTimeout(()=>drawMemberMap(false),180)">
     </div>
-    <div class="map-meta">${placed.length} of ${shown.length} shown on the map
-      ${mapData.pending ? ` · <strong>${mapData.pending} address${mapData.pending===1?'':'es'} still being placed</strong> — they appear within a few minutes; press Refresh` : ''}
-      ${mapData.noAddress ? ` · ${mapData.noAddress} with no address in Zoho` : ''}</div>
-    <div id="memberMap" class="member-map"></div>`;
+    <div class="map-tools">
+      <div class="chips" style="margin:0">${chip('mapTier','','All levels')}${Object.keys(TIER_COLOURS).map(t => chip('mapTier', t, esc(t), TIER_COLOURS[t])).join('')}</div>
+      <div class="chips" style="margin:0">${chip('mapRing','','Everyone')}${chip('mapRing','in','In a ring')}${chip('mapRing','out','Not in a ring')}</div>
+    </div>
+    <div class="map-meta" id="mapMeta"></div>
+    <div class="map-tabs">${['map','list'].map(v => `<button class="chip ${(ui.mapPane||'map')===v?'on':''}" onclick="ui.mapPane='${v}';document.querySelector('.map-wrap').dataset.pane='${v}';this.parentNode.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c===this));if('${v}'==='map'&&leafletMap)setTimeout(()=>leafletMap.invalidateSize(),50)">${v==='map'?'Map':'List'}</button>`).join('')}</div>
+    <div class="map-wrap" data-pane="${ui.mapPane||'map'}">
+      <div id="memberMap" class="member-map"></div>
+      <div class="map-list" id="mapList"></div>
+    </div>`;
 }
-async function drawMemberMap(){
+/* Filters change the pins and the list in place: no rebuild, no jump */
+function setMapFilter(key, val){
+  ui[key] = val || null;
+  document.querySelectorAll(`.chip[data-mk="${key}"]`).forEach(c => c.classList.toggle('on', (c.dataset.mv || '') === (val || '')));
+  drawMemberMap(true);
+}
+function mapPopup(m){
+  const addr = encodeURIComponent(m.address);
+  return `<div class="map-pop"><strong>${esc(m.name)}</strong>${m.tier ? ` <span class="tag tier tier-${esc(m.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(m.tier)}</span>` : ''}
+    ${m.business ? `<div>${esc(m.business)}</div>` : ''}<div class="mp-sub">${esc(m.address)}</div>
+    ${(m.rings||[]).length ? `<div class="mp-sub">Ring ${esc(m.rings.join(', '))}${m.rep ? ' · ' + esc(splitRepName(m.rep).name) : ''}</div>` : '<div class="mp-sub" style="color:#A2452C">Not in a Growth Ring</div>'}
+    <div class="mp-actions">
+      <a href="https://www.google.com/maps/dir/?api=1&destination=${addr}" target="_blank" rel="noopener">Directions</a>
+      ${m.phone ? `<a href="tel:${esc(m.phone.replace(/[^0-9+]/g,''))}">Call</a>` : ''}
+      ${S.members.some(x => x.id === m.id) ? `<a href="#" onclick="event.preventDefault();openMember('${m.id}')">Open member</a>` : ''}</div></div>`;
+}
+async function drawMemberMap(fit){
   const el = document.getElementById('memberMap');
   if(!el || !mapData || mapData.error) return;
   try{ await ensureLeaflet(); }catch(e){ el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-  if(leafletMap){ try{ leafletMap.remove(); }catch(e){} leafletMap = null; }
   if(!document.body.contains(el)) return;
-  leafletMap = L.map(el, { scrollWheelZoom: true, zoomControl: true });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(leafletMap);
-  const pts = [];
-  mapShown().filter(m => m.lat != null).forEach(m => {
-    const colour = TIER_COLOURS[m.tier] || '#5A6455';
-    const g = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(m.address);
-    L.circleMarker([m.lat, m.lng], { radius: 7, color: '#fff', weight: 1.5, fillColor: colour, fillOpacity: .92 })
-      .bindPopup(`<div class="map-pop"><strong>${esc(m.name)}</strong>${m.tier ? ` <span class="tag tier tier-${esc(m.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(m.tier)}</span>` : ''}
-        ${m.business ? `<div>${esc(m.business)}</div>` : ''}<div class="mp-sub">${esc(m.address)}</div>
-        ${(m.rings||[]).length ? `<div class="mp-sub">Ring ${esc(m.rings.join(', '))}${m.rep ? ' · ' + esc(splitRepName(m.rep).name) : ''}</div>` : '<div class="mp-sub">Not in a Growth Ring</div>'}
-        ${m.phone ? `<div class="mp-sub"><a href="tel:${esc(m.phone.replace(/[^0-9+]/g,''))}">${esc(m.phone)}</a></div>` : ''}
-        <div class="mp-actions"><a href="${g}" target="_blank" rel="noopener">Google Maps</a>
-          ${S.members.some(x => x.id === m.id) ? `<a href="#" onclick="event.preventDefault();openMember('${m.id}')">Open member</a>` : ''}</div></div>`)
-      .addTo(leafletMap);
-    pts.push([m.lat, m.lng]);
+  if(!leafletMap || mapEl !== el){
+    // The screen was drawn afresh: start a map on the new element
+    if(leafletMap){ try{ leafletMap.remove(); }catch(e){} }
+    leafletMap = L.map(el, { scrollWheelZoom: true, zoomControl: true });
+    mapEl = el;
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(leafletMap);
+    mapCluster = null; fit = true;
+  }
+  if(mapCluster) leafletMap.removeLayer(mapCluster);
+  mapCluster = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 45, spiderfyOnMaxZoom: true,
+    iconCreateFunction: c => L.divIcon({ html: `<span>${c.getChildCount()}</span>`, className: 'map-cluster', iconSize: [36, 36] }) });
+  mapMarkers = new Map();
+  const shown = mapShown(), placed = shown.filter(m => m.lat != null);
+  placed.forEach(m => {
+    const mk = L.circleMarker([m.lat, m.lng], { radius: 8, color: '#fff', weight: 2, fillColor: TIER_COLOURS[m.tier] || '#5A6455', fillOpacity: .95 })
+      .bindPopup(mapPopup(m));
+    mapCluster.addLayer(mk); mapMarkers.set(m.id, mk);
   });
-  if(pts.length) leafletMap.fitBounds(pts, { padding: [24, 24], maxZoom: 12 });
-  else leafletMap.setView([40.04, -76.3], 7);   // Lancaster County, PA
+  leafletMap.addLayer(mapCluster);
+  if(fit){
+    if(placed.length) leafletMap.fitBounds(placed.map(m => [m.lat, m.lng]), { padding: [28, 28], maxZoom: 12 });
+    else leafletMap.setView([40.04, -76.3], 7);   // Lancaster County, PA
+  }
+  const meta = document.getElementById('mapMeta');
+  if(meta) meta.innerHTML = `<strong>${shown.length}</strong> member${shown.length===1?'':'s'}${placed.length < shown.length ? ` · ${placed.length} on the map` : ''}
+    ${mapData.pending ? ` · ${mapData.pending} address${mapData.pending===1?'':'es'} still being placed — press Refresh in a few minutes` : ''}
+    ${mapData.noAddress ? ` · ${mapData.noAddress} with no address in Zoho` : ''}`;
+  const list = document.getElementById('mapList');
+  if(list) list.innerHTML = shown.length ? shown.slice().sort((a,b) => String(a.name).localeCompare(String(b.name), undefined, {numeric:true})).map(m =>
+    `<button class="map-item ${m.lat == null ? 'unplaced' : ''}" onclick="focusMapMember('${m.id}')">
+      <span class="d-dot" style="background:${TIER_COLOURS[m.tier] || '#8A9284'}"></span>
+      <span class="mi-main"><span class="mi-name">${esc(m.name)}</span>
+        <span class="mi-sub">${esc([m.business, (m.address||'').split(',').slice(-3, -1).join(',').trim()].filter(Boolean).join(' · ') || '—')}</span></span>
+      ${m.lat == null ? '<span class="mi-tag">not placed</span>' : ''}</button>`).join('')
+    : `<div class="empty" style="margin:10px">Nobody matches.</div>`;
+}
+/* From the list to the pin: zoom in, open its card */
+function focusMapMember(id){
+  const mk = mapMarkers.get(id);
+  if(!mk){ toast('That address is not on the map yet'); return; }
+  const wrap = document.querySelector('.map-wrap');
+  if(wrap && wrap.dataset.pane === 'list'){ ui.mapPane = 'map'; wrap.dataset.pane = 'map';
+    document.querySelectorAll('.map-tabs .chip').forEach((c, i) => c.classList.toggle('on', i === 0));
+    setTimeout(() => leafletMap.invalidateSize(), 50); }
+  mapCluster.zoomToShowLayer(mk, () => mk.openPopup());
 }
 
 /* A pie (donut) chart with a legend you can tap. segs: [{label, value, color, go}] */
@@ -5276,14 +5402,15 @@ function badgeFor(id){
   if(id==='dash') return S.rings.filter(r=>r.status==='pending').length;
   return 0;
 }
-function setView(v){ goingTo(); ui.view=v; ui.ringId=null; ui.memberId=null; ui.facId=null; ui.eventId=null; ui.q=''; resetPaging(); closeSheet(); render(); }
+function setView(v){ goingTo(); ui.view=v; ui.ringId=null; ui.memberId=null; ui.facId=null; ui.eventId=null; ui.q=''; ui.ringHealth=null; resetPaging(); closeSheet(); render(); }
 function openRing(id){ goingTo(); ui.ringId=id; ui.view='ringDetail'; closeSheet(); render(); }
 function openMember(id){ goingTo(); ui.memberId=id; ui.view='memberDetail'; closeSheet(); render(); }
 function openFac(id){ goingTo(); ui.facId=id; ui.view='facDetail'; closeSheet(); render(); }
 function login(id){ ui.me=id; ui.view=PEOPLE.find(p=>p.id===id).role==='rep'?'today':'dash'; render(); }
 function logout(){ placeByScreen = {};
   elevation = { token: null, until: 0 }; keepElevation(); accessStatus = null; accessData = null; myDevices = null; ui.twoStep = null;
-  try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
+  try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); localStorage.removeItem('rephub_retention'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
+  retentionData = null; retentionFresh = false; summitList = null; summitDetail = null; mapData = null;
   serverUsers = null; zohoReps = null; usersLoadedAt = 0;
   API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
 
@@ -6410,9 +6537,21 @@ async function loadFromServer(){
   if(got.noRing) S.membersNoRing = got.noRing.map(m => ({ ...m, repId: null }));
 
   loadingDetail = false;
+  lastLoadAt = Date.now();
   save();
   render();
+  // Warm the slower screens in the background, so they open at once
+  if(isOffice() && can('reports')) setTimeout(() => loadRetention(), 1500);
 }
+/* Keturah: a change made in Zoho should show without signing out. Coming
+   back to the tab after five minutes or more brings the data up to date. */
+var lastLoadAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible' && API.live && ui.me && !loading && !loadingDetail && lastLoadAt && Date.now() - lastLoadAt > 300000){
+    lastLoadAt = Date.now();
+    loadFromServer().catch(() => {});
+  }
+});
 let loadingDetail = false;
 let loadError = null;
 
@@ -6515,6 +6654,7 @@ function renderContent(){
 }
 var renderRetry = null;
 function renderContentSafe(el){
+  el.dataset.view = ui.view;     // lets wide screens (the map) use the full width
   try { renderContentInner(el); renderRetry = null; animateCounts(el); }
   catch(e){
     console.error('[render]', e);
@@ -6689,6 +6829,10 @@ function fillShell(){
 queueMicrotask(render);
 loadSupport();
 loadCaptchaConfig();
+// Works without a signal once it has been opened online (see sw.js)
+if('serviceWorker' in navigator && location.protocol === 'https:'){
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
 
 /* ══════════════════ NEW: helpers for calendar + money ══════════════════ */
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -7081,7 +7225,7 @@ function vEventDetail() {
   return `<button class="back" onclick="setView('calendar')">← Calendar</button>
     <div class="section-head">
       <div><h2>${esc(e.title)}</h2><div class="sub">${e.type} · ${fmt(e.date)}${e.time ? ' at ' + esc(e.time) : ''}</div></div>
-      <span class="tag info">${days(e.date) < 0 ? 'past' : 'in ' + days(e.date) + 'd'}</span>
+      <span class="tag info">${days(e.date) < 0 ? 'past' : whenWords(e.date)}</span>
     </div>
     <div class="card">
       <div class="kv"><span class="k">Where</span><span>${mapLink(e.location) || '—'}</span></div>

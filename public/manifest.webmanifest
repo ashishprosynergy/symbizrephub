@@ -1,0 +1,13 @@
+{
+  "name": "Rep Hub — Symbiz Network",
+  "short_name": "Rep Hub",
+  "description": "Growth Rings, members, calls, visits and events for Symbiz reps.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F2F5EC",
+  "theme_color": "#2E5132",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
