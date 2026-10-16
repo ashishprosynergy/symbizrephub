@@ -189,7 +189,10 @@ async function getRecord(module, id) {
  * change made here shows straight away.
  */
 const cache = new Map();
-const cacheMs = () => parseInt(process.env.ZOHO_CACHE_SECONDS ?? '30', 10) * 1000;
+// Two minutes: long enough that moving between screens never waits on Zoho,
+// short enough that a change made directly in Zoho shows soon. Anything Rep
+// Hub writes clears it at once (see request()).
+const cacheMs = () => parseInt(process.env.ZOHO_CACHE_SECONDS ?? '120', 10) * 1000;
 function clearCache() { cache.clear(); }
 
 /**

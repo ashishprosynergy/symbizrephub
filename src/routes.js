@@ -1300,7 +1300,13 @@ async function activeMemberAddresses() {
   return contacts.map(fromZoho.member).filter(m => /^active$/i.test(m.status))
     .map(m => ({ ...m, state: m.region }));
 }
+let mapCache = null;
 r.get('/members/map', auth.authRequired, auth.requireOffice, access.requirePerm('members'), wrap(async (req, res) => {
+  // Built from five Zoho lists, so kept ready: 5 minutes, or 1 while addresses
+  // are still being placed so new pins keep appearing
+  if (mapCache && req.query.fresh !== '1' && Date.now() - mapCache.at < (mapCache.body.pending ? 60000 : 300000)) {
+    return res.json(mapCache.body);
+  }
   const [members, links, ringRows, tiers, cached] = await Promise.all([
     activeMemberAddresses(), zoho.coql(queries.allGroupMembers()), zoho.coql(queries.ringsForRep(null)),
     membershipsByContact(), q.allGeocodes(),
@@ -1318,14 +1324,17 @@ r.get('/members/map', auth.authRequired, auth.requireOffice, access.requirePerm(
       rings: rg.map(r => r.name), rep: rg[0] ? (rg[0].repName || '') : '', repId: rg[0] ? (rg[0].repZohoId || null) : null };
   });
   const pending = geo.missing(members, new Map(cached.map(r => [r.address_key, r]))).length;
+  const site = netlifySite(req);
   // Place the rest without making anyone wait
   if (pending) {
-    const site = netlifySite(req);
     if (site) await kickBackground(site, 'geocode-background');
     else await geo.geocodeMissing(members, { budgetMs: 4000 }).catch(e => console.error('[geocode]', e.message));
   }
-  res.json({ members: out, located: out.filter(m => m.lat != null).length, total: out.length,
-    noAddress: members.filter(m => !geo.hasAddress(m)).length, pending });
+  const body = { members: out, located: out.filter(m => m.lat != null).length, total: out.length,
+    noAddress: members.filter(m => !geo.hasAddress(m)).length, pending, at: new Date().toISOString() };
+  // Placed here and now (no background worker): this answer is already stale
+  if (!pending || site) mapCache = { at: Date.now(), body };
+  res.json(body);
 }));
 
 /* ═══════════ SUMMITS (Mel: history, planning, checklists, forms) ═══════════
@@ -1363,22 +1372,26 @@ function toEastern(iso) {
     day: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true }).formatToParts(d).map(x => [x.type, x.value]));
   return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute} ${p.dayPeriod}` };
 }
-async function summitEvents() {
+let summitCache = null;
+async function summitEvents(fresh) {
+  if (!fresh && summitCache && Date.now() - summitCache.at < 300000) return summitCache.rows;
   const rows = await zoho.coql(`select id, Name, Event_Type, Event_Date_and_Time, Event_City, Event_State, Event_Venue,
       Registration_Count, Total_Registered_People, Attendance_Count, Event_Status
     from ${M.EVENT} where Event_Type in (${SUMMIT_TYPES.map(t => `'${t}'`).join(',')}) limit 200`);
-  return rows.filter(e => !/\btest\b/i.test(e.Name || '')).map(e => {
+  const out = rows.filter(e => !/\btest\b/i.test(e.Name || '')).map(e => {
     const when = toEastern(e.Event_Date_and_Time);
     return { id: e.id, name: e.Name, type: e.Event_Type, date: when.date, time: when.time,
       city: String(e.Event_City || '').replace(/,\s*$/, ''), state: e.Event_State || '', venue: e.Event_Venue || '',
       registered: e.Total_Registered_People ?? e.Registration_Count ?? null, attended: e.Attendance_Count ?? null,
       status: e.Event_Status || '' };
   }).sort((a, b) => b.date.localeCompare(a.date));
+  summitCache = { at: Date.now(), rows: out };
+  return out;
 }
 const summitGuard = [auth.authRequired, auth.requireOffice, access.requirePerm('summits')];
 
 r.get('/summits', ...summitGuard, wrap(async (req, res) => {
-  const [events, counts, notes] = await Promise.all([summitEvents(), q.summitTaskCounts(), q.allSummitNotes()]);
+  const [events, counts, notes] = await Promise.all([summitEvents(req.query.fresh === '1'), q.summitTaskCounts(), q.allSummitNotes()]);
   const c = new Map(counts.map(x => [x.event_id, x])), n = new Set(notes.filter(x => x.notes).map(x => x.event_id));
   res.json(events.map(e => ({ ...e, tasksDone: c.get(e.id)?.done || 0, tasksTotal: c.get(e.id)?.total || 0, hasNotes: n.has(e.id) })));
 }));

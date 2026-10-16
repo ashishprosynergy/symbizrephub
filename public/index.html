@@ -12,7 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Fonts load alongside the page instead of holding up its first paint -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
+<link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
 <style>
   :root{
     --bg:#F2F5EC; --surface:#FFFFFF; --surface-2:#FAFBF6;
@@ -178,6 +181,13 @@
     background:var(--surface-2);position:relative;z-index:0;isolation:isolate;}
   .rp-pop{z-index:1200;}
   .content[data-view="map"]{max-width:1240px;}
+  .map-slot{min-width:0;}
+  .sync{display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--line);border-radius:999px;
+    padding:6px 11px;font:inherit;font-size:12px;color:var(--ink-muted);cursor:pointer;white-space:nowrap;}
+  .sync:hover:not([disabled]){border-color:var(--ink-faint);color:var(--ink);}
+  .sync.busy .ico{animation:spin 1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  @media (max-width:560px){ .sync span{display:none;} .sync{padding:7px 9px;} }
   .map-wrap{display:grid;grid-template-columns:1fr 300px;gap:10px;}
   .map-list{height:68vh;min-height:360px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line);
     border-radius:14px;background:var(--surface);padding:4px;}
@@ -1103,6 +1113,7 @@ const API = {
     const res = await fetch(this.base + path, { ...opts, headers: {
       'Content-Type':'application/json',
       ...(this.token ? { Authorization: 'Bearer ' + this.token } : {}),
+      ...(this.fresh ? { 'X-Fresh': '1' } : {}),
       ...(opts.headers || {}) } });
     // A 401 on the login route means bad credentials; anywhere else it means
     // the session has lapsed. Treating them the same shows the wrong message.
@@ -1953,7 +1964,7 @@ function openMoreMenu(){
   openModal(`<h3>Menu</h3>
     ${navGroups().map(([g, items]) => `${g ? `<div class="menu-grp">${esc(g)}</div>` : ''}
       <div class="menu-grid">${items.map(([id, label]) => { const b = badgeFor(id);
-        return `<button class="menu-tile ${ui.view===id?'on':''}" onclick="closeModal();setView('${id}')">
+        return `<button class="menu-tile ${ui.view===id?'on':''}" ontouchstart="prefetchView('${id}')" onclick="closeModal();setView('${id}')">
           ${icon(id, 20)}<span>${esc(label)}</span>${b ? `<span class="pill">${b}</span>` : ''}</button>`; }).join('')}</div>`).join('')}
     <div class="menu-grp">Account</div>
     <div class="menu-grid">
@@ -4616,7 +4627,19 @@ async function summitNotesSave(text){
  * Every active member pinned at their mailing address, coloured by
  * membership level, filterable by rep. OpenStreetMap tiles via Leaflet; each
  * pin also opens the address in Google Maps. */
-var mapData = null, mapBusy = false, leafletMap = null, leafletP = null, mapCluster = null, mapMarkers = new Map(), mapEl = null;
+// The last map is kept on the device: it opens at once, then updates quietly
+var mapData = (() => { try{ return JSON.parse(localStorage.getItem('rephub_map') || 'null'); }catch(e){ return null; } })();
+var mapFresh = false;
+var mapBusy = false, leafletMap = null, leafletP = null, mapCluster = null, mapMarkers = new Map(), mapEl = null;
+/* Pointing at a slow screen in the menu starts loading it, so it is ready by the click */
+function prefetchView(id){
+  if(!API.live || !ui.me) return;
+  if(id === 'map') prefetchMap();
+  else if(id === 'insights' && can('reports')) loadRetention();
+  else if(id === 'summits' && can('summits')) loadSummits();
+}
+/* Pointing at "Member map" starts loading it, so it is ready by the click */
+function prefetchMap(){ if(!API.live || !can('members')) return; ensureLeaflet().catch(() => {}); loadMapData(); }
 const TIER_COLOURS = { 'Seedling':'#7FB24F', 'Sapling':'#2E5132', 'Mighty Oak':'#AD7E21', 'Bookshelf':'#2C5A6E' };
 function addCss(href){ const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l); }
 function addScript(src){ return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
@@ -4633,12 +4656,25 @@ function ensureLeaflet(){
   return leafletP;
 }
 function loadMapData(force){
-  if(mapBusy || (mapData && !force)) return;
+  if(mapBusy || (mapFresh && !force) || !API.live) return;
   mapBusy = true;
-  if(force && ui.view === 'map') renderContent();
-  API.call('/members/map').then(v => { mapData = v; if(force) toast(v.pending ? `${v.located} placed, ${v.pending} still being placed` : 'Every address is on the map'); })
-    .catch(e => { if(!mapData) mapData = { error: e.message }; else toast(e.message); })
-    .finally(() => { mapBusy = false; if(ui.view === 'map') renderContent(); });
+  if(ui.view === 'map') mapRefreshButton();
+  API.call('/members/map' + (force ? '?fresh=1' : '')).then(v => {
+    mapData = v; mapFresh = true;
+    try{ localStorage.setItem('rephub_map', JSON.stringify(v)); }catch(e){}
+    if(force) toast(v.pending ? `${v.located} on the map, ${v.pending} still being placed` : 'Every address is on the map');
+  }).catch(e => { if(!mapData || mapData.error) mapData = { error: e.message }; else if(force) toast(e.message); })
+    .finally(() => {
+      mapBusy = false;
+      if(ui.view !== 'map') return;
+      // Already showing: update the pins and list in place; otherwise draw the screen
+      if(document.getElementById('memberMap') && mapData && !mapData.error){ mapRefreshButton(); drawMemberMap(false); }
+      else renderContent();
+    });
+}
+function mapRefreshButton(){
+  const b = document.getElementById('mapRefresh');
+  if(b){ b.disabled = mapBusy; b.textContent = mapBusy ? 'Updating…' : 'Refresh'; }
 }
 function mapShown(){
   const q = (ui.mapQ || '').trim().toLowerCase();
@@ -4650,13 +4686,14 @@ function mapShown(){
 function vMemberMap(){
   const head = `<div class="section-head"><div><h2>Member map</h2>
     <div class="sub">Every active member at their mailing address. Tap a pin or a name for details.</div></div>
-    ${mapData && !mapData.error ? `<button class="btn sm" onclick="loadMapData(true)" ${mapBusy?'disabled':''}>${mapBusy?'Refreshing…':'Refresh'}</button>` : ''}</div>`;
+    ${mapData && !mapData.error ? `<button class="btn sm" id="mapRefresh" onclick="loadMapData(true)" ${mapBusy?'disabled':''}>${mapBusy?'Updating…':'Refresh'}</button>` : ''}</div>`;
   if(!API.live) return head + `<div class="empty">The map needs the live server.</div>`;
-  if(!mapData){ loadMapData(); return head + `<div class="card skel-card" style="height:60vh"></div>`; }
+  loadMapData();            // once per visit, behind whatever is showing
+  if(!mapData){ return head + `<div class="card skel-card" style="height:60vh"></div>`; }
   if(mapData.error) return head + `<div class="callout rust"><strong>Could not load the map</strong>${esc(mapData.error)}
     <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="mapData=null;renderContent()">Try again</button></div></div>`;
   const reps = [...new Map((mapData.members||[]).filter(m=>m.repId).map(m=>[m.repId,{id:m.repId,name:m.rep}])).values()];
-  setTimeout(() => drawMemberMap(true), 0);
+  setTimeout(() => drawMemberMap('enter'), 0);
   const chip = (key, val, label, dot) => `<button class="chip ${(ui[key]||'')===val?'on':''}" data-mk="${key}" data-mv="${val}"
     onclick="setMapFilter('${key}','${val}')">${dot ? `<span class="d-dot" style="background:${dot}"></span>` : ''}${label}</button>`;
   return head + `
@@ -4672,7 +4709,7 @@ function vMemberMap(){
     <div class="map-meta" id="mapMeta"></div>
     <div class="map-tabs">${['map','list'].map(v => `<button class="chip ${(ui.mapPane||'map')===v?'on':''}" onclick="ui.mapPane='${v}';document.querySelector('.map-wrap').dataset.pane='${v}';this.parentNode.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c===this));if('${v}'==='map'&&leafletMap)setTimeout(()=>leafletMap.invalidateSize(),50)">${v==='map'?'Map':'List'}</button>`).join('')}</div>
     <div class="map-wrap" data-pane="${ui.mapPane||'map'}">
-      <div id="memberMap" class="member-map"></div>
+      <div id="mapSlot" class="map-slot"></div>
       <div class="map-list" id="mapList"></div>
     </div>`;
 }
@@ -4693,18 +4730,25 @@ function mapPopup(m){
       ${S.members.some(x => x.id === m.id) ? `<a href="#" onclick="event.preventDefault();openMember('${m.id}')">Open member</a>` : ''}</div></div>`;
 }
 async function drawMemberMap(fit){
-  const el = document.getElementById('memberMap');
-  if(!el || !mapData || mapData.error) return;
-  try{ await ensureLeaflet(); }catch(e){ el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-  if(!document.body.contains(el)) return;
-  if(!leafletMap || mapEl !== el){
-    // The screen was drawn afresh: start a map on the new element
-    if(leafletMap){ try{ leafletMap.remove(); }catch(e){} }
-    leafletMap = L.map(el, { scrollWheelZoom: true, zoomControl: true });
-    mapEl = el;
+  const slot = document.getElementById('mapSlot');
+  if(!slot || !mapData || mapData.error) return;
+  // One map for the whole visit, moved into each new screen rather than
+  // rebuilt: no reloading tiles, and it stays where you left it
+  if(!mapEl){ mapEl = document.createElement('div'); mapEl.id = 'memberMap'; mapEl.className = 'member-map'; }
+  const firstTime = !leafletMap;
+  if(mapEl.parentNode !== slot) slot.appendChild(mapEl);
+  try{ await ensureLeaflet(); }catch(e){ mapEl.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if(!document.body.contains(mapEl)) return;
+  if(!leafletMap){
+    leafletMap = L.map(mapEl, { scrollWheelZoom: true, zoomControl: true, preferCanvas: true });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(leafletMap);
-    mapCluster = null; fit = true;
+    mapCluster = null;
+  } else {
+    leafletMap.invalidateSize();
   }
+  // 'enter' = the screen was just drawn: fit to the pins only the first time,
+  // and otherwise keep the place you left it. true = a filter changed: refit.
+  fit = fit === 'enter' ? firstTime : (firstTime || fit === true);
   if(mapCluster) leafletMap.removeLayer(mapCluster);
   mapCluster = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 45, spiderfyOnMaxZoom: true,
     iconCreateFunction: c => L.divIcon({ html: `<span>${c.getChildCount()}</span>`, className: 'map-cluster', iconSize: [36, 36] }) });
@@ -5409,8 +5453,8 @@ function openFac(id){ goingTo(); ui.facId=id; ui.view='facDetail'; closeSheet();
 function login(id){ ui.me=id; ui.view=PEOPLE.find(p=>p.id===id).role==='rep'?'today':'dash'; render(); }
 function logout(){ placeByScreen = {};
   elevation = { token: null, until: 0 }; keepElevation(); accessStatus = null; accessData = null; myDevices = null; ui.twoStep = null;
-  try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); localStorage.removeItem('rephub_retention'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
-  retentionData = null; retentionFresh = false; summitList = null; summitDetail = null; mapData = null;
+  try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); localStorage.removeItem('rephub_retention'); localStorage.removeItem('rephub_map'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
+  retentionData = null; retentionFresh = false; summitList = null; summitDetail = null; mapData = null; mapFresh = false;
   serverUsers = null; zohoReps = null; usersLoadedAt = 0;
   API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
 
@@ -6543,6 +6587,31 @@ async function loadFromServer(){
   // Warm the slower screens in the background, so they open at once
   if(isOffice() && can('reports')) setTimeout(() => loadRetention(), 1500);
 }
+/* How fresh the data is, and a way to bring it up to date with Zoho now */
+function syncButton(){
+  if(!API.live) return '';
+  const busy = loading || loadingDetail;
+  const mins = lastLoadAt ? Math.floor((Date.now() - lastLoadAt) / 60000) : null;
+  const when = busy ? 'Updating…' : mins === null ? '' : mins < 1 ? 'Up to date' : mins < 60 ? `Updated ${mins} min ago` : 'Updated over an hour ago';
+  return `<button class="sync ${busy?'busy':''}" onclick="manualRefresh()" ${busy?'disabled':''} title="Bring everything up to date with Zoho">
+    <svg class="ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+    <span>${when}</span></button>`;
+}
+async function manualRefresh(){
+  retentionFresh = false; mapFresh = false; summitList = null;
+  lastLoadAt = Date.now();
+  fillShell();
+  API.fresh = true;                      // past the server's 2-minute Zoho cache
+  try{ await loadFromServer(); }catch(e){}
+  API.fresh = false;
+  if(ui.view === 'insights') loadRetention(true);
+  if(ui.view === 'map') loadMapData(true);
+  if(ui.view === 'summits') loadSummits(true);
+  fillShell();
+  toast('Up to date with Zoho');
+}
+setInterval(() => { if(ui && ui.me && API.live && document.visibilityState === 'visible') fillShell(); }, 60000);
+
 /* Keturah: a change made in Zoho should show without signing out. Coming
    back to the tab after five minutes or more brings the data up to date. */
 var lastLoadAt = 0;
@@ -6654,7 +6723,13 @@ function renderContent(){
 }
 var renderRetry = null;
 function renderContentSafe(el){
+  const prev = el.dataset.view;
   el.dataset.view = ui.view;     // lets wide screens (the map) use the full width
+  // Already on the map: a background update refreshes the pins and list in
+  // place. Redrawing the screen used to throw the map away mid-pan.
+  if(prev === 'map' && ui.view === 'map' && document.getElementById('mapSlot') && mapData && !mapData.error){
+    drawMemberMap(false); return;
+  }
   try { renderContentInner(el); renderRetry = null; animateCounts(el); }
   catch(e){
     console.error('[render]', e);
@@ -6725,7 +6800,7 @@ function railNavHTML(){
   return navGroups().map(([g,items])=>
     (g?`<div class="nav-grp">${g}</div>`:'')+items.map(([id,label])=>{
       const b=badgeFor(id);
-      return `<button class="rail-link ${ui.view===id?'active':''}" onclick="setView('${id}')"><span class="rl-l">${icon(id,17)}<span>${label}</span></span>${b?`<span class="pill ${id==='today'||id==='approvals'||id==='dash'?'':'muted'}">${b}</span>`:''}</button>`;
+      return `<button class="rail-link ${ui.view===id?'active':''}" onmouseenter="prefetchView('${id}')" onfocus="prefetchView('${id}')" onclick="setView('${id}')"><span class="rl-l">${icon(id,17)}<span>${label}</span></span>${b?`<span class="pill ${id==='today'||id==='approvals'||id==='dash'?'':'muted'}">${b}</span>`:''}</button>`;
     }).join('')).join('');
 }
 function bannersHTML(){
@@ -6804,7 +6879,7 @@ function render(){
 function fillShell(){
   const nc = notifications().length;
   setPart('railNav', railNavHTML());
-  setPart('topRight', `<button class="bell" onclick="openNotifs()">🔔${nc?`<span class="pill">${nc}</span>`:''}</button>`);
+  setPart('topRight', `${syncButton()}<button class="bell" onclick="openNotifs()">🔔${nc?`<span class="pill">${nc}</span>`:''}</button>`);
   setPart('banners', bannersHTML());
   setPart('tabbar', tabbarHTML());
 }

@@ -20,6 +20,22 @@ app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || true, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 
+/* How long each request took on the server, visible in the browser's network
+   panel (Server-Timing) and logged when slow — so "it lags" can be traced. */
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  const end = res.end;
+  // The app's "refresh" button: read Zoho afresh rather than the 2-minute cache
+  if (req.headers['x-fresh']) zoho.clearCache();
+  res.end = function (...args) {
+    const ms = Date.now() - t0;
+    if (!res.headersSent) res.setHeader('Server-Timing', `app;dur=${ms}`);
+    if (ms > 2500) console.log(`[slow] ${req.method} ${req.url} ${ms}ms`);
+    return end.apply(this, args);
+  };
+  next();
+});
+
 /**
  * Run the schema once per container, not per request. On a cold start this
  * costs one extra query; afterwards it's a no-op flag check.
