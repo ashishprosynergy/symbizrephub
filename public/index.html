@@ -1528,7 +1528,11 @@ function canView(v){
   if(v === 'access') return API.live && (isOwner() || isAdmin());
   return !VIEW_CAP[v] || can(VIEW_CAP[v]);
 }
-var elevation = { token: null, until: 0 };   // owner's password re-typed, for Access & security
+// The owner's password re-typed, for Access & security. Kept for this browser
+// tab (not across tabs or after closing it), so a refresh doesn't ask again.
+var elevation = (() => { try{ const e = JSON.parse(sessionStorage.getItem('rephub_elev') || 'null');
+  return e && e.until > Date.now() ? e : { token: null, until: 0 }; }catch(x){ return { token: null, until: 0 }; } })();
+function keepElevation(){ try{ elevation.token ? sessionStorage.setItem('rephub_elev', JSON.stringify(elevation)) : sessionStorage.removeItem('rephub_elev'); }catch(e){} }
 const isOffice = () => me().role==='staff' || me().role==='admin';
 const ring = id => S.rings.find(r=>r.id===id);
 const member = id => S.members.find(m=>m.id===id);
@@ -3549,7 +3553,7 @@ function noAccess(what){
   return `<div class="section-head"><div><h2>${esc(what)}</h2></div></div>
     <div class="empty">Your account doesn't have access to this. The owner can switch it on under Access &amp; security.</div>`;
 }
-var accessStatus = null, accessData = null, myDevices = null, accessBusy = false;
+var accessStatus = null, accessData = null, myDevices = null, accessBusy = false, accessFetching = false;
 function refreshAccessScreen(){
   if(ui.view !== 'access') return;
   // Never redraw under someone typing their password
@@ -3602,7 +3606,13 @@ function vAccess(){
         <div id="lockErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
         <button class="btn primary" type="submit">Continue</button></form></div>`;
 
-  if(!accessData) return head + skeleton(5);
+  if(!accessData){
+    // Still unlocked from before a refresh: fetch the settings again
+    if(!accessFetching){ accessFetching = true;
+      API.owner('/admin/access').then(v => { accessData = v; }).catch(e => { if(e.data && e.data.needsPassword){ elevation = { token: null, until: 0 }; keepElevation(); } })
+        .finally(() => { accessFetching = false; refreshAccessScreen(); }); }
+    return head + skeleton(5);
+  }
   const a = accessData;
   const roleName = { admin: 'Directors', staff: 'Office staff' };
   const sw = (on, js, label) => `<label class="switch" title="${esc(label)}"><input type="checkbox" ${on?'checked':''} onchange="${js}"><span></span></label>`;
@@ -3718,7 +3728,7 @@ async function unlockAccess(e){
   btn.disabled = true; btn.textContent = 'Checking…';
   try{
     const out = await API.elevate(e.target.elements.namedItem('password').value);
-    elevation = { token: out.elevation, until: Date.now() + (out.minutes || 15) * 60000 - 20000 };
+    elevation = { token: out.elevation, until: Date.now() + (out.minutes || 15) * 60000 - 20000 }; keepElevation();
     accessData = out.access || await API.owner('/admin/access');   // usually comes back with the password check
     renderContent();
   }catch(ex){
@@ -3726,7 +3736,7 @@ async function unlockAccess(e){
     btn.disabled = false; btn.textContent = 'Continue';
   }
 }
-function lockAccess(){ elevation = { token: null, until: 0 }; accessData = null; renderContent(); toast('Locked'); }
+function lockAccess(){ elevation = { token: null, until: 0 }; keepElevation(); accessData = null; renderContent(); toast('Locked'); }
 async function ownerCall(path, opts){
   try{ return await API.owner(path, opts); }
   catch(e){ if(e.data && e.data.needsPassword){ lockAccess(); } throw e; }
@@ -3783,7 +3793,7 @@ async function claimOwnership(e){
   btn.disabled = true; btn.textContent = 'Checking…';
   try{
     const out = await API.elevate(e.target.elements.namedItem('password').value);
-    elevation = { token: out.elevation, until: Date.now() + (out.minutes || 15) * 60000 - 20000 };
+    elevation = { token: out.elevation, until: Date.now() + (out.minutes || 15) * 60000 - 20000 }; keepElevation();
     const res = await API.owner('/admin/access/claim', { method: 'POST' });
     signInAs(res.user, { keepView: true });
     accessStatus = null; accessData = await API.owner('/admin/access');
@@ -4844,7 +4854,7 @@ function openMember(id){ goingTo(); ui.memberId=id; ui.view='memberDetail'; clos
 function openFac(id){ goingTo(); ui.facId=id; ui.view='facDetail'; closeSheet(); render(); }
 function login(id){ ui.me=id; ui.view=PEOPLE.find(p=>p.id===id).role==='rep'?'today':'dash'; render(); }
 function logout(){ placeByScreen = {};
-  elevation = { token: null, until: 0 }; accessStatus = null; accessData = null; myDevices = null; ui.twoStep = null;
+  elevation = { token: null, until: 0 }; keepElevation(); accessStatus = null; accessData = null; myDevices = null; ui.twoStep = null;
   try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
   serverUsers = null; zohoReps = null; usersLoadedAt = 0;
   API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }

@@ -60,9 +60,10 @@ const TTL = 10_000;
 async function load() {
   if (cache && Date.now() - cache.at < TTL) return cache;
   let perms = {}, twoStep = {};
-  try { perms = JSON.parse(await setting('permissions', '{}')) || {}; } catch (_) { /* defaults */ }
-  try { twoStep = JSON.parse(await setting('two_step', '{}')) || {}; } catch (_) { /* defaults */ }
-  const ownerId = (await setting('owner_user_id', '')) || null;
+  const s = await require('./db').settings({ permissions: '{}', two_step: '{}', owner_user_id: '' });   // one trip, not three
+  try { perms = JSON.parse(s.permissions) || {}; } catch (_) { /* defaults */ }
+  try { twoStep = JSON.parse(s.two_step) || {}; } catch (_) { /* defaults */ }
+  const ownerId = s.owner_user_id || null;
   const merged = {};
   for (const role of ROLES) {
     merged[role] = {};

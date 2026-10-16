@@ -320,12 +320,13 @@ async function sendCode(user, req, purpose = 'otp') {
 let captchaCache = null, unprovenNoted = 0;
 async function captchaKeys() {
   if (captchaCache && Date.now() - captchaCache.at < 60000) return captchaCache.keys;
-  const keys = { site: await setting('captcha_site_key', ''), secret: await setting('captcha_secret', ''),
+  const s = await require('./db').settings({ captcha_site_key: '', captcha_secret: '', captcha_type: '', captcha_proven: '' });
+  const keys = { site: s.captcha_site_key, secret: s.captcha_secret,
     // v3 = invisible "score" keys (Google's default); v2 = the "I'm not a robot" box
-    type: (await setting('captcha_type', '')) || 'v3',
+    type: s.captcha_type || 'v3',
     // Has a real check ever passed with these keys? Until one has, a wrong key
     // or key type must not stop anyone signing in.
-    proven: (await setting('captcha_proven', '')) === '1' };
+    proven: s.captcha_proven === '1' };
   captchaCache = { at: Date.now(), keys };
   return keys;
 }
@@ -771,16 +772,16 @@ r.delete('/auth/devices/:id', auth.authRequired, wrap(async (req, res) => {
 /** Re-type the password before changing who can do what. */
 r.post('/auth/elevate', auth.authRequired, wrap(async (req, res) => {
   if (req.user.role === 'rep') return res.status(403).json({ error: 'Not allowed' });
-  const u = await q.userById(req.user.id);
-  const fails = (await q.recentAuditCount(u.id, 'elevate.failed', 15))?.c || 0;
-  if (fails >= 5) return res.status(429).json({ error: 'Too many wrong passwords. Wait 15 minutes and try again.' });
+  const [u, failRow] = await Promise.all([q.userById(req.user.id), q.recentAuditCount(req.user.id, 'elevate.failed', 15)]);
+  if ((failRow?.c || 0) >= 5) return res.status(429).json({ error: 'Too many wrong passwords. Wait 15 minutes and try again.' });
   if (!auth.verify(String(req.body?.password || ''), u.password_hash)) {
     await audit(u.id, 'elevate.failed', {}, req.ip);
     return res.status(401).json({ error: 'That password is not right' });
   }
-  await audit(u.id, 'elevate.ok', {}, req.ip);
-  // The owner's screen needs this next anyway: send it now, saving a round trip
-  res.json({ elevation: auth.elevate(u), minutes: 15, access: req.user.owner ? await accessPayload() : undefined });
+  // The owner's screen needs the settings next anyway: fetch them alongside
+  // the log entry and send them now, saving a round trip
+  const [, payload] = await Promise.all([audit(u.id, 'elevate.ok', {}, req.ip), req.user.owner ? accessPayload() : null]);
+  res.json({ elevation: auth.elevate(u), minutes: 15, access: payload || undefined });
 }));
 
 r.get('/auth/me', auth.authRequired, wrap(async (req, res) => {
@@ -2410,10 +2411,9 @@ r.post('/admin/access/claim', auth.authRequired, auth.requireAdmin, auth.require
 }));
 
 async function accessPayload() {
-  const a = await access.load();
-  const people = (await q.allUsers()).filter(u => u.role !== 'rep')
+  const [a, users, ck] = await Promise.all([access.load(), q.allUsers(), captchaKeys()]);   // side by side
+  const people = users.filter(u => u.role !== 'rep')
     .map(u => ({ id: u.id, name: u.name, email: u.email, role: u.role, owner: u.id === a.ownerId }));
-  const ck = await captchaKeys();
   return { caps: Object.fromEntries(Object.entries(access.CAPS).map(([k, c]) => [k, { label: c.label, detail: c.detail, group: c.group }])),
     perms: a.perms, twoStep: a.twoStep, people, ownerId: a.ownerId,
     captcha: { siteKey: ck.site || '', secretSet: !!ck.secret, type: ck.type, proven: ck.proven } };

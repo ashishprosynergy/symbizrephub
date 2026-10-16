@@ -437,4 +437,16 @@ async function setting(key, fallback) {
   catch { return fallback; }
 }
 
-module.exports = { getPool, query, one, migrate, q, audit, setting, SCHEMA, _setPoolForTests: p => { pool = p; } };
+/** Several settings in one trip to the database: { key: value or fallback }. */
+async function settings(defaults) {
+  const keys = Object.keys(defaults);
+  const out = { ...defaults };
+  try {
+    const marks = keys.map((_, i) => `$${i + 1}`).join(',');
+    const rows = await query(`SELECT key, value FROM settings WHERE key IN (${marks})`, keys);
+    rows.forEach(r => { out[r.key] = r.value; });
+  } catch { /* fallbacks */ }
+  return out;
+}
+
+module.exports = { getPool, query, one, migrate, q, audit, setting, settings, SCHEMA, _setPoolForTests: p => { pool = p; } };
