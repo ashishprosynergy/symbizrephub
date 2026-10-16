@@ -1261,6 +1261,27 @@ describe("ring meetings, membership levels and the member map", () => {
     assert.equal(list2.find(s => s.id === 'SU1').tasksDone, 1);
   });
 
+  test('the standard checklist can be replaced with Symbiz\'s own, and a summit with nothing done can start again from it', async () => {
+    const before = JSON.parse((await invoke('GET', '/summits/template', { token })).body);
+    assert.equal(before.custom, false); assert.equal(before.list.length, 20);
+    assert.equal((await invoke('PUT', '/summits/template', { token, body: { list: [{ title: '  ' }] } })).statusCode, 400);
+    const saved = JSON.parse((await invoke('PUT', '/summits/template', { token, body: { list: [
+      { stage: 'Spring', dueOffset: '-120', title: 'Pick the venue with the board' },
+      { stage: 'Day of', dueOffset: '0', title: 'Open the doors' }] } })).body);
+    assert.equal(saved.list[0].dueOffset, -120);
+    // A new summit gets Symbiz's list
+    store.Symbiz_Events.push({ id: 'SU3', Name: 'OH Regional Summit 2027', Event_Type: 'Regional Summit', Event_Date_and_Time: '2027-09-01T18:00:00-04:00' });
+    const d = JSON.parse((await invoke('GET', '/summits/SU3', { token })).body);
+    assert.deepEqual(d.tasks.map(t => t.title), ['Pick the venue with the board', 'Open the doors']);
+    // An older summit with nothing ticked off can restart from it; one with progress cannot
+    const r = JSON.parse((await invoke('POST', '/summits/SU1/tasks/restart', { token })).body);
+    assert.equal(r.error ? 'refused' : 'ok', 'refused', 'SU1 has a task done, so it is kept');
+    const fresh = JSON.parse((await invoke('POST', '/summits/SU3/tasks/restart', { token })).body);
+    assert.equal(fresh.length, 2);
+    const reset = JSON.parse((await invoke('DELETE', '/summits/template', { token })).body);
+    assert.equal(reset.custom, false); assert.equal(reset.list.length, 20);
+  });
+
   test('summit "Who": a team member is linked and sees the task as theirs; anyone else is a typed name', async () => {
     store.Symbiz_Events.push({ id: 'SU2', Name: 'NC Regional Summit 2027', Event_Type: 'Regional Summit',
       Event_Date_and_Time: '2027-05-01T18:00:00-04:00', Event_State: 'NC' });

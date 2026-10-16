@@ -1397,6 +1397,17 @@ const SUMMIT_CHECKLIST = [
   ['After', 7, 'Follow up new guests and leads with their rep'],
   ['After', 14, 'Debrief: note what worked and what to change next time'],
 ];
+/* The standard list every new summit starts from. Rep Hub ships with the one
+   above; the office can replace it with Symbiz's own (Summits → edit the
+   standard checklist), and that is what new summits then use. */
+async function summitTemplate() {
+  const raw = await setting('summit_checklist', '');
+  try {
+    const list = JSON.parse(raw || 'null');
+    if (Array.isArray(list) && list.length) return { list, custom: true };
+  } catch { /* fall back to the built-in list */ }
+  return { list: SUMMIT_CHECKLIST.map(([stage, dueOffset, title]) => ({ stage, dueOffset, title })), custom: false };
+}
 function toEastern(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return { date: String(iso || '').slice(0, 10), time: '' };
@@ -1429,7 +1440,7 @@ r.get('/summits', ...summitGuard, wrap(async (req, res) => {
 }));
 
 r.get('/summits/:id', ...summitGuard, wrap(async (req, res, next) => {
-  if (req.params.id === 'mine') return next();     // "my tasks", declared further down
+  if (req.params.id === 'mine' || req.params.id === 'template') return next();     // declared further down
   let events = await summitEvents();
   let e = events.find(x => x.id === req.params.id);
   // Added in Zoho since the list was last read: look again before saying no
@@ -1438,7 +1449,7 @@ r.get('/summits/:id', ...summitGuard, wrap(async (req, res, next) => {
   let [tasks, links, notes, allNotes] = await Promise.all([q.summitTasks(e.id), q.summitLinks(e.id), q.summitNotes(e.id), q.allSummitNotes()]);
   if (!tasks.length) {
     // First time it is opened: start from the standard checklist, in one write
-    await q.addSummitTasks(e.id, SUMMIT_CHECKLIST.map(([stage, dueOffset, title], i) => ({ title, stage, dueOffset, position: i })));
+    await q.addSummitTasks(e.id, (await summitTemplate()).list.map((t, i) => ({ ...t, position: i })));
     tasks = await q.summitTasks(e.id);
   }
   const notesBy = new Map(allNotes.map(x => [x.event_id, x.notes]));
@@ -1470,17 +1481,50 @@ async function resolveOwner(b) {
 async function tellOwner(person, task, eventId, req) {
   if (!person || person.id === req.user.id || !person.email) return;
   const e = (await summitEvents()).find(x => x.id === eventId);
-  const due = e && task.dueOffset != null ? addDays(e.date, task.dueOffset) : null;
+  const nice = d => d ? new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '';
+  const dueIso = e && task.dueOffset != null ? addDays(e.date, task.dueOffset) : null;
+  const due = dueIso ? nice(dueIso) + (dueIso < today() ? ' (already past)' : '') : null;
   const esc2 = v => String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   reminders.sendEmail(person.email, `Summit task for you: ${task.title}`,
     `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;font-size:15px;color:#1E2A20;max-width:520px">
       <p>${esc2((person.name || '').split(' ')[0] || 'Hello')},</p>
-      <p>${esc2(req.user.name || 'The office')} has given you a task for <strong>${esc2(e ? e.name : 'a summit')}</strong>${e ? ' (' + esc2(e.date) + ')' : ''}:</p>
+      <p>${esc2(req.user.name || 'The office')} has given you a task for <strong>${esc2(e ? e.name : 'a summit')}</strong>${e && !/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(e.name) ? ' on ' + esc2(nice(e.date)) : ''}:</p>
       <p style="font-size:16px;background:#F2F5EC;border-radius:8px;padding:12px 14px"><strong>${esc2(task.title)}</strong>${due ? '<br><span style="color:#5A6455">Due ' + esc2(due) + '</span>' : ''}</p>
       <p><a href="${cfg.appUrl}" style="background:#2E5132;color:#fff;padding:9px 15px;border-radius:7px;text-decoration:none">Open Summits in Rep Hub</a></p>
       <p style="color:#8A9284;font-size:12px">It also shows in your notifications as the due date gets close.</p></div>`,
     { userId: person.id, kind: 'summit-task', replyTo: req.user.email }).catch(() => {});
 }
+
+r.get('/summits/template', ...summitGuard, wrap(async (req, res) => {
+  const t = await summitTemplate();
+  const by = t.custom ? await q.getSetting('summit_checklist_by').catch(() => null) : null;
+  res.json({ ...t, by: by ? by.value : null });
+}));
+r.put('/summits/template', ...summitGuard, wrap(async (req, res) => {
+  const list = (Array.isArray(req.body?.list) ? req.body.list : [])
+    .map(t => ({ title: String(t.title || '').trim().slice(0, 300), stage: String(t.stage || '').trim().slice(0, 60) || 'Other',
+      dueOffset: t.dueOffset === '' || t.dueOffset == null || isNaN(parseInt(t.dueOffset, 10)) ? null : Math.max(-730, Math.min(365, parseInt(t.dueOffset, 10))) }))
+    .filter(t => t.title).slice(0, 100);
+  if (!list.length) return res.status(400).json({ error: 'The list needs at least one task' });
+  await q.setSetting('summit_checklist', JSON.stringify(list));
+  await q.setSetting('summit_checklist_by', `${req.user.name || req.user.email}, ${today()}`);
+  await audit(req.user.id, 'summit.templateSaved', { tasks: list.length }, req.ip);
+  res.json({ list, custom: true });
+}));
+r.delete('/summits/template', ...summitGuard, wrap(async (req, res) => {
+  await q.setSetting('summit_checklist', '');
+  await audit(req.user.id, 'summit.templateReset', null, req.ip);
+  res.json(await summitTemplate());
+}));
+/* Start one summit again from the standard list: only while nothing on it is done */
+r.post('/summits/:id/tasks/restart', ...summitGuard, wrap(async (req, res) => {
+  const tasks = await q.summitTasks(req.params.id);
+  if (tasks.some(t => t.done)) return res.status(409).json({ error: 'Some tasks are already ticked off, so the list is kept. Add or remove tasks instead.' });
+  await q.clearSummitTasks(req.params.id);
+  await q.addSummitTasks(req.params.id, (await summitTemplate()).list.map((t, i) => ({ ...t, position: i })));
+  await audit(req.user.id, 'summit.checklistRestarted', { id: req.params.id }, req.ip);
+  res.json(await q.summitTasks(req.params.id));
+}));
 
 r.get('/summits/mine', ...summitGuard, wrap(async (req, res) => {
   const [team, mine, events] = await Promise.all([summitTeam(), q.summitTasksFor(req.user.id), summitEvents()]);
@@ -2524,7 +2568,7 @@ r.post('/admin/users/from-zoho', auth.authRequired, access.requirePerm('users'),
   // A password in an inbox stays there forever; a link expires.
   let emailed = false;
   if (req.body?.sendEmail !== false) {
-    const sent = await sendPasswordLink({ id, name, email }, req, { invite: true });
+    const sent = await sendPasswordLink({ id, name, email }, req, { invite: true, from: req.user });
     emailed = !!(sent && sent.ok === true);
   }
   res.status(201).json({ id, tempPassword: emailed ? undefined : temp, emailed, invited: emailed });

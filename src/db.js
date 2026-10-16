@@ -426,6 +426,7 @@ const q = {
      WHERE id = $1 AND event_id = $2`,
     [id, eventId, f.title ?? null, f.owner ?? null, f.dueOffset ?? null, !!f.done, f.doneBy || null, f.ownerId || null]),
   deleteSummitTask: (id, eventId) => query('DELETE FROM summit_tasks WHERE id = $1 AND event_id = $2', [id, eventId]),
+  clearSummitTasks: eventId => query('DELETE FROM summit_tasks WHERE event_id = $1', [eventId]),
   summitLinks: eventId => query('SELECT * FROM summit_links WHERE event_id = $1 ORDER BY id', [eventId]),
   addSummitLink: (eventId, label, url, by) => query(
     'INSERT INTO summit_links (event_id,label,url,added_by) VALUES ($1,$2,$3,$4) RETURNING id', [eventId, label, url, by]),

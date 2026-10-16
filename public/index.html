@@ -157,6 +157,11 @@
   .chk-title{font-size:14px;}
   .chk-row.done .chk-title{text-decoration:line-through;color:var(--ink-faint);}
   .chk-late{color:var(--rust);font-weight:600;}
+  .tpl-head,.tpl-row{display:grid;grid-template-columns:120px 70px 1fr 34px;gap:6px;align-items:center}
+  .tpl-head{font-size:11.5px;color:var(--ink-muted);font-weight:600;margin-bottom:4px;padding-right:2px}
+  .tpl-rows{max-height:46vh;overflow:auto;display:flex;flex-direction:column;gap:6px}
+  .tpl-row input{font:inherit;font-size:13.5px;padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);min-width:0}
+  @media (max-width:560px){ .tpl-head{display:none} .tpl-row{grid-template-columns:1fr 64px 34px} .tpl-title{grid-column:1/3;order:3} }
   .onb{margin-bottom:14px;border-left:4px solid var(--primary)}
   .onb-keys{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--ink-muted)}
   .onb-keys>span{display:inline-flex;align-items:center;gap:5px}
@@ -3508,7 +3513,7 @@ async function inviteAllReps(){
   const todo = zohoReps.filter(r=>!r.hasAccount && r.email);
   if(!todo.length){ toast('Every rep with an email already has an account'); return; }
   openModal(`<h3>Create ${todo.length} accounts</h3>
-    <p class="lead">One for each rep found in Zoho who doesn't have one yet. Passwords are shown together at the end — copy them before closing.</p>
+    <p class="lead">One for each rep found in Zoho who doesn't have one yet. Each is emailed a welcome with a link to choose their own password.</p>
     <div class="card flat" style="max-height:200px;overflow:auto">
       ${todo.map(r=>`<div class="kv"><span>${esc(r.name)}</span><span class="row-sub">${esc(r.email)}</span></div>`).join('')}
     </div>
@@ -3518,28 +3523,37 @@ async function inviteAllReps(){
 
 async function runInviteAll(){
   const todo = zohoReps.filter(r=>!r.hasAccount && r.email);
-  openModal(`<h3>Creating accounts…</h3><p class="lead">Please wait.</p>`);
+  openModal(`<h3>Creating accounts…</h3><p class="lead" id="invProg">0 of ${todo.length} done</p>
+    <div class="load"><span id="invBar" style="width:0%"></span></div>`);
   const done=[], failed=[];
-  for(const r of todo){
+  // Four at a time: each one waits for its welcome email to go, so one after
+  // another made ten reps take half a minute
+  let next = 0;
+  const one = async () => { while(next < todo.length){ const r = todo[next++];
     try{
       const out = await API.createUserFromZoho({contactId:r.contactId,name:r.name,email:r.email,role:'rep'});
-      done.push({name:r.name,email:r.email,password:out.tempPassword,emailed:!!out.emailed});
+      done.push({name:r.name,email:r.email,password:out.tempPassword||'',emailed:!!out.emailed});
     }catch(ex){ failed.push({name:r.name,error:ex.message}); }
-  }
+    const n = done.length + failed.length, pr = document.getElementById('invProg'), bar = document.getElementById('invBar');
+    if(pr) pr.textContent = `${n} of ${todo.length} done`; if(bar) bar.style.width = Math.round(n / todo.length * 100) + '%'; } };
+  await Promise.all([one(), one(), one(), one()]);
+  done.sort((a,b) => a.name.localeCompare(b.name));
+  const emailed = done.filter(d=>d.emailed).length, withPw = done.filter(d=>d.password);
   openModal(`<h3>${done.length} account${done.length===1?'':'s'} created</h3>
-    <p class="lead">${done.filter(d=>d.emailed).length} of ${done.length} were emailed their login directly.
-      The passwords are below as well — shown once.</p>
+    <p class="lead">${emailed === done.length
+      ? `Each rep has been emailed a welcome with a link to choose their own password (it works for 7 days). There are no passwords to hand out: nobody, including the office, ever sees them.`
+      : `${emailed} of ${done.length} were emailed a link to choose their own password. The rest could not be emailed, so give them the password shown — once only.`}</p>
     <div class="tbl-wrap" style="max-height:300px;overflow:auto"><table class="rep">
-      <thead><tr><th>Rep</th><th>Email</th><th>Password</th></tr></thead>
+      <thead><tr><th>Rep</th><th>Email</th><th>${withPw.length ? 'Password' : 'Status'}</th></tr></thead>
       <tbody>${done.map(d=>`<tr><td>${esc(d.name)}</td><td>${esc(d.email)}</td>
-        <td style="font-family:ui-monospace,monospace;font-weight:700">${esc(d.password)}</td></tr>`).join('')}</tbody>
+        <td>${d.password ? `<span style="font-family:ui-monospace,monospace;font-weight:700">${esc(d.password)}</span>` : '<span class="tag ok">Link emailed</span>'}</td></tr>`).join('')}</tbody>
     </table></div>
     ${failed.length?`<div class="callout rust" style="margin-top:10px"><strong>${failed.length} could not be created</strong>
       ${failed.map(f=>esc(f.name)+': '+esc(f.error)).join('<br>')}</div>`:''}
     <div class="m-actions">
-      <button class="btn" onclick="copyPasswords()">Copy all</button>
-      <button class="btn primary" onclick="closeModal();loadUsers(true)">Done</button></div>`);
-  window.__lastPasswords = done;
+      ${withPw.length ? `<button class="btn" onclick="copyPasswords()">Copy passwords</button>` : ''}
+      <button class="btn primary" onclick="closeModal();loadUsers(true);onboard=null">Done</button></div>`);
+  window.__lastPasswords = withPw;
 }
 
 function copyPasswords(){
@@ -5103,7 +5117,10 @@ function vSummitDetail(){
       <div class="chips" style="margin:0">
         <button class="chip ${onlyMine ? '' : 'on'}" onclick="ui.summitMineOnly=false;renderContent()">Everything</button>
         <button class="chip ${onlyMine ? 'on' : ''}" onclick="ui.summitMineOnly=true;renderContent()">Mine${mineCount ? ' · ' + mineCount : ''}</button></div></div>
-    <div class="row-sub" style="margin:0 0 8px">Pick who does each task. Someone from the team gets an email and sees it in their notifications; you can also type any name, like a volunteer.</div>
+    <div class="row-sub" style="margin:0 0 8px">Every summit starts from Symbiz's standard summit checklist, with each date counted from the summit day.
+      <a href="#" class="inline-link" onclick="event.preventDefault();openSummitTemplate()">See or edit the standard list</a>${done === 0 ? ` ·
+      <a href="#" class="inline-link" onclick="event.preventDefault();restartSummitList()">start this summit again from it</a>` : ''}.
+      Pick who does each task: someone from the team gets an email and sees it in their notifications; you can also type any name, like a volunteer.</div>
     <div class="load" style="margin:-2px 0 10px"><span style="width:${total ? Math.round(done/total*100) : 0}%"></span></div>
     ${onlyMine && !tasksShown.length ? `<div class="empty">Nothing on this summit is yours yet.</div>` : ''}
     ${stages.map(st => `<div class="card chk-stage"><div class="chk-head">${esc(st)}</div>
@@ -5158,6 +5175,53 @@ async function summitCall(path, opts, what){
   try{ return await API.call('/summits/' + ui.summitId + path, opts); }
   catch(e){ toast(e.message || 'Could not save ' + (what || 'that')); return null; }
 }
+/* The standard checklist: where every new summit's list comes from */
+async function openSummitTemplate(){
+  openModal(`<h3>Standard summit checklist</h3><p class="lead">Loading…</p>`);
+  let t; try{ t = await API.call('/summits/template'); }
+  catch(e){ openModal(`<h3>Standard summit checklist</h3><p class="lead">${esc(e.message)}</p><div class="m-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>`); return; }
+  drawSummitTemplate(t);
+}
+function addTplRow(){ const el = document.getElementById('tplRows'); el.insertAdjacentHTML('beforeend', tplRow({ stage:'', dueOffset:'', title:'' })); el.lastElementChild.querySelector('.tpl-title').focus(); }
+const tplRow = x => `<div class="tpl-row">
+      <input class="tpl-stage" value="${esc(x.stage || '')}" placeholder="Stage" aria-label="Stage">
+      <input class="tpl-days" type="number" value="${x.dueOffset ?? ''}" placeholder="Days" title="Days before the summit (negative) or after it" aria-label="Days">
+      <input class="tpl-title" value="${esc(x.title || '')}" placeholder="What needs doing" aria-label="Task">
+      <button type="button" class="btn sm ghost" title="Remove" onclick="this.parentNode.remove()">✕</button></div>`;
+function drawSummitTemplate(t){
+  openModal(`<h3>Standard summit checklist</h3>
+    <p class="lead">${t.custom
+      ? `This is Symbiz's own list${t.by ? `, last changed by ${esc(t.by)}` : ''}.`
+      : `This is the starting list that came with Rep Hub: the usual steps for a one-day regional event, from booking the venue three months out to the debrief afterwards. It is not taken from a Symbiz document. Change it to match how Symbiz really runs a summit.`}
+      Each new summit is given this list the first time it is opened. Days are counted from the summit: −90 is three months before, 7 is a week after.</p>
+    <div class="tpl-head"><span>Stage</span><span>Days</span><span>Task</span></div>
+    <div id="tplRows" class="tpl-rows">${t.list.map(tplRow).join('')}</div>
+    <button type="button" class="btn sm" style="margin-top:8px" onclick="addTplRow()">+ Add a task</button>
+    <div class="m-actions">
+      ${t.custom ? `<button class="btn" onclick="resetSummitTemplate()">Go back to Rep Hub's list</button>` : ''}
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="saveSummitTemplate(this)">Save the standard list</button></div>`);
+}
+async function saveSummitTemplate(btn){
+  const list = [...document.querySelectorAll('#tplRows .tpl-row')].map(r => ({ stage: r.querySelector('.tpl-stage').value,
+    dueOffset: r.querySelector('.tpl-days').value, title: r.querySelector('.tpl-title').value })).filter(x => x.title.trim());
+  if(!list.length) return toast('Add at least one task');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try{ await API.call('/summits/template', { method:'PUT', body: JSON.stringify({ list }) });
+    closeModal(); toast('Saved. New summits start from this list'); }
+  catch(e){ btn.disabled = false; btn.textContent = 'Save the standard list'; toast(e.message || 'Could not save'); }
+}
+async function resetSummitTemplate(){
+  if(!confirm("Go back to the list that came with Rep Hub? Symbiz's own list will be removed.")) return;
+  try{ drawSummitTemplate(await API.call('/summits/template', { method:'DELETE' })); toast('Back to the original list'); }
+  catch(e){ toast(e.message || 'Could not reset'); }
+}
+async function restartSummitList(){
+  if(!confirm('Replace this summit\'s checklist with the standard list? Anything added or assigned on this summit is replaced.')) return;
+  const tasks = await summitCall('/tasks/restart', { method:'POST' }, 'the checklist');
+  if(tasks && summitDetail){ summitDetail.tasks = tasks; summitFresh = false; renderContent(); toast('Started again from the standard list'); loadSummitMine(); }
+}
+
 /** A typed "Who": a team member's name becomes that person; anything else stays a name */
 function whoFrom(text){
   const v = String(text || '').trim();
