@@ -193,6 +193,16 @@ CREATE TABLE IF NOT EXISTS accounting_batches (
   decided_by    TEXT
 );
 
+CREATE TABLE IF NOT EXISTS trusted_devices (
+  token_hash   TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL,
+  label        TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at TIMESTAMPTZ,
+  expires_at   TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_user ON trusted_devices (user_id);
 CREATE INDEX IF NOT EXISTS idx_token_user ON login_tokens (user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_writes (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries (user_id, entry_date);
@@ -271,6 +281,27 @@ const q = {
 
   audit:      (userId, action, detail, ip) => query('INSERT INTO audit (user_id,action,detail,ip) VALUES ($1,$2,$3,$4)', [userId, action, detail, ip]),
   recentAudit: limit => query('SELECT * FROM audit ORDER BY created_at DESC LIMIT $1', [limit]),
+  recentAuditCount: (userId, action, minutes) => one(
+    'SELECT count(*)::int AS c FROM audit WHERE user_id = $1 AND action = $2 AND created_at > $3',
+    [userId, action, new Date(Date.now() - minutes * 60000).toISOString()]),
+  // Wrong passwords since the last good sign-in, within the window
+  failsSinceOk: async (userId, minutes) => {
+    const ok = await one("SELECT max(created_at) AS at FROM audit WHERE user_id = $1 AND action = 'login.ok'", [userId]);
+    const since = new Date(Math.max(Date.now() - minutes * 60000, ok && ok.at ? new Date(ok.at).getTime() : 0));
+    return one("SELECT count(*)::int AS c FROM audit WHERE user_id = $1 AND action = 'login.failed' AND created_at > $2",
+      [userId, since.toISOString()]);
+  },
+
+  /* ── trusted devices ── */
+  addDevice: (hash, userId, label, expires) => query(
+    'INSERT INTO trusted_devices (token_hash,user_id,label,expires_at) VALUES ($1,$2,$3,$4)', [hash, userId, label, expires]),
+  deviceByHash: hash => one('SELECT * FROM trusted_devices WHERE token_hash = $1', [hash]),
+  touchDevice: hash => query('UPDATE trusted_devices SET last_used_at = now() WHERE token_hash = $1', [hash]),
+  devicesFor: userId => query(
+    'SELECT token_hash,label,created_at,last_used_at,expires_at FROM trusted_devices WHERE user_id = $1 AND expires_at > now() ORDER BY created_at DESC', [userId]),
+  forgetDevice: (hash, userId) => query('DELETE FROM trusted_devices WHERE token_hash = $1 AND user_id = $2', [hash, userId]),
+  forgetDevicesFor: userId => query('DELETE FROM trusted_devices WHERE user_id = $1', [userId]),
+  setRole: (id, role) => query('UPDATE users SET role = $1 WHERE id = $2', [role, id]),
 
   getSetting: key => one('SELECT value FROM settings WHERE key = $1', [key]),
   setSetting: (key, value) => query(
@@ -343,7 +374,7 @@ const q = {
   setExpenseBill: (id, billId, error) => query(
     'UPDATE expenses SET books_bill_id = COALESCE($2, books_bill_id), books_error = $3 WHERE id = $1',
     [id, billId || null, error || null]),
-  receiptFor: id => one('SELECT receipt_name,receipt_type,receipt_data FROM expenses WHERE id = $1', [id]),
+  receiptFor: id => one('SELECT user_id,receipt_name,receipt_type,receipt_data FROM expenses WHERE id = $1', [id]),
   approveExpense: (id, by) => query(
     "UPDATE expenses SET status='Approved', approved_at=now(), approved_by=$2 WHERE id = $1", [id, by]),
   markExpensesSent: () => query("UPDATE expenses SET status='Reimbursed' WHERE status='Approved'"),

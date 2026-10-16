@@ -5,6 +5,7 @@ const zoho = require('./lib/zoho');
 const cfg = require('./config');
 const { q, audit, setting } = require('./db');
 const auth = require('./auth');
+const access = require('./access');
 const { enqueue, flushQueue } = require('./sync');
 const reminders = require('./reminders');
 const { tablePDF } = require('./lib/pdf');
@@ -102,8 +103,9 @@ r.post('/setup', wrap(async (req, res) => {
     role: 'admin', region: null, password_hash: auth.hash(password), zoho_owner_id: null,
   });
   await audit(id, 'setup.firstAdmin', { email }, req.ip);
+  await access.setOwner(id);            // whoever installs Rep Hub owns it
   const user = await q.userByEmail(email);
-  res.status(201).json({ token: auth.issue(user), user: auth.publicUser(user) });
+  res.status(201).json({ token: auth.issue(user), user: await auth.withAccess(user) });
 }));
 
 /** The email a new rep receives with their sign-in details. */
@@ -239,6 +241,10 @@ r.post('/auth/request-link', wrap(async (req, res) => {
 
   const user = await findOrCreateAccount(email);
   if (!user) return res.status(404).json({ error: NO_ACCOUNT, noAccount: true });
+  // A link proves only the inbox. Accounts with 2-step sign-in need the password too.
+  if (await access.needsTwoStep(user)) {
+    return res.status(400).json({ error: 'This account signs in with a password and an emailed code. Use your password instead.' });
+  }
 
   const recent = await q.recentTokenCount(user.id, 'signin');
   if ((recent?.c || 0) >= 8) {
@@ -293,23 +299,37 @@ async function sendCode(user, req, purpose = 'otp') {
   // Stored as the code itself, scoped to this user and single use. It is
   // short-lived and rate limited, which is what makes six digits safe enough.
   await q.addLoginToken(`${purpose}:${user.id}:${code}`, user.id, expires, req.ip, purpose);
-  const verify = purpose === 'verify';
-  return reminders.sendEmail(user.email, `Your Rep Hub code: ${code}`,
+  const verify = purpose === 'verify', twoStep = purpose === '2sv';
+  const where = req.headers['user-agent'] ? deviceLabel(req.headers['user-agent']) : '';
+  return reminders.sendEmail(user.email, twoStep ? `Rep Hub sign-in code: ${code}` : `Your Rep Hub code: ${code}`,
     `<!doctype html><html><body style="margin:0;background:#F2F5EC;font-family:-apple-system,Segoe UI,Arial,sans-serif;">
     <div style="max-width:440px;margin:0 auto;padding:26px 18px;text-align:center;">
-      <h1 style="font-size:18px;color:#1E2A20;margin:0 0 6px;">${verify ? 'Confirm your email' : 'Your password reset code'}</h1>
+      <h1 style="font-size:18px;color:#1E2A20;margin:0 0 6px;">${verify ? 'Confirm your email' : twoStep ? 'Your sign-in code' : 'Your password reset code'}</h1>
       <p style="color:#5A6455;font-size:14px;margin:0 0 18px;">
         ${esc((user.name||'').split(' ')[0] || 'Hello')}, ${verify
           ? 'type this into Rep Hub to finish setting up your account.'
+          : twoStep ? `someone — hopefully you — entered your password${where ? ` on ${esc(where)}` : ''}. Type this code to finish signing in.`
           : 'type this into Rep Hub to choose a new password.'}</p>
       <div style="font-family:ui-monospace,Menlo,monospace;font-size:34px;font-weight:700;
         letter-spacing:.18em;color:#2E5132;background:#fff;border-radius:10px;padding:16px 10px;">${code}</div>
       <p style="color:#8A9284;font-size:12.5px;margin:18px 0 0;">
         It expires in ${minutes} minutes and works once.
-        ${verify ? "If you didn't sign up for Rep Hub, ignore it." : "If you didn't ask for this, ignore it — your password has not changed."}</p>
+        ${verify ? "If you didn't sign up for Rep Hub, ignore it."
+          : twoStep ? "<strong>If this wasn't you, change your password now</strong> — whoever tried has it, but cannot get in without this code."
+          : "If you didn't ask for this, ignore it — your password has not changed."}</p>
       <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network</p>
     </div></body></html>`,
     { userId: user.id, kind: purpose });
+}
+
+/** "Chrome on Windows", from a user-agent string, for emails and the device list. */
+function deviceLabel(ua) {
+  ua = String(ua || '');
+  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Chrome\//.test(ua) ? 'Chrome'
+    : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'a browser';
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android'
+    : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : '';
+  return os ? `${browser} on ${os}` : browser;
 }
 
 /** Check a code of the given purpose; burn it and its siblings if good. */
@@ -422,7 +442,7 @@ r.post('/auth/verify-email', wrap(async (req, res) => {
   await q.touchLogin(user.id);
   await audit(user.id, 'auth.emailVerified', {}, req.ip);
   notifyOfficeOfSignup(user).catch(() => {});
-  res.json({ token: auth.issue(user), user: auth.publicUser(user) });
+  res.json({ token: auth.issue(user), user: await auth.withAccess(user) });
 }));
 
 r.post('/auth/resend-verification', wrap(async (req, res) => {
@@ -542,7 +562,9 @@ r.post('/auth/set-password', wrap(async (req, res) => {
   // Getting here took a code or link from their inbox, so the address is theirs
   if (user.email_verified === false) await q.markVerified(user.id);
   await audit(user.id, 'auth.passwordSet', {}, req.ip);
-  res.json({ token: auth.issue(user), user: auth.publicUser(user) });
+  // A new password signs out every remembered device
+  await q.forgetDevicesFor(user.id).catch(() => {});
+  res.json({ token: auth.issue(user), user: await auth.withAccess(user) });
 }));
 
 /** Exchange a link for a session. Single use, time limited. */
@@ -563,13 +585,17 @@ r.post('/auth/verify-link', wrap(async (req, res) => {
   await q.useLoginToken(token);       // burn it before issuing the session
   if (user.email_verified === false) await q.markVerified(user.id);   // the link came from their inbox
   await audit(user.id, 'auth.linkUsed', {}, req.ip);
-  res.json({ token: auth.issue(user), user: auth.publicUser(user) });
+  res.json({ token: auth.issue(user), user: await auth.withAccess(user) });
 }));
 
 r.post('/auth/login', wrap(async (req, res) => {
-  const { email, password } = req.body || {};
-  const out = await auth.login(email, password, req.ip);
+  const { email, password, device } = req.body || {};
+  const out = await auth.login(email, password, req.ip, device);
   if (!out) return res.status(401).json({ error: 'Email or password is incorrect' });
+  if (out.locked) {
+    return res.status(429).json({ error: `Too many wrong passwords. For your safety this account is paused for ${auth.LOCK_MINUTES} minutes — ` +
+      'or use "Forgot password?" to set a new one now.', locked: true });
+  }
   if (out.unverified) {
     const recent = await q.recentTokenCount(out.user.id, 'verify');
     if ((recent?.c || 0) < 8) await sendCode(out.user, req, 'verify');
@@ -578,7 +604,88 @@ r.post('/auth/login', wrap(async (req, res) => {
       needsVerification: true, email: out.user.email,
     });
   }
+  if (out.twoStep) {
+    // Like Google's 2-Step Verification: the password alone is not enough
+    const recent = await q.recentTokenCount(out.user.id, '2sv');
+    let sent = null;
+    if ((recent?.c || 0) < 8) sent = await sendCode(out.user, req, '2sv');
+    if (sent && sent.ok === false && sent.skipped) {
+      // Email is not set up on this site at all. Demanding a code nobody can
+      // receive would lock every director out, so fall back to the password
+      // and leave a trace of it.
+      await audit(out.user.id, 'login.twoStepSkipped', { reason: 'mail not configured' }, req.ip);
+      return res.json(await auth.finishLogin(out.user, req.ip));
+    }
+    if (sent && sent.ok === false) {
+      return res.status(503).json({ error: 'Your sign-in code could not be emailed just now. Try again in a minute.' });
+    }
+    return res.json({ twoStep: true, challenge: auth.challengeFor(out.user), sentTo: auth.maskEmail(out.user.email) });
+  }
   res.json(out);
+}));
+
+const CODE_TRIES = 5;
+/** Second step: the code from the email. Optionally remember this device. */
+r.post('/auth/login/code', wrap(async (req, res) => {
+  const userId = auth.readChallenge(req.body?.challenge);
+  if (!userId) return res.status(401).json({ error: 'That took too long. Sign in again.', restart: true });
+  const user = await q.userById(userId);
+  if (!user || user.active === false) return res.status(401).json({ error: 'That account is no longer active', restart: true });
+  if (((await q.recentAuditCount(user.id, 'login.codeFailed', 15))?.c || 0) >= CODE_TRIES) {
+    return res.status(429).json({ error: 'Too many wrong codes. Sign in again to get a new one.', restart: true });
+  }
+  const code = String(req.body?.code || '').replace(/\D/g, '');
+  const problem = code.length === 6 ? await useCode(user, code, '2sv') : 'The code is six digits';
+  if (problem) {
+    await audit(user.id, 'login.codeFailed', {}, req.ip);
+    return res.status(401).json({ error: problem });
+  }
+  const out = await auth.finishLogin(user, req.ip);
+  if (req.body?.trust) {
+    out.device = await auth.trustDevice(user.id, deviceLabel(req.headers['user-agent']));
+    await audit(user.id, 'device.trusted', { label: deviceLabel(req.headers['user-agent']) }, req.ip);
+  }
+  res.json(out);
+}));
+
+r.post('/auth/login/resend', wrap(async (req, res) => {
+  const userId = auth.readChallenge(req.body?.challenge);
+  if (!userId) return res.status(401).json({ error: 'That took too long. Sign in again.', restart: true });
+  const user = await q.userById(userId);
+  if (!user) return res.status(401).json({ error: 'Sign in again.', restart: true });
+  const recent = await q.recentTokenCount(user.id, '2sv');
+  if ((recent?.c || 0) >= 8) return res.status(429).json({ error: 'Several codes have been sent. Use the newest one, or wait a few minutes.' });
+  const sent = await sendCode(user, req, '2sv');
+  if (sent && sent.ok === false) return res.status(503).json({ error: 'The code could not be emailed just now.' });
+  res.json({ ok: true, sentTo: auth.maskEmail(user.email) });
+}));
+
+/** Devices that skip the code, for "Your devices" in Access & security. */
+r.get('/auth/devices', auth.authRequired, wrap(async (req, res) => {
+  const mine = auth.sha(String(req.headers['x-device'] || ''));
+  res.json((await q.devicesFor(req.user.id)).map(d => ({ id: d.token_hash.slice(0, 16), label: d.label,
+    added: d.created_at, lastUsed: d.last_used_at, expires: d.expires_at, current: d.token_hash === mine })));
+}));
+r.delete('/auth/devices/:id', auth.authRequired, wrap(async (req, res) => {
+  const d = (await q.devicesFor(req.user.id)).find(x => x.token_hash.startsWith(String(req.params.id)) && req.params.id.length === 16);
+  if (!d) return res.status(404).json({ error: 'No such device' });
+  await q.forgetDevice(d.token_hash, req.user.id);
+  await audit(req.user.id, 'device.forgotten', { label: d.label }, req.ip);
+  res.json({ ok: true });
+}));
+
+/** Re-type the password before changing who can do what. */
+r.post('/auth/elevate', auth.authRequired, wrap(async (req, res) => {
+  if (req.user.role === 'rep') return res.status(403).json({ error: 'Not allowed' });
+  const u = await q.userById(req.user.id);
+  const fails = (await q.recentAuditCount(u.id, 'elevate.failed', 15))?.c || 0;
+  if (fails >= 5) return res.status(429).json({ error: 'Too many wrong passwords. Wait 15 minutes and try again.' });
+  if (!auth.verify(String(req.body?.password || ''), u.password_hash)) {
+    await audit(u.id, 'elevate.failed', {}, req.ip);
+    return res.status(401).json({ error: 'That password is not right' });
+  }
+  await audit(u.id, 'elevate.ok', {}, req.ip);
+  res.json({ elevation: auth.elevate(u), minutes: 15 });
 }));
 
 r.get('/auth/me', auth.authRequired, wrap(async (req, res) => {
@@ -1280,8 +1387,12 @@ r.post('/pending/:id/reject', auth.authRequired, auth.requireOffice, wrap(async 
  * and no Zoho module fits. Writes stay allowed in read-only mode because this
  * is our data, not their CRM.
  */
+// Everyone's hours and claims are accounting data: office accounts without
+// that access see only their own, like a rep.
+const seesAllClaims = u => u.role !== 'rep' && !!(u.perms && u.perms.accounting);
+
 r.get('/time', auth.authRequired, wrap(async (req, res) => {
-  const rows = req.user.role === 'rep' ? await q.timeFor(req.user.id) : await q.allTime();
+  const rows = seesAllClaims(req.user) ? await q.allTime() : await q.timeFor(req.user.id);
   res.json(rows);
 }));
 
@@ -1298,13 +1409,13 @@ r.post('/time', auth.authRequired, wrap(async (req, res) => {
   res.status(201).json({ id: out[0]?.id });
 }));
 
-r.post('/time/:id/approve', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.post('/time/:id/approve', auth.authRequired, access.requirePerm('accounting'), wrap(async (req, res) => {
   await q.approveTime(parseInt(req.params.id, 10), req.user.id);
   res.json({ ok: true });
 }));
 
 r.get('/expenses', auth.authRequired, wrap(async (req, res) => {
-  const rows = req.user.role === 'rep' ? await q.expensesFor(req.user.id) : await q.allExpenses();
+  const rows = seesAllClaims(req.user) ? await q.allExpenses() : await q.expensesFor(req.user.id);
   res.json(rows);
 }));
 
@@ -1330,16 +1441,18 @@ r.post('/expenses', auth.authRequired, wrap(async (req, res) => {
 r.get('/expenses/:id/receipt', auth.authRequired, wrap(async (req, res) => {
   const row = await q.receiptFor(parseInt(req.params.id, 10));
   if (!row || !row.receipt_data) return res.status(404).json({ error: 'No receipt on that expense' });
+  // Your own receipts, or everyone's with accounting access — not anyone's by guessing a number
+  if (row.user_id !== req.user.id && !seesAllClaims(req.user)) return res.status(404).json({ error: 'No receipt on that expense' });
   res.json({ name: row.receipt_name, type: row.receipt_type, data: row.receipt_data });
 }));
 
-r.post('/expenses/:id/approve', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.post('/expenses/:id/approve', auth.authRequired, access.requirePerm('accounting'), wrap(async (req, res) => {
   await q.approveExpense(parseInt(req.params.id, 10), req.user.id);
   res.json({ ok: true });
 }));
 
 /** Everything approved, as one payload for accounting. */
-r.get('/accounting/pending', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.get('/accounting/pending', auth.authRequired, access.requirePerm('accounting'), wrap(async (req, res) => {
   const [time, exp] = await Promise.all([q.allTime(), q.allExpenses()]);
   const approvedTime = time.filter(t => t.status === 'Approved');
   const approvedExp = exp.filter(x => x.status === 'Approved');
@@ -1519,16 +1632,16 @@ async function createBatch({ actor, period } = {}) {
   return { status: 200, body: { awaitingApproval: true, expenses: e.length, time: t.length, amount } };
 }
 
-r.post('/accounting/send', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.post('/accounting/send', auth.authRequired, access.requirePerm('accounting'), wrap(async (req, res) => {
   const out = req.user.role === 'admin'
     ? await deliverToAccounting({ actor: req.user, ip: req.ip })
-    : await createBatch({ actor: req.user });
+    : await createBatch({ actor: req.user });   // office staff: an admin with accounting access approves it
   if (req.user.role === 'admin' && out.status === 200) await q.supersedeBatches();   // nothing left waiting
   res.status(out.status).json(out.body);
 }));
 
 /** The batch waiting for final approval (and the last one sent back), for both screens. */
-r.get('/accounting/batches', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.get('/accounting/batches', auth.authRequired, access.requirePerm('accounting'), wrap(async (req, res) => {
   const [pending, returned] = await Promise.all([q.pendingBatches(), q.lastReturnedBatch()]);
   const names = Object.fromEntries((await q.everyUser()).map(u => [u.id, u.name]));
   const shape = b => ({ id: b.id, period: b.period, createdAt: b.created_at, status: b.status, note: b.note || '',
@@ -1549,7 +1662,7 @@ async function pendingBatch(id) {
 }
 
 /** Everything in a batch, for the admin to review. Receipts open via /expenses/:id/receipt. */
-r.get('/accounting/batches/:id', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.get('/accounting/batches/:id', auth.authRequired, access.requirePerm('accounting'), wrap(async (req, res) => {
   const b = await q.batchById(parseInt(req.params.id, 10));
   if (!b) return res.status(404).json({ error: 'That batch was not found' });
   const ids = { t: JSON.parse(b.time_ids).map(Number), e: JSON.parse(b.expense_ids).map(Number) };
@@ -1564,7 +1677,7 @@ r.get('/accounting/batches/:id', auth.authRequired, auth.requireOffice, wrap(asy
   });
 }));
 
-r.post('/accounting/batches/:id/approve', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+r.post('/accounting/batches/:id/approve', auth.authRequired, auth.requireAdmin, access.requirePerm('accounting'), wrap(async (req, res) => {
   const { batch: b, error, status } = await pendingBatch(req.params.id);
   if (error) return res.status(status).json({ error });
   const out = await deliverToAccounting({ timeIds: JSON.parse(b.time_ids), expenseIds: JSON.parse(b.expense_ids),
@@ -1576,7 +1689,7 @@ r.post('/accounting/batches/:id/approve', auth.authRequired, auth.requireAdmin, 
   res.status(out.status).json(out.body);
 }));
 
-r.post('/accounting/batches/:id/return', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+r.post('/accounting/batches/:id/return', auth.authRequired, auth.requireAdmin, access.requirePerm('accounting'), wrap(async (req, res) => {
   const { batch: b, error, status } = await pendingBatch(req.params.id);
   if (error) return res.status(status).json({ error });
   const note = String(req.body?.note || '').trim().slice(0, 2000);
@@ -1846,11 +1959,32 @@ r.get('/admin/reps-from-zoho', auth.authRequired, auth.requireOffice, wrap(async
   res.json(out);
 }));
 
+/**
+ * Director accounts are the keys to everything, so only the owner can make
+ * one or reset, email or remove one. (Before an owner is claimed, directors
+ * keep the say they always had.) Nobody can remove the owner.
+ */
+async function mayManageDirectors(user) {
+  return user.owner || (!(await access.ownerId()) && user.role === 'admin');
+}
+async function guardTarget(req, res, target) {
+  if (target.id === await access.ownerId() && req.user.id !== target.id) {
+    res.status(403).json({ error: "That is the owner's account. Only the owner can change it." });
+    return false;
+  }
+  if (target.role === 'admin' && !(await mayManageDirectors(req.user))) {
+    res.status(403).json({ error: 'Only the owner can change a director account.' });
+    return false;
+  }
+  return true;
+}
+
 /** Create an account straight from a Zoho rep, no typing of ids. */
-r.post('/admin/users/from-zoho', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+r.post('/admin/users/from-zoho', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
   const { contactId, name, email, role } = req.body || {};
   if (!contactId || !name) return res.status(400).json({ error: 'A Zoho contact and name are required' });
   if (!email) return res.status(400).json({ error: 'That rep has no email in Zoho — add one there, or create the account manually' });
+  if (role === 'admin' && !(await mayManageDirectors(req.user))) return res.status(403).json({ error: 'Only the owner can make someone a director.' });
 
   const existing = await q.allUsers();
   if (existing.some(u => u.zoho_owner_id === contactId)) {
@@ -1887,7 +2021,7 @@ r.post('/admin/users/from-zoho', auth.authRequired, auth.requireAdmin, wrap(asyn
  * hands back the server's own error. Guessing at SMTP problems from the
  * outside wastes more time than any other part of setup.
  */
-r.get('/admin/mail-status', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+r.get('/admin/mail-status', auth.authRequired, access.requirePerm('system'), wrap(async (req, res) => {
   const m = cfg.mail;
   const problems = [];
   if (!m.enabled) problems.push('MAIL_ENABLED is not set to true');
@@ -1931,7 +2065,7 @@ r.get('/admin/mail-status', auth.authRequired, auth.requireAdmin, wrap(async (re
 }));
 
 /** Send a real email and report what actually happened. */
-r.post('/admin/mail-test', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+r.post('/admin/mail-test', auth.authRequired, access.requirePerm('system'), wrap(async (req, res) => {
   const to = String(req.body?.to || req.user.email || '').trim();
   if (!to || !to.includes('@')) return res.status(400).json({ error: 'Where should the test go?' });
 
@@ -1963,14 +2097,15 @@ r.post('/admin/mail-test', auth.authRequired, auth.requireAdmin, wrap(async (req
   res.status(502).json({ ok: false, error: raw, hint, host: cfg.mail.host, port: cfg.mail.port });
 }));
 
-r.get('/admin/users', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+r.get('/admin/users', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
   res.json(await q.allUsers());
 }));
 
-r.post('/admin/users', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+r.post('/admin/users', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
   const { email, name, role, region, phone, password, zohoContactId } = req.body || {};
   if (!email || !name || !role) return res.status(400).json({ error: 'email, name and role are required' });
   if (!['rep', 'staff', 'admin'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+  if (role === 'admin' && !(await mayManageDirectors(req.user))) return res.status(403).json({ error: 'Only the owner can make someone a director.' });
   const id = `u_${Date.now().toString(36)}`;
   const temp = password || Math.random().toString(36).slice(2, 10);
   try {
@@ -1999,9 +2134,10 @@ r.post('/admin/users', auth.authRequired, auth.requireAdmin, wrap(async (req, re
  * not by us, not by the office — so the only way to help someone locked out
  * is to issue a new one.
  */
-r.post('/admin/users/:id/reset-password', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+r.post('/admin/users/:id/reset-password', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
   const user = await q.userById(req.params.id);
   if (!user) return res.status(404).json({ error: 'No such account' });
+  if (!(await guardTarget(req, res, user))) return;
   const temp = Math.random().toString(36).slice(2, 10);
   await q.setPassword(auth.hash(temp), user.id);
   await audit(req.user.id, 'user.passwordReset', { id: user.id, email: user.email }, req.ip);
@@ -2009,10 +2145,11 @@ r.post('/admin/users/:id/reset-password', auth.authRequired, auth.requireAdmin, 
 }));
 
 /** Reset someone's password and email them the new one. */
-r.post('/admin/users/:id/resend', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.post('/admin/users/:id/resend', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
   const users = await q.allUsers();
   const u = users.find(x => x.id === req.params.id);
   if (!u) return res.status(404).json({ error: 'No such account' });
+  if (!(await guardTarget(req, res, u))) return;
   // Prefer sending a link so they choose their own. Only fall back to a
   // generated password when email cannot go out, so nobody is locked out.
   const sent = await sendPasswordLink(u, req, { invite: false });
@@ -2026,11 +2163,12 @@ r.post('/admin/users/:id/resend', auth.authRequired, auth.requireOffice, wrap(as
   res.json({ tempPassword: temp, emailed: false });
 }));
 
-r.delete('/admin/users/:id', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+r.delete('/admin/users/:id', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
   if (req.params.id === req.user.id) return res.status(400).json({ error: "You can't remove your own account" });
   const everyone = await q.everyUser();
   const target = everyone.find(u => u.id === req.params.id);
   if (!target) return res.status(404).json({ error: 'No such account' });
+  if (!(await guardTarget(req, res, target))) return;
   const admins = everyone.filter(u => u.role === 'admin' && u.active);
   if (target.role === 'admin' && admins.length <= 1) {
     return res.status(400).json({ error: 'That is the only director account — make someone else a director first' });
@@ -2042,7 +2180,7 @@ r.delete('/admin/users/:id', auth.authRequired, auth.requireAdmin, wrap(async (r
   res.json({ ok: true, removed: target.email });
 }));
 
-r.get('/admin/audit', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.get('/admin/audit', auth.authRequired, access.requirePerm('system'), wrap(async (req, res) => {
   res.json(await q.recentAudit(parseInt(req.query.limit || '100', 10)));
 }));
 
@@ -2065,10 +2203,17 @@ r.get('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
   res.json(out);
 }));
 
+// Accounting and Books settings need the "books" capability; the rest need "settings"
+const BOOKS_SETTINGS = ['accountingEmail', 'accountingDay', 'booksAuto', 'booksPayee', 'booksAccount', 'booksAccountMap'];
+
 r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
   const saved = {};
   for (const [k, v] of Object.entries(req.body || {})) {
     if (!(k in OFFICE_SETTINGS)) continue;
+    const need = BOOKS_SETTINGS.includes(k) ? 'books' : 'settings';
+    if (!req.user.perms[need]) {
+      return res.status(403).json({ error: `Your account cannot change ${need === 'books' ? 'accounting or Zoho Books' : 'app'} settings. Ask the owner.` });
+    }
     let val = String(v ?? '').trim().slice(0, 500);
     if (k === 'accountingEmail' && val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
       return res.status(400).json({ error: 'That accounting address does not look like an email' });
@@ -2090,8 +2235,77 @@ r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
   res.json({ ok: true, saved });
 }));
 
+/* ═══════════ ACCESS & SECURITY (owner) ═══════════
+ * Who can do what, and who signs in with a code. Reading and changing it
+ * needs the owner AND their password re-typed in the last 15 minutes. */
+
+/** Is there an owner yet? Any office account may ask (it drives the claim prompt). */
+r.get('/admin/access/status', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  const id = await access.ownerId();
+  const owner = id ? await q.userById(id) : null;
+  res.json({ claimed: !!owner, ownerName: owner ? owner.name : null, you: !!req.user.owner,
+    canClaim: !owner && req.user.role === 'admin' });
+}));
+
+/** Becoming the owner, once. A director, their password, and nobody got there first. */
+r.post('/admin/access/claim', auth.authRequired, auth.requireAdmin, auth.requireElevated, wrap(async (req, res) => {
+  if (await access.ownerId()) return res.status(409).json({ error: 'Rep Hub already has an owner.' });
+  await access.setOwner(req.user.id);
+  await audit(req.user.id, 'access.ownerClaimed', {}, req.ip);
+  // Every other director hears about it, so a wrong claim cannot go unnoticed
+  const others = (await q.allOffice()).filter(u => u.role === 'admin' && u.id !== req.user.id);
+  for (const u of others) {
+    reminders.sendEmail(u.email, 'Rep Hub now has an owner',
+      `<p>${esc(req.user.name)} (${esc(req.user.email)}) is now the owner of Rep Hub and controls who can do what.</p>
+       <p>If that is not right, contact them or Prosynergy straight away.</p>`, { userId: u.id, kind: 'security' }).catch(() => {});
+  }
+  res.json({ ok: true, user: await auth.withAccess(await q.userById(req.user.id)) });
+}));
+
+async function accessPayload() {
+  const a = await access.load();
+  const people = (await q.allUsers()).filter(u => u.role !== 'rep')
+    .map(u => ({ id: u.id, name: u.name, email: u.email, role: u.role, owner: u.id === a.ownerId }));
+  return { caps: Object.fromEntries(Object.entries(access.CAPS).map(([k, c]) => [k, { label: c.label, detail: c.detail }])),
+    perms: a.perms, twoStep: a.twoStep, people, ownerId: a.ownerId };
+}
+
+r.get('/admin/access', auth.authRequired, access.requireOwner, auth.requireElevated, wrap(async (req, res) => {
+  res.json(await accessPayload());
+}));
+
+r.put('/admin/access', auth.authRequired, access.requireOwner, auth.requireElevated, wrap(async (req, res) => {
+  const b = req.body || {};
+  if (b.perms) await access.savePermissions(b.perms);
+  if (b.twoStep) await access.saveTwoStep(b.twoStep);
+  await audit(req.user.id, 'access.changed', { perms: b.perms || undefined, twoStep: b.twoStep || undefined }, req.ip);
+  res.json(await accessPayload());
+}));
+
+/** Change an office person's role (rep / office staff / director). */
+r.post('/admin/access/role', auth.authRequired, access.requireOwner, auth.requireElevated, wrap(async (req, res) => {
+  const { userId, role } = req.body || {};
+  if (!['rep', 'staff', 'admin'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+  if (userId === req.user.id) return res.status(400).json({ error: "You can't change your own role" });
+  const u = await q.userById(String(userId || ''));
+  if (!u || u.active === false) return res.status(404).json({ error: 'No such account' });
+  await q.setRole(u.id, role);
+  await audit(req.user.id, 'access.roleChanged', { id: u.id, from: u.role, to: role }, req.ip);
+  res.json(await accessPayload());
+}));
+
+/** Hand the keys to another director. The old owner becomes a director. */
+r.post('/admin/access/transfer', auth.authRequired, access.requireOwner, auth.requireElevated, wrap(async (req, res) => {
+  const u = await q.userById(String(req.body?.userId || ''));
+  if (!u || u.active === false || u.role !== 'admin') return res.status(400).json({ error: 'Ownership can only go to a director' });
+  if (u.id === req.user.id) return res.status(400).json({ error: 'You are already the owner' });
+  await access.setOwner(u.id);
+  await audit(req.user.id, 'access.ownerTransferred', { to: u.id }, req.ip);
+  res.json({ ok: true });
+}));
+
 /* ═══════════ ZOHO BOOKS ═══════════ */
-r.get('/admin/books-status', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.get('/admin/books-status', auth.authRequired, access.requirePerm('books'), wrap(async (req, res) => {
   const st = await books.status();
   const pending = st.configured ? (await q.billsToMake(500, true)) : [];
   res.json({ ...st,
@@ -2101,7 +2315,7 @@ r.get('/admin/books-status', auth.authRequired, auth.requireOffice, wrap(async (
 }));
 
 /** Try again, including ones that failed — after fixing an account name, say. */
-r.post('/accounting/books-retry', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.post('/accounting/books-retry', auth.authRequired, access.requirePerm('books'), wrap(async (req, res) => {
   if (!(await books.configured())) return res.status(400).json({ error: 'Zoho Books is not connected yet' });
   const out = await books.makeBills({ includeFailed: true });
   await audit(req.user.id, 'books.retry', out, req.ip);
@@ -2109,7 +2323,7 @@ r.post('/accounting/books-retry', auth.authRequired, auth.requireOffice, wrap(as
 }));
 
 /** An admin pastes a Self Client grant code; Rep Hub keeps the token. */
-r.post('/admin/books-connect', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+r.post('/admin/books-connect', auth.authRequired, auth.requireAdmin, access.requirePerm('books'), wrap(async (req, res) => {
   const code = String(req.body?.code || '').trim();
   if (!/^1000\.[\w.]+$/.test(code)) return res.status(400).json({ error: 'That does not look like a Zoho grant code (it starts with 1000.)' });
   try { await books.connect(code); }
@@ -2118,7 +2332,7 @@ r.post('/admin/books-connect', auth.authRequired, auth.requireAdmin, wrap(async 
   res.json({ ok: true, ...(await books.status()) });
 }));
 
-r.post('/admin/books-disconnect', auth.authRequired, auth.requireAdmin, wrap(async (req, res) => {
+r.post('/admin/books-disconnect', auth.authRequired, auth.requireAdmin, access.requirePerm('books'), wrap(async (req, res) => {
   await books.disconnect();
   await audit(req.user.id, 'books.disconnected', {}, req.ip);
   res.json({ ok: true });

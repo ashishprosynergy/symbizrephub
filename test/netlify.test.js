@@ -940,6 +940,149 @@ describe('hours and expenses', () => {
   });
 });
 
+/* ═══════════ OWNER, PERMISSIONS, 2-STEP SIGN-IN ═══════════ */
+describe('owner, permissions and 2-step sign-in', () => {
+  const { handler } = require('../netlify/functions/api');
+  const access = require('../src/access');
+  const cfg = require('../src/config');
+  const reminders = require('../src/reminders');
+  const invoke = (method, path, { body, token, headers } = {}) => handler({
+    httpMethod: method, path: `/.netlify/functions/api${path}`,
+    rawUrl: `https://x.netlify.app/.netlify/functions/api${path}`,
+    headers: { 'content-type': 'application/json', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0) Chrome/120 Safari/537',
+      ...(token ? { authorization: `Bearer ${token}` } : {}), ...(headers || {}) },
+    queryStringParameters: {}, body: body ? JSON.stringify(body) : null, isBase64Encoded: false,
+  }, {});
+  const json = r => JSON.parse(r.body);
+  const realSend = reminders.sendEmail, realMail = { ...cfg.mail };
+  const mails = [];
+  const codeFor = email => { const m = [...mails].reverse().find(x => x.to === email && /sign-in code: \d{6}/.test(x.subject));
+    return m && m.subject.match(/(\d{6})/)[1]; };
+  let ownerToken, officeToken;
+
+  before(async () => {
+    cfg.mail.enabled = true; cfg.mail.host = 'smtp.test';
+    reminders.sendEmail = async (to, subject) => { mails.push({ to, subject }); return { ok: true }; };
+    // Still unclaimed, so the director signs in with just the password
+    ownerToken = json(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse' } })).token;
+    assert.ok(ownerToken, 'legacy sign-in before anyone owns Rep Hub');
+  });
+  after(async () => {
+    reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
+    await db.q.setSetting('owner_user_id', ''); await db.q.setSetting('permissions', '{}'); await db.q.setSetting('two_step', '{}');
+    access.clear();
+  });
+
+  test('a director claims ownership with their password', async () => {
+    const st = json(await invoke('GET', '/admin/access/status', { token: ownerToken }));
+    assert.equal(st.claimed, false); assert.equal(st.canClaim, true);
+    const noPass = await invoke('POST', '/admin/access/claim', { token: ownerToken });
+    assert.equal(noPass.statusCode, 401, 'the password must be re-typed first');
+    const bad = await invoke('POST', '/auth/elevate', { token: ownerToken, body: { password: 'nope' } });
+    assert.equal(bad.statusCode, 401);
+    const { elevation } = json(await invoke('POST', '/auth/elevate', { token: ownerToken, body: { password: 'correct-horse' } }));
+    const ok = await invoke('POST', '/admin/access/claim', { token: ownerToken, headers: { 'x-elevation': elevation } });
+    assert.equal(ok.statusCode, 200, ok.body);
+    assert.equal(json(ok).user.owner, true);
+    const again = await invoke('POST', '/admin/access/claim', { token: ownerToken, headers: { 'x-elevation': elevation } });
+    assert.equal(again.statusCode, 409, 'only once');
+  });
+
+  test('the owner signs in with a password and an emailed code, and can trust a device', async () => {
+    const first = json(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse' } }));
+    assert.equal(first.twoStep, true);
+    assert.ok(!first.token, 'no session from the password alone');
+    assert.match(first.sentTo, /^a•+n@test\.org$/);
+    const code = codeFor('admin@test.org');
+    assert.ok(code, 'code emailed');
+
+    // The challenge is not a session
+    const sneaky = await invoke('GET', '/auth/me', { token: first.challenge });
+    assert.equal(sneaky.statusCode, 401);
+
+    const wrong = await invoke('POST', '/auth/login/code', { body: { challenge: first.challenge, code: '000000' } });
+    assert.equal(wrong.statusCode, 401);
+    const ok = json(await invoke('POST', '/auth/login/code', { body: { challenge: first.challenge, code, trust: true } }));
+    assert.ok(ok.token && ok.device, 'session and a device token');
+    assert.equal(ok.user.owner, true);
+    ownerToken = ok.token;
+
+    const reused = await invoke('POST', '/auth/login/code', { body: { challenge: first.challenge, code } });
+    assert.equal(reused.statusCode, 401, 'a code works once');
+
+    // On the trusted device the code is skipped
+    const trusted = json(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse', device: ok.device } }));
+    assert.ok(trusted.token && !trusted.twoStep);
+    const devices = json(await invoke('GET', '/auth/devices', { token: ownerToken, headers: { 'x-device': ok.device } }));
+    assert.equal(devices.length, 1); assert.equal(devices[0].current, true); assert.equal(devices[0].label, 'Chrome on Windows');
+    await invoke('DELETE', `/auth/devices/${devices[0].id}`, { token: ownerToken });
+    const after = json(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse', device: ok.device } }));
+    assert.equal(after.twoStep, true, 'a forgotten device asks again');
+  });
+
+  test('office staff lose accounting and Books by default once there is an owner', async () => {
+    const first = json(await invoke('POST', '/auth/login', { body: { email: 'office@test.org', password: 'correct-horse' } }));
+    assert.equal(first.twoStep, true, 'office accounts use 2-step by default');
+    officeToken = json(await invoke('POST', '/auth/login/code', { body: { challenge: first.challenge, code: codeFor('office@test.org') } })).token;
+    const me = json(await invoke('GET', '/auth/me', { token: officeToken })).user;
+    assert.equal(me.perms.accounting, false); assert.equal(me.perms.books, false); assert.equal(me.perms.settings, true);
+
+    assert.equal((await invoke('GET', '/accounting/batches', { token: officeToken })).statusCode, 403);
+    assert.equal((await invoke('POST', '/accounting/send', { token: officeToken })).statusCode, 403);
+    assert.equal((await invoke('GET', '/admin/books-status', { token: officeToken })).statusCode, 403);
+    assert.equal((await invoke('PUT', '/admin/settings', { token: officeToken, body: { booksAuto: 'off' } })).statusCode, 403);
+    assert.equal((await invoke('PUT', '/admin/settings', { token: officeToken, body: { retryDays: 5 } })).statusCode, 200);
+    const exp = json(await invoke('GET', '/expenses', { token: officeToken }));
+    assert.ok(exp.every(x => x.user_id === 'off1'), 'only their own claims');
+  });
+
+  test('a second director (Mel) manages reps but not accounting, and cannot touch the owner', async () => {
+    const made = await invoke('POST', '/admin/users', { token: ownerToken,
+      body: { name: 'Mel Director', email: 'mel@test.org', role: 'admin', password: 'mel-password-1' } });
+    assert.equal(made.statusCode, 201, made.body);
+    const first = json(await invoke('POST', '/auth/login', { body: { email: 'mel@test.org', password: 'mel-password-1' } }));
+    const mel = json(await invoke('POST', '/auth/login/code', { body: { challenge: first.challenge, code: codeFor('mel@test.org') } })).token;
+
+    assert.equal((await invoke('POST', '/admin/books-connect', { token: mel, body: { code: '1000.good.code' } })).statusCode, 403);
+    assert.equal((await invoke('GET', '/accounting/batches', { token: mel })).statusCode, 403);
+    assert.equal((await invoke('POST', '/admin/users', { token: mel, body: { name: 'R', email: 'r9@test.org', role: 'rep' } })).statusCode, 201);
+    assert.equal((await invoke('POST', '/admin/users', { token: mel, body: { name: 'X', email: 'x9@test.org', role: 'admin' } })).statusCode, 403,
+      'only the owner makes directors');
+    assert.equal((await invoke('POST', '/admin/users/adm1/reset-password', { token: mel })).statusCode, 403, "cannot reset the owner's password");
+    assert.equal((await invoke('DELETE', '/admin/users/adm1', { token: mel })).statusCode, 403);
+    assert.equal((await invoke('GET', '/admin/access', { token: mel })).statusCode, 403, 'permissions are owner-only');
+  });
+
+  test('only the owner, with their password, changes permissions', async () => {
+    assert.equal((await invoke('GET', '/admin/access', { token: ownerToken })).statusCode, 401);
+    const { elevation } = json(await invoke('POST', '/auth/elevate', { token: ownerToken, body: { password: 'correct-horse' } }));
+    const h = { 'x-elevation': elevation };
+    const a = json(await invoke('GET', '/admin/access', { token: ownerToken, headers: h }));
+    assert.equal(a.perms.admin.accounting, false);
+    assert.ok(a.people.some(p => p.owner && p.email === 'admin@test.org'));
+
+    const perms = { ...a.perms, staff: { ...a.perms.staff, accounting: true } };
+    const put = await invoke('PUT', '/admin/access', { token: ownerToken, headers: h, body: { perms } });
+    assert.equal(put.statusCode, 200, put.body);
+    assert.equal((await invoke('GET', '/accounting/batches', { token: officeToken })).statusCode, 200, 'granted straight away');
+
+    // An elevation pass is not a session either
+    assert.equal((await invoke('GET', '/auth/me', { token: elevation })).statusCode, 401);
+  });
+
+  test('eight wrong passwords pause the account', async () => {
+    for (let i = 0; i < 8; i++) await invoke('POST', '/auth/login', { body: { email: 'mel@test.org', password: 'wrong' } });
+    const locked = await invoke('POST', '/auth/login', { body: { email: 'mel@test.org', password: 'mel-password-1' } });
+    assert.equal(locked.statusCode, 429);
+    assert.equal(json(locked).locked, true);
+  });
+
+  test('2-step accounts cannot sign in with a link alone', async () => {
+    const res = await invoke('POST', '/auth/request-link', { body: { email: 'admin@test.org' } });
+    assert.equal(res.statusCode, 400);
+  });
+});
+
 /* ═══════════ SCHEDULED FUNCTIONS ═══════════ */
 describe('speed', () => {
   const zoho = require('../src/lib/zoho');

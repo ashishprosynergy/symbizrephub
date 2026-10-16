@@ -168,7 +168,7 @@
   .books-steps li{margin-bottom:6px;}
   .copyline{display:flex;align-items:center;gap:8px;margin-top:5px;}
   .copyline code{background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:13px;}
-  .acct-map{border:1px solid var(--line);border-radius:10px;overflow:hidden;}
+  .acct-map{border:1px solid var(--line);border-radius:10px;}
   .acct-row{display:flex;align-items:center;gap:12px;padding:8px 12px;border-top:1px solid var(--line-soft);}
   .acct-row:first-child{border-top:0;}
   .acct-cat{flex:0 0 120px;font-weight:600;font-size:14px;}
@@ -208,6 +208,44 @@
     border:1px solid var(--line-soft);border-radius:6px;padding:1px 6px;font-variant-numeric:tabular-nums;}
   .rp-check{flex:none;color:var(--primary);font-weight:700;}
   .rp-empty{padding:12px;text-align:center;color:var(--ink-muted);font-size:13px;}
+  .rp-item[hidden],.rp-empty[hidden],.rp-pop[hidden]{display:none;}
+  /* 2-step code screen and the owner's lock screen */
+  .ts-mark{width:48px;height:48px;border-radius:50%;margin:2px auto 10px;display:grid;place-items:center;
+    background:var(--primary-soft);color:var(--primary);}
+  .ts-who{margin:0 auto 14px;width:max-content;max-width:100%;padding:4px 12px;border:1px solid var(--line);border-radius:999px;
+    font-size:13px;color:var(--ink-muted);overflow:hidden;text-overflow:ellipsis;}
+  .otp{letter-spacing:.4em;font-size:22px !important;text-align:center;font-family:ui-monospace,Menlo,monospace;}
+  .ts-trust{display:flex;gap:9px;align-items:flex-start;font-size:13.5px;margin:2px 0 14px;cursor:pointer;line-height:1.35;}
+  .ts-trust input{width:18px;height:18px;margin-top:1px;accent-color:var(--primary);flex:none;}
+  .ts-trust small{color:var(--ink-muted);font-size:12px;}
+  .access-lock{text-align:center;padding:24px 20px;}
+  .access-lock h3{font-size:18px;margin-bottom:6px;}
+  .access-lock .lead{max-width:440px;margin:0 auto 16px;font-size:13.5px;color:var(--ink-muted);line-height:1.55;}
+  .lock-form{max-width:320px;margin:0 auto;text-align:left;}
+  .lock-form .btn{width:100%;justify-content:center;}
+  /* Permissions grid */
+  .perm-card{padding:4px 15px;}
+  .perm-row{display:grid;grid-template-columns:1fr 92px 92px;gap:10px;align-items:center;padding:12px 0;border-top:1px solid var(--line-soft);}
+  .perm-row > span{text-align:center;}
+  .perm-head{border-top:0;font-size:11.5px;font-weight:700;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;padding:10px 0 6px;}
+  .perm-t{font-weight:600;font-size:14px;} .perm-d{font-size:12.3px;color:var(--ink-muted);margin-top:2px;line-height:1.45;}
+  .perm-fixed .perm-t{color:var(--ink-muted);}
+  @media (max-width:520px){ .perm-row{grid-template-columns:1fr 64px 64px;} .perm-head span{font-size:10px;} }
+  .switch{position:relative;display:inline-block;width:42px;height:24px;cursor:pointer;vertical-align:middle;}
+  .switch input{opacity:0;width:0;height:0;position:absolute;}
+  .switch span{position:absolute;inset:0;border-radius:999px;background:var(--line);transition:background .15s;}
+  .switch span::after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;
+    box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .15s;}
+  .switch input:checked + span{background:var(--primary);}
+  .switch input:checked + span::after{transform:translateX(18px);}
+  .switch input:focus-visible + span{outline:2px solid var(--primary);outline-offset:2px;}
+
+  /* Searchable select (Books accounts): full width, square-ish, wide list */
+  .rp.ss{display:block;flex:1;min-width:0;}
+  .rp.ss .rp-btn{width:100%;max-width:none;min-width:0;border-radius:8px;padding:8px 12px;font-size:14px;}
+  .rp.ss .rp-btn .rp-name{font-weight:500;}
+  .rp.ss .rp-pop{left:0;right:auto;width:min(440px, calc(100vw - 32px));}
+  .rp.ss .rp-num{min-width:42px;text-align:center;}
   @media (max-width:760px){ .rp{display:block;width:100%;} .rp-btn{width:100%;max-width:none;min-width:0;}
     .rp-pop{left:0;right:0;width:auto;} }
   /* ── month calendar ── */
@@ -638,7 +676,7 @@
   .field{margin-bottom:13px;}
   .field label{display:block;font-size:13px;font-weight:600;margin-bottom:5px;}
   .field .hint{font-size:12px;color:var(--ink-muted);margin-top:4px;line-height:1.45;}
-  .field input,.field select,.field textarea{width:100%;font-family:inherit;font-size:14.5px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);}
+  .field input,.field select,.field textarea{width:100%;font-family:inherit;font-size:14.5px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background-color:var(--surface);color:var(--ink);}
   .field textarea{resize:vertical;min-height:64px;}
   .two{display:grid;grid-template-columns:1fr 1fr;gap:11px;}
   @media (max-width:520px){.two{grid-template-columns:1fr;}}
@@ -878,7 +916,15 @@ const API = {
       throw err; }
     return res.status === 204 ? null : res.json();
   },
-  login(email,password){ return this.call('/auth/login',{method:'POST',body:JSON.stringify({email,password})}); },
+  login(email,password){ return this.call('/auth/login',{method:'POST',body:JSON.stringify({email,password,device:deviceToken()})}); },
+  loginCode(challenge,code,trust){ return this.call('/auth/login/code',{method:'POST',body:JSON.stringify({challenge,code,trust})}); },
+  loginResend(challenge){ return this.call('/auth/login/resend',{method:'POST',body:JSON.stringify({challenge})}); },
+  elevate(password){ return this.call('/auth/elevate',{method:'POST',body:JSON.stringify({password})}); },
+  accessStatus(){ return this.call('/admin/access/status'); },
+  // Owner-only calls carry proof the password was re-typed in the last 15 minutes
+  owner(path, opts){ return this.call(path, { ...(opts||{}), headers: { 'X-Elevation': elevation.token || '' } }); },
+  devices(){ return this.call('/auth/devices',{headers:{'X-Device':deviceToken()}}); },
+  forgetDevice(id){ return this.call('/auth/devices/'+id,{method:'DELETE'}); },
   requestLink(email){ return this.call('/auth/request-link',{method:'POST',body:JSON.stringify({email})}); },
   verifyLink(token){ return this.call('/auth/verify-link',{method:'POST',body:JSON.stringify({token})}); },
   forgot(email){ return this.call('/auth/forgot',{method:'POST',body:JSON.stringify({email})}); },
@@ -1373,6 +1419,17 @@ const me = () => previewRepId
   : realMe();
 const isRep = () => me().role==='rep';
 const isAdmin = () => me().role==='admin';
+const isOwner = () => !!me().owner;
+/* What this person may do, as the server decided (see src/access.js).
+   Reps: nothing office-side. Without a server (demo), the office can do all. */
+function can(cap){
+  const m = me();
+  if(!m || m.role === 'rep') return false;
+  if(m.owner) return true;
+  if(!m.perms) return !API.live || cap === 'settings';
+  return !!m.perms[cap];
+}
+var elevation = { token: null, until: 0 };   // owner's password re-typed, for Access & security
 const isOffice = () => me().role==='staff' || me().role==='admin';
 const ring = id => S.rings.find(r=>r.id===id);
 const member = id => S.members.find(m=>m.id===id);
@@ -1499,6 +1556,64 @@ function pickRep(key, id){
   renderContent();
 }
 document.addEventListener('click', e=>{ if(!e.target.closest('.rp')) closeRepPickers(); });
+
+/* A dropdown you can type into, for long lists like the chart of accounts.
+   Shares the rep picker's look. Calls window[fn](arg, value), or
+   window[fn](value) when there is no arg. "5300 Mileage" shows its code as a tag. */
+function splitCode(s){ const m = String(s||'').match(/^(\d{3,6})\s+(.*)$/); return m ? { code: m[1], name: m[2] } : { code: '', name: String(s||'') }; }
+function searchSelect({ value, options, fn, arg, placeholder }){
+  const list = options.slice().sort((a,b) => {
+    const A = splitCode(a), B = splitCode(b);
+    if(A.code && B.code) return A.code.localeCompare(B.code, undefined, {numeric:true});
+    if(A.code !== B.code) return A.code ? -1 : 1;
+    return A.name.localeCompare(B.name); });
+  const missing = value && !options.includes(value);
+  const cur = splitCode(value);
+  const item = (v, extra) => { const p = splitCode(v);
+    return `<button type="button" class="rp-item${v===value?' on':''}" data-q="${esc(v.toLowerCase())}" data-v="${esc(v)}" onclick="pickSearch(this)">
+      ${p.code?`<span class="rp-num">${esc(p.code)}</span>`:''}<span class="rp-name">${esc(p.name)}${extra||''}</span>
+      ${v===value?'<span class="rp-check">✓</span>':''}</button>`; };
+  return `<div class="rp ss" data-fn="${esc(fn)}" data-arg="${arg==null?'':esc(arg)}" data-has-arg="${arg==null?'0':'1'}">
+    <button type="button" class="rp-btn ss-btn" onclick="toggleRepPicker(this)" aria-haspopup="listbox">
+      ${cur.code?`<span class="rp-num">${esc(cur.code)}</span>`:''}
+      <span class="rp-name">${value ? esc(cur.name) : '<span style="color:var(--ink-faint);font-weight:400">Choose…</span>'}</span>
+      ${missing?'<span class="tag overdue" style="font-size:10.5px">not in Books</span>':''}
+      <span class="rp-caret">▾</span></button>
+    <div class="rp-pop" hidden>
+      <input class="rp-search" placeholder="${esc(placeholder||'Type to search…')}" oninput="filterRepPicker(this)"
+        onkeydown="searchKeys(event,this)">
+      <div class="rp-list">
+        ${missing ? item(value, ' <em style="color:var(--rust);font-style:normal">(not found in Books)</em>') : ''}
+        ${list.map(v => item(v)).join('')}
+        <div class="rp-empty" hidden>No account matches.</div>
+      </div>
+    </div></div>`;
+}
+function pickSearch(btn){
+  const box = btn.closest('.rp'), v = btn.dataset.v;
+  closeRepPickers();
+  const p = splitCode(v), b = box.querySelector('.ss-btn');
+  b.innerHTML = `${p.code?`<span class="rp-num">${esc(p.code)}</span>`:''}<span class="rp-name">${esc(p.name)}</span><span class="rp-caret">▾</span>`;
+  box.querySelectorAll('.rp-item').forEach(x => { x.classList.toggle('on', x === btn); });
+  const f = window[box.dataset.fn];
+  if(typeof f === 'function') box.dataset.hasArg === '1' ? f(box.dataset.arg, v) : f(v);
+}
+/* Enter picks the first match; arrows move through what is showing */
+function searchKeys(e, input){
+  const pop = input.closest('.rp-pop');
+  const shown = [...pop.querySelectorAll('.rp-item')].filter(b => !b.hidden);
+  if(e.key === 'Escape'){ closeRepPickers(); return; }
+  if(e.key === 'Enter'){ e.preventDefault(); if(shown[0]) shown[0].click(); return; }
+  if(e.key === 'ArrowDown' && shown[0]){ e.preventDefault(); shown[0].focus(); }
+}
+document.addEventListener('keydown', e => {
+  const it = e.target.closest && e.target.closest('.rp-item');
+  if(!it || !['ArrowDown','ArrowUp'].includes(e.key)) return;
+  e.preventDefault();
+  const shown = [...it.closest('.rp-list').querySelectorAll('.rp-item')].filter(b => !b.hidden);
+  const i = shown.indexOf(it) + (e.key === 'ArrowDown' ? 1 : -1);
+  if(i < 0) it.closest('.rp-pop').querySelector('.rp-search')?.focus(); else if(shown[i]) shown[i].focus();
+});
 document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeRepPickers(); });
 
 /* ── Icons: one line-drawn set used in the sidebar, tab bar and menus ── */
@@ -1530,11 +1645,12 @@ const ICON_PATHS = {
   timer:'<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M10 2h4"/>',
   logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   key:'<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3"/>',
+  shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
 };
 const VIEW_ICONS = { today:'home', dash:'grid', rings:'ring', allrings:'ring', people:'users', members:'users',
   calendar:'calendar', timesheet:'clock', resources:'folder', callsheet:'printer', manager:'briefcase',
   approvals:'check', visits:'pin', unaffiliated:'userplus', reports:'chart', coverage:'map', insights:'trend',
-  progress:'trend', team:'user', reminders:'bell', settings:'sliders', checks:'pulse', requests:'inbox' };
+  progress:'trend', team:'user', reminders:'bell', settings:'sliders', checks:'pulse', requests:'inbox', access:'shield' };
 function icon(name, size){
   const p = ICON_PATHS[VIEW_ICONS[name] || name] || ICON_PATHS.grid;
   const fill = name === 'more' ? 'currentColor' : 'none';
@@ -1728,7 +1844,7 @@ function restoreNotifs(){
 function allNotifications(){
   const out=[];
   if(isOffice()){
-    if(isAdmin()) ((S.acctBatches && S.acctBatches.pending) || []).forEach(b =>
+    if(isAdmin() && can('accounting')) ((S.acctBatches && S.acctBatches.pending) || []).forEach(b =>
       out.push({k:'acct:'+b.id, t:`Hours and expenses ready for your final approval`,
         s:`${b.expenses} expense${b.expenses===1?'':'s'}, ${b.time} time entr${b.time===1?'y':'ies'} · sent by ${b.requestedBy||'the office'}`,
         go:()=>{ setView('approvals'); openBatchReview(b.id); }}));
@@ -2365,7 +2481,7 @@ function vApprovals(){
     ${decided.length ? `<h3 class="sub-h">Recently decided</h3>${pendingRows(decided, false)}` : ''}
   `;
   // Hours and expenses waiting for an admin's final approval come first
-  return (S.acctBatches && S.acctBatches.pending && S.acctBatches.pending.length
+  return (can('accounting') && S.acctBatches && S.acctBatches.pending && S.acctBatches.pending.length
     ? `<h3 class="sub-h">Hours and expenses · final approval</h3>${acctStatusCallouts()}` : '')
     + vApprovalsInner(zohoAsks);
 }
@@ -2375,6 +2491,7 @@ function vApprovals(){
  * Admins get the Review button; everyone else sees where things stand.
  */
 function acctStatusCallouts(){
+  if(!can('accounting')) return '';
   const b = S.acctBatches || {};
   const waiting = (b.pending || [])[0];
   const back = b.returned;
@@ -3044,7 +3161,7 @@ function openAddUser(){
         <div class="field"><label>Role</label><select name="role">
           <option value="rep">Rep — sees only their own members</option>
           <option value="staff">Office — sees everyone</option>
-          <option value="admin">Director — everything, plus settings</option>
+          ${isOwner() || !API.live ? `<option value="admin">Director — what the owner allows directors</option>` : ''}
         </select></div>
         <div class="field"><label>Region</label><input name="region" placeholder="Lancaster PA"></div>
       </div>
@@ -3089,7 +3206,7 @@ function vTeam(){
   return `<div class="section-head"><div><h2>Reps</h2><div class="sub">Who covers what, and how to move rings between them.</div></div>
     <div class="btnrow">
       ${PEOPLE.some(p=>p.role==='rep') ? `<button class="btn" onclick="openPreviewPicker()">See a rep's view</button>` : ''}
-      ${API.live ? `<button class="btn primary" onclick="openAddUser()">Add someone</button>` : ''}
+      ${API.live && can('users') ? `<button class="btn primary" onclick="openAddUser()">Add someone</button>` : ''}
     </div></div>
     ${API.live ? `
       <h3 class="sub-h">Accounts</h3>
@@ -3101,12 +3218,11 @@ function vTeam(){
           <div class="row-main"><div class="row-title">${esc(u.name)}</div>
             <div class="row-sub">${esc(u.email)}${u.region?' · '+esc(u.region):''}</div></div></div>
         <div class="row-actions">
-          <button class="btn sm" onclick="resendLogin('${u.id}','${esc(u.name)}')">Send reset link</button>
-          ${isAdmin() && u.id !== ui.me ? `<button class="btn sm danger" onclick="removeAccount('${u.id}','${esc(u.name)}')">Remove</button>` : ''}
           ${u.role==='rep' && !u.zoho_owner_id ? `<span class="tag overdue">not linked to Zoho</span>` : ''}
           <span class="tag ${u.role==='admin'?'info':u.role==='staff'?'ok':'later'}">${u.role==='rep'?'Rep':u.role==='staff'?'Office':'Director'}</span>
-          ${isAdmin() ? `<button class="btn sm" onclick="resetUserPassword('${esc(u.id)}','${esc(u.name)}')">Send reset link</button>
-            ${u.id!==ui.me ? `<button class="btn sm danger" onclick="removeUser('${esc(u.id)}','${esc(u.name)}')">Remove</button>` : ''}` : ''}
+          ${can('users') && u.id !== ui.me && (isOwner() || u.role !== 'admin') ? `
+            <button class="btn sm" onclick="resendLogin('${u.id}','${esc(u.name)}')">Send reset link</button>
+            <button class="btn sm danger" onclick="removeAccount('${u.id}','${esc(u.name)}')">Remove</button>` : ''}
         </div>
       </div>`).join('') : ''}
       ${Array.isArray(su) && su.some(u=>u.role==='rep' && !u.zoho_owner_id) ? `<div class="callout rust">
@@ -3158,12 +3274,13 @@ function vTeam(){
 function vSettings(){
   const s=S.settings;
   return `<div class="section-head"><div><h2>Settings</h2><div class="sub">Defaults for new rings and how reminders behave.</div></div>
-    ${API.live && isAdmin() ? `<button class="btn" onclick="openMailCheck()">Check email</button>` : ''}</div>
+    ${API.live && isAdmin() && can('system') ? `<button class="btn" onclick="openMailCheck()">Check email</button>` : ''}</div>
     <div class="row-sub" style="margin:-6px 0 12px">Build ${esc(BUILD)}</div>
-    ${API.live && isAdmin() ? `<div class="callout" style="font-size:12.5px">
+    ${API.live && isAdmin() && can('system') ? `<div class="callout" style="font-size:12.5px">
       <strong>Not receiving emails?</strong>
       Sign-in links, the accounting summary and rep welcome emails all need SMTP settings.
       <strong>Check email</strong> above shows exactly what is missing and sends a test.</div>` : ''}
+    ${can('settings') ? `
     <div class="card">
       <div class="two">
         <div class="field"><label>Default facilitator call cadence</label>
@@ -3203,8 +3320,9 @@ function vSettings(){
         <div class="field"><label>${esc(r.name)}</label>
           <input value="${esc((S.settings.links || {})[r.id] || '')}" placeholder="https://drive.google.com/..."
                  onchange="setLink('${r.id}', this.value)"></div>`).join('')}
-    </div>
+    </div>` : ''}
 
+    ${can('books') ? `
     <h3 class="sub-h">Accounting</h3>
     <div class="card">
       <div class="two">
@@ -3220,7 +3338,7 @@ function vSettings(){
     </div>
 
     ${API.live ? `<h3 class="sub-h">Zoho Books</h3>
-    <div class="card" id="booksCard">${booksCard()}</div>` : ''}
+    <div class="card" id="booksCard">${booksCard()}</div>` : ''}` : ''}
 
     <h3 class="sub-h">Zoho CRM connection</h3>
     <div class="card">
@@ -3281,15 +3399,13 @@ function booksCard(){
     </div>
     <div class="field" style="margin-bottom:6px"><label>Which account each expense goes to</label></div>
     <div class="acct-map">
-      ${EXPENSE_CATEGORIES.map(c => { const cur = (b.accountMap||{})[c] || '';
-        return `<div class="acct-row"><span class="acct-cat">${esc(c)}</span>
-          <select onchange="setBooksAccount('${esc(c)}', this.value)">
-            ${cur && !accts.includes(cur) ? `<option selected value="${esc(cur)}">${esc(cur)} (not found in Books)</option>` : ''}
-            ${accts.map(a => `<option ${cur===a?'selected':''} value="${esc(a)}">${esc(a)}</option>`).join('')}</select></div>`; }).join('')}
+      ${EXPENSE_CATEGORIES.map(c => `<div class="acct-row"><span class="acct-cat">${esc(c)}</span>
+          ${searchSelect({ value: (b.accountMap||{})[c] || '', options: accts, fn: 'setBooksAccount', arg: c,
+            placeholder: 'Type to search ' + accts.length + ' accounts…' })}</div>`).join('')}
     </div>
     <div class="field" style="margin-top:12px"><label>Anything else</label>
-      <select onchange="setSetting('booksAccount', this.value)">
-        ${accts.map(a => `<option ${(s.booksAccount||'5310 Contractor Reimbursements - Other')===a?'selected':''} value="${esc(a)}">${esc(a)}</option>`).join('')}</select>
+      ${searchSelect({ value: s.booksAccount || '5310 Contractor Reimbursements - Other', options: accts, fn: 'setBooksFallback',
+        placeholder: 'Type to search accounts…' })}
       <div class="hint">Used if a category's account is missing in Books.</div></div>
     ${isAdmin() ? `<div class="btnrow" style="margin-top:10px"><button class="btn sm ghost" onclick="disconnectBooks()">Disconnect Zoho Books</button></div>` : ''}
     ${b.waiting ? `<div class="row-sub">${b.waiting} bill${b.waiting===1?' is':'s are'} queued and will be made within 15 minutes.</div>` : ''}
@@ -3313,6 +3429,202 @@ async function disconnectBooks(){
   try{ await API.booksDisconnect(); toast('Zoho Books disconnected'); }catch(e){ toast(e.message); }
   booksInfo = null; loadBooksStatus(true);
 }
+/* ═══════════ ACCESS & SECURITY ═══════════
+ * The owner decides what directors and office staff can do and who signs in
+ * with an emailed code. Opening it asks for the owner's password again, the
+ * way Google does before showing security settings; that lasts 15 minutes. */
+function noAccess(what){
+  return `<div class="section-head"><div><h2>${esc(what)}</h2></div></div>
+    <div class="empty">Your account doesn't have access to this. The owner can switch it on under Access &amp; security.</div>`;
+}
+var accessStatus = null, accessData = null, myDevices = null, accessBusy = false;
+function refreshAccessScreen(){ if(ui.view === 'access') renderContent(); }
+function loadAccessBits(){
+  if(accessBusy) return;
+  accessBusy = true;
+  Promise.all([
+    API.accessStatus().then(v => { accessStatus = v; }).catch(e => { accessStatus = { error: e.message }; }),
+    API.devices().then(v => { myDevices = v; }).catch(() => { myDevices = []; }),
+  ]).finally(() => { accessBusy = false; refreshAccessScreen(); });
+}
+const elevated = () => elevation.token && Date.now() < elevation.until;
+
+function vAccess(){
+  if(!API.live) return noAccess('Access & security');
+  if(!accessStatus){ loadAccessBits(); return `<div class="section-head"><div><h2>Access &amp; security</h2></div></div>${skeleton(4)}`; }
+  const head = `<div class="section-head"><div><h2>Access &amp; security</h2>
+    <div class="sub">Who can do what in Rep Hub, and how people sign in.</div></div>
+    ${isOwner() && elevated() ? `<button class="btn sm" onclick="lockAccess()">${icon('key',15)} Lock</button>` : ''}</div>`;
+
+  if(!isOwner()){
+    if(accessStatus.canClaim) return head + `<div class="card access-lock">
+        <div class="ts-mark">${icon('key',22)}</div>
+        <h3>Rep Hub doesn't have an owner yet</h3>
+        <p class="lead">The owner has every permission, and is the only person who can decide what directors and office staff
+          can do. Claim it if that should be you. The other directors get an email saying you did.</p>
+        <form onsubmit="claimOwnership(event)" class="lock-form">
+          ${passwordField('Your password','password',{autocomplete:'current-password'})}
+          <button class="btn primary" type="submit">Make me the owner</button></form></div>`
+      + devicesCard();
+    return head + `<div class="callout info"><strong>${accessStatus.claimed ? esc(accessStatus.ownerName) + ' is the owner' : 'No owner yet'}</strong>
+        ${accessStatus.claimed ? 'Only the owner can change what each role can do. Ask them if you need access to something.' :
+          'A director needs to claim ownership here.'}</div>
+      ${myAccessSummary()}${devicesCard()}`;
+  }
+
+  if(!elevated()) return head + `<div class="card access-lock">
+      <div class="ts-mark">${icon('key',22)}</div>
+      <h3>Confirm it's you</h3>
+      <p class="lead">These settings control who can see accounting and change permissions, so enter your password to continue.
+        It stays unlocked for 15 minutes.</p>
+      <form onsubmit="unlockAccess(event)" class="lock-form">
+        ${passwordField('Password','password',{autocomplete:'current-password'})}
+        <div id="lockErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
+        <button class="btn primary" type="submit">Continue</button></form></div>`;
+
+  if(!accessData) return head + skeleton(5);
+  const a = accessData;
+  const roleName = { admin: 'Directors', staff: 'Office staff' };
+  const sw = (on, js, label) => `<label class="switch" title="${esc(label)}"><input type="checkbox" ${on?'checked':''} onchange="${js}"><span></span></label>`;
+  const left = Math.max(0, Math.round((elevation.until - Date.now()) / 60000));
+  return head + `
+    <div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span><strong style="display:inline">You're the owner.</strong> You can do everything. Unlocked for about ${left} more minute${left===1?'':'s'}.</span></div>
+
+    <h3 class="sub-h">What each role can do</h3>
+    <div class="card perm-card">
+      <div class="perm-row perm-head"><span></span><span>Directors</span><span>Office staff</span></div>
+      ${Object.entries(a.caps).map(([k, c]) => `<div class="perm-row">
+        <div><div class="perm-t">${esc(c.label)}</div><div class="perm-d">${esc(c.detail)}</div></div>
+        <span>${sw(a.perms.admin[k], `setPerm('admin','${k}',this.checked)`, roleName.admin + ': ' + c.label)}</span>
+        <span>${sw(a.perms.staff[k], `setPerm('staff','${k}',this.checked)`, roleName.staff + ': ' + c.label)}</span></div>`).join('')}
+      <div class="perm-row perm-fixed"><div><div class="perm-t">Reps, rings, members, calendar and approvals</div>
+        <div class="perm-d">Every office account has these. Reps only ever see their own rings.</div></div>
+        <span class="tag ok">Always</span><span class="tag ok">Always</span></div>
+      <div class="perm-row perm-fixed"><div><div class="perm-t">Access &amp; security</div>
+        <div class="perm-d">This screen. Yours alone.</div></div>
+        <span class="tag later">Owner only</span><span class="tag later">Owner only</span></div>
+    </div>
+
+    <h3 class="sub-h">2-Step Verification at sign-in</h3>
+    <div class="card">
+      <div class="row-sub" style="margin-bottom:8px">After the password, Rep Hub emails a six-digit code, like Google does.
+        People can tick "Don't ask again on this device" for 30 days. It is always on for you.</div>
+      ${[['admin','Directors'],['staff','Office staff'],['rep','Reps']].map(([k,l]) => `<div class="kv" style="align-items:center">
+        <span class="k">${l}</span>${sw(a.twoStep[k], `setTwoStep('${k}',this.checked)`, '2-step for ' + l)}</div>`).join('')}
+    </div>
+
+    <h3 class="sub-h">People with office access</h3>
+    <div class="card" style="padding:4px 15px">
+      ${a.people.map(p => `<div class="row" style="align-items:center">
+        <div style="display:flex;gap:10px;align-items:center;min-width:0;flex:1">
+          <span class="rp-av">${esc(repInitials(p.name))}</span>
+          <div class="row-main"><div class="row-title">${esc(p.name)} ${p.owner?'<span class="tag ok">Owner</span>':''}</div>
+            <div class="row-sub">${esc(p.email)}</div></div></div>
+        <div class="row-actions">
+          ${p.owner ? `<span class="row-sub">Everything</span>` : `
+            <select class="sel" onchange="setRole('${p.id}', this.value, this)">
+              <option value="admin" ${p.role==='admin'?'selected':''}>Director</option>
+              <option value="staff" ${p.role==='staff'?'selected':''}>Office staff</option>
+              <option value="rep">Rep (remove office access)</option></select>
+            ${p.role==='admin' ? `<button class="btn sm ghost" onclick="transferOwner('${p.id}','${esc(p.name).replace(/'/g,'&#39;')}')">Make owner</button>` : ''}`}
+        </div></div>`).join('')}
+    </div>
+    <div class="row-sub" style="margin:-4px 0 10px">To add someone, use Reps → Add an account. Only you can make someone a director.</div>
+    ${devicesCard()}`;
+}
+
+function myAccessSummary(){
+  const p = me().perms || {};
+  const labels = { accounting:'Hours, expenses and accounting', books:'Zoho Books and accounting settings', users:'Rep accounts',
+    settings:'App settings', system:'System check and activity log' };
+  return `<h3 class="sub-h">What your account can do</h3><div class="card">
+    ${Object.entries(labels).map(([k,l]) => `<div class="kv"><span class="k">${l}</span>
+      <span class="tag ${p[k]?'ok':'later'}">${p[k]?'Yes':'No'}</span></div>`).join('')}</div>`;
+}
+
+function devicesCard(){
+  if(!myDevices) return '';
+  return `<h3 class="sub-h">Your trusted devices</h3>
+    <div class="card" style="padding:4px 15px">
+      ${myDevices.length ? myDevices.map(d => `<div class="row" style="align-items:center">
+        <div class="row-main"><div class="row-title">${esc(d.label)} ${d.current?'<span class="tag info">This device</span>':''}</div>
+          <div class="row-sub">Added ${fmt(String(d.added).slice(0,10))}${d.lastUsed?' · last used '+fmt(String(d.lastUsed).slice(0,10)):''} · skips the code until ${fmt(String(d.expires).slice(0,10))}</div></div>
+        <button class="btn sm" onclick="forgetDevice('${d.id}')">Forget</button></div>`).join('')
+      : `<div class="row-sub" style="padding:11px 0">None. When you tick "Don't ask again on this device" at sign-in, it shows here.</div>`}
+    </div>`;
+}
+
+async function unlockAccess(e){
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type=submit]'), err = document.getElementById('lockErr');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try{
+    const out = await API.elevate(e.target.elements.namedItem('password').value);
+    elevation = { token: out.elevation, until: Date.now() + (out.minutes || 15) * 60000 - 20000 };
+    accessData = await API.owner('/admin/access');
+    renderContent();
+  }catch(ex){
+    if(err){ err.style.display = 'block'; err.textContent = ex.message || 'That password is not right'; }
+    btn.disabled = false; btn.textContent = 'Continue';
+  }
+}
+function lockAccess(){ elevation = { token: null, until: 0 }; accessData = null; renderContent(); toast('Locked'); }
+async function ownerCall(path, opts){
+  try{ return await API.owner(path, opts); }
+  catch(e){ if(e.data && e.data.needsPassword){ lockAccess(); } throw e; }
+}
+async function saveAccess(body, msg){
+  try{ accessData = await ownerCall('/admin/access', { method: 'PUT', body: JSON.stringify(body) }); toast(msg || 'Saved'); }
+  catch(e){ toast(e.message || 'Could not save'); }
+  renderContent();
+}
+function setPerm(role, cap, on){
+  const perms = JSON.parse(JSON.stringify(accessData.perms));
+  perms[role][cap] = on;
+  saveAccess({ perms }, `${role==='admin'?'Directors':'Office staff'}: ${accessData.caps[cap].label} ${on?'on':'off'}`);
+}
+function setTwoStep(k, on){
+  saveAccess({ twoStep: { ...accessData.twoStep, [k]: on } }, `2-step sign-in ${on?'on':'off'} for ${k==='admin'?'directors':k==='staff'?'office staff':'reps'}`);
+}
+async function setRole(id, role, sel){
+  const p = accessData.people.find(x => x.id === id);
+  if(role === 'rep' && !confirm(`Remove ${p.name}'s office access? They will only see what a rep sees.`)){ sel.value = p.role; return; }
+  try{ accessData = await ownerCall('/admin/access/role', { method: 'POST', body: JSON.stringify({ userId: id, role }) });
+    toast(`${p.name} is now ${role==='admin'?'a director':role==='staff'?'office staff':'a rep'}`); serverUsers = null; }
+  catch(e){ toast(e.message || 'Could not change that'); }
+  renderContent();
+}
+async function transferOwner(id, name){
+  if(!confirm(`Make ${name} the owner of Rep Hub?\n\nThey will control every permission, including yours. You will become a director.`)) return;
+  try{
+    await ownerCall('/admin/access/transfer', { method: 'POST', body: JSON.stringify({ userId: id }) });
+    toast(`${name} is now the owner`);
+    const out = await API.me(); signInAs(out.user, { keepView: true });
+    lockAccess(); accessStatus = null; render();
+  }catch(e){ toast(e.message || 'Could not transfer'); }
+}
+async function claimOwnership(e){
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type=submit]');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try{
+    const out = await API.elevate(e.target.elements.namedItem('password').value);
+    elevation = { token: out.elevation, until: Date.now() + (out.minutes || 15) * 60000 - 20000 };
+    const res = await API.owner('/admin/access/claim', { method: 'POST' });
+    signInAs(res.user, { keepView: true });
+    accessStatus = null; accessData = await API.owner('/admin/access');
+    toast("You're now the owner of Rep Hub");
+    render();
+  }catch(ex){ toast(ex.message || 'Could not claim'); btn.disabled = false; btn.textContent = 'Make me the owner'; }
+}
+async function forgetDevice(id){
+  try{ await API.forgetDevice(id); myDevices = await API.devices(); toast('Device forgotten — it will ask for a code next time'); }
+  catch(e){ toast(e.message || 'Could not forget it'); }
+  renderContent();
+}
+
+function setBooksFallback(acct){ setSetting('booksAccount', acct); toast('Anything else → ' + acct); }
 function setBooksAccount(cat, acct){
   const map = { ...((booksInfo && booksInfo.accountMap) || {}), [cat]: acct };
   if(booksInfo) booksInfo.accountMap = map;
@@ -4313,9 +4625,10 @@ function navItems(){
     ['calendar','Calendar','▦'],
     ['reports','Reports','▤'],
     ['timesheet','Hours','$'],
-  ];
-  if(isAdmin()) base.push(['team','Reps','⚇'],['settings','Settings','⚙'],['checks','System check','✓']);
-  else base.push(['team','Reps','⚇'],['settings','Settings','⚙']);
+  ].filter(([id]) => id !== 'timesheet' || can('accounting'));
+  base.push(['team','Reps','⚇']);
+  if(can('settings') || can('books')) base.push(['settings','Settings','⚙']);
+  if(isAdmin() && can('system')) base.push(['checks','System check','✓']);
   return base;
 }
 
@@ -4327,17 +4640,20 @@ function navGroups(){
   const office = [
     ['', [['dash','Overview'],['manager','Rep manager'],['approvals','Approvals'],['calendar','Calendar']]],
     ['Records', [['members','Members'],['allrings','Rings'],['visits','Visits'],['unaffiliated','No ring yet']]],
-    ['Reporting', [['reports','Reports'],['coverage','Coverage'],['insights','Retention'],['timesheet','Hours & expenses']]],
+    ['Reporting', [['reports','Reports'],['coverage','Coverage'],['insights','Retention'],
+      ...(can('accounting') ? [['timesheet','Hours & expenses']] : [])]],
   ];
-  const admin = [['team','Reps'],['reminders','Reminders'],['settings','Settings']];
-  if(isAdmin()) admin.push(['checks','System check']);
+  const admin = [['team','Reps'],['reminders','Reminders']];
+  if(can('settings') || can('books')) admin.push(['settings','Settings']);
+  if(isAdmin() && can('system')) admin.push(['checks','System check']);
+  if(API.live && (isOwner() || isAdmin())) admin.push(['access','Access & security']);
   office.push(['Setup', admin]);
   return office;
 }
 
 function badgeFor(id){
   if(id==='approvals') return S.rings.filter(r=>r.status==='pending').length
-    + (isAdmin() && S.acctBatches && S.acctBatches.pending ? S.acctBatches.pending.length : 0);
+    + (isAdmin() && can('accounting') && S.acctBatches && S.acctBatches.pending ? S.acctBatches.pending.length : 0);
   if(id==='today') return dueItems(ui.me).filter(a=>days(a.nextDue)<=S.settings.dueWindow).length;
   if(id==='requests') return S.requests.filter(r=>r.repId===ui.me&&r.stage!=='Placed').length;
   if(id==='dash') return S.rings.filter(r=>r.status==='pending').length;
@@ -4349,6 +4665,7 @@ function openMember(id){ goingTo(); ui.memberId=id; ui.view='memberDetail'; clos
 function openFac(id){ goingTo(); ui.facId=id; ui.view='facDetail'; closeSheet(); render(); }
 function login(id){ ui.me=id; ui.view=PEOPLE.find(p=>p.id===id).role==='rep'?'today':'dash'; render(); }
 function logout(){ placeByScreen = {};
+  elevation = { token: null, until: 0 }; accessStatus = null; accessData = null; myDevices = null; ui.twoStep = null;
   try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
   serverUsers = null; zohoReps = null; usersLoadedAt = 0;
   API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
@@ -4517,6 +4834,31 @@ function loginScreen(){
     </div>`);
   }
 
+  if(ui.twoStep){
+    return shell(`<div class="card twostep">
+      <div class="ts-mark">${icon('key',22)}</div>
+      <h3 style="margin:0 0 4px;text-align:center">2-Step Verification</h3>
+      <p class="lead" style="margin:0 0 6px;text-align:center">To keep your account safe, we've emailed a six-digit code to
+        <strong>${esc(ui.twoStep.sentTo)}</strong>.</p>
+      <div class="ts-who">${esc(ui.loginEmail||'')}</div>
+      <form onsubmit="doTwoStep(event)">
+        <div class="field"><label>Enter the code</label>
+          <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required autofocus
+                 placeholder="000000" class="otp" oninput="this.value=this.value.replace(/\\D/g,'');if(this.value.length===6)this.form.requestSubmit()"></div>
+        <label class="ts-trust"><input type="checkbox" name="trust" checked>
+          <span>Don't ask again on this device for 30 days<br><small>Leave unticked on a shared or public computer.</small></span></label>
+        <div id="loginErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:10px"></div>
+        <button class="btn primary" type="submit" id="loginBtn" style="width:100%;justify-content:center">Verify and sign in</button>
+      </form>
+      <div style="text-align:center;margin-top:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+        <button class="btn sm" onclick="resendTwoStep(this)">Send a new code</button>
+        <button class="btn sm" onclick="ui.twoStep=null;render()">Use a different account</button>
+      </div>
+      <p class="row-sub" style="margin-top:10px;text-align:center">
+        The code lasts 15 minutes. Not there? Check spam or junk.</p>
+    </div>`);
+  }
+
   if(mode === 'signup'){
     return shell(`<div class="card">
       <h3 style="margin:0 0 4px">Create your account</h3>
@@ -4677,6 +5019,34 @@ async function resendCode(){
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = 'Send another'; }
   }
+}
+
+/* ── 2-step sign-in ── */
+function saveDevice(t){ try{ localStorage.setItem('rephub_device', t); }catch(e){} }
+function deviceToken(){ try{ return localStorage.getItem('rephub_device') || ''; }catch(e){ return ''; } }
+async function doTwoStep(e){
+  e.preventDefault();
+  const f = e.target.elements;
+  const btn = document.getElementById('loginBtn'), err = document.getElementById('loginErr');
+  if(btn.disabled) return;
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try{
+    const out = await API.loginCode(ui.twoStep.challenge, f.namedItem('code').value, f.namedItem('trust').checked);
+    if(out.device) saveDevice(out.device);
+    ui.twoStep = null;
+    await finishSignIn(out);
+  }catch(ex){
+    if(ex.data && ex.data.restart){ ui.twoStep = null; render(); toast(ex.message); return; }
+    err.style.display = 'block'; err.textContent = ex.message || 'That code did not work';
+    btn.disabled = false; btn.textContent = 'Verify and sign in';
+    f.namedItem('code').value = ''; f.namedItem('code').focus();
+  }
+}
+async function resendTwoStep(btn){
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try{ const out = await API.loginResend(ui.twoStep.challenge); toast('A new code is on its way to ' + out.sentTo); }
+  catch(ex){ if(ex.data && ex.data.restart){ ui.twoStep = null; render(); } toast(ex.message || 'Could not send another'); }
+  finally{ btn.disabled = false; btn.textContent = 'Send a new code'; }
 }
 
 /** Session in hand: load their data and show the app. */
@@ -4899,6 +5269,13 @@ async function doLogin(e){
   };
   try{
     const out=await API.login(f.namedItem('email').value, f.namedItem('password').value);
+    if(out.twoStep){
+      // Right password; now the code from their inbox
+      ui.twoStep = { challenge: out.challenge, sentTo: out.sentTo };
+      render();
+      return;
+    }
+    if(out.device) saveDevice(out.device);
     API.setToken(out.token);
     signInAs(out.user);
     await refreshMode();
@@ -5233,8 +5610,8 @@ async function loadFromServer(){
         else PEOPLE.push({id:r.contactId, name:r.name, role:'rep', region:'', email:r.email||''});
       });
     }) : Promise.resolve(),
-    isAdmin() ? settle(API.users(), v => { if(Array.isArray(v)){ serverUsers = v; keepTeam(); } }) : Promise.resolve(),
-    isOffice() ? settle(API.accountingBatches(), v => { S.acctBatches = v && Array.isArray(v.pending) ? v : { pending: [], returned: null }; }) : Promise.resolve(),
+    can('users') ? settle(API.users(), v => { if(Array.isArray(v)){ serverUsers = v; keepTeam(); } }) : Promise.resolve(),
+    can('accounting') ? settle(API.accountingBatches(), v => { S.acctBatches = v && Array.isArray(v.pending) ? v : { pending: [], returned: null }; }) : Promise.resolve(),
     settle(API.facilitators(),      v => {
       (v||[]).forEach(f=>{
         const at = S.facilitators.findIndex(x=>x.id===f.id);
@@ -5386,11 +5763,11 @@ function renderContentInner(el){
   if(v==='facDetail'){ el.innerHTML=vFacDetail(); return; }
   if(v==='callsheet'){ el.innerHTML=vCallSheet(); return; }
   if(v==='calendar'){ el.innerHTML=vCalendar(); return; }
-  if(v==='checks'){ el.innerHTML=vChecks(); return; }
+  if(v==='checks'){ el.innerHTML=can('system')?vChecks():noAccess('System check'); return; }
   if(v==='eventDetail'){ el.innerHTML=vEventDetail(); return; }
   if(v==='unaffiliated'){ el.innerHTML=vUnaffiliated(); return; }
   if(v==='resources'){ el.innerHTML=vResources(); return; }
-  if(v==='timesheet'){ el.innerHTML=vTimesheet(); return; }
+  if(v==='timesheet'){ el.innerHTML=(isOffice() && !can('accounting'))?noAccess('Hours and expenses'):vTimesheet(); return; }
   if(v==='visits'){ el.innerHTML=vVisits(); return; }
   if(isRep()){
     el.innerHTML=v==='rings'?vMyRings():v==='people'?vPeople():v==='requests'?vRequests():v==='progress'?vMyProgress():vToday();
@@ -5398,7 +5775,9 @@ function renderContentInner(el){
   }
   el.innerHTML=v==='manager'?vManager():v==='approvals'?vApprovals():v==='coverage'?vCoverage():v==='reports'?vReports()
     :v==='members'?vMembersAll():v==='allrings'?vAllRings():v==='insights'?vInsights()
-    :v==='team'?(API.live ? (setTimeout(()=>loadUsers(),0), vTeam()) : vTeam()):v==='reminders'?vReminders():v==='settings'?vSettings():vOfficeDash();
+    :v==='team'?(API.live ? (setTimeout(()=>loadUsers(),0), vTeam()) : vTeam()):v==='reminders'?vReminders()
+    :v==='settings'?((can('settings')||can('books'))?vSettings():noAccess('Settings'))
+    :v==='access'?vAccess():vOfficeDash();
 }
 
 /**
@@ -5454,7 +5833,7 @@ function render(){
   // Remember the screen, so a refresh comes back to it
   try{ sessionStorage.setItem('rephub_screen', JSON.stringify({view:ui.view, ringId:ui.ringId, memberId:ui.memberId, facId:ui.facId, eventId:ui.eventId})); }catch(e){}
 
-  const who = ui.me + '|' + me().name + '|' + me().role + '|' + API.live;
+  const who = ui.me + '|' + me().name + '|' + me().role + '|' + !!me().owner + '|' + API.live;
   if(shellFor !== who || !document.getElementById('content')){
     Object.keys(partCache).forEach(k => delete partCache[k]);
     keepPlace(() => {
@@ -5464,7 +5843,7 @@ function render(){
             <svg class="ring-mark" width="24" height="24" viewBox="0 0 26 26"><circle cx="13" cy="13" r="11" stroke-width="1.4"/><circle cx="13" cy="13" r="7.2" stroke-width="1.4"/><circle cx="13" cy="13" r="3.4" stroke-width="1.4"/></svg>
             <span class="wordmark">Rep Hub</span></div>
           <div class="rail-me"><div class="av" style="background:var(--primary-soft);color:var(--primary)">${initials(me().name)}</div>
-            <div><div class="nm">${esc(me().name)}</div><div class="rl">${me().role==='rep'?'Rep':me().role==='admin'?'Director':'Office'}</div></div></div>
+            <div><div class="nm">${esc(me().name)}</div><div class="rl">${me().owner?'Owner':me().role==='rep'?'Rep':me().role==='admin'?'Director':'Office'}</div></div></div>
           <div class="rail-nav" id="railNav"></div>
           <div class="rail-foot">
             ${API.live?`<button class="rail-link" onclick="openChangePassword()"><span class="rl-l">${icon('key',17)}<span>Change password</span></span></button>`:''}
@@ -7651,7 +8030,8 @@ function vChecks() {
 function signInAs(user, { keepView } = {}){
   const isRep = user.role === 'rep';
   const id = isRep ? (user.zoho_owner_id || user.id) : user.id;
-  const entry = { id, name: user.name, email: user.email, role: user.role, region: user.region || '' };
+  const entry = { id, name: user.name, email: user.email, role: user.role, region: user.region || '',
+    owner: !!user.owner, perms: user.perms || null };
   const at = PEOPLE.findIndex(p => p.id === id);
   at >= 0 ? PEOPLE[at] = entry : PEOPLE.push(entry);
   // Remembered so a refresh opens straight into the app instead of showing
