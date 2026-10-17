@@ -2329,8 +2329,8 @@ function vToday(){
         : (S.activities.length ? `Nothing due right now. Your next call is scheduled.` : `Nothing scheduled yet.`)}
     </p>
     ${(() => {
-      const mine = (S.pending||[]).filter(p=>p.rep_id===((PEOPLE.find(x=>x.id===ui.me)||{}).loginId||p.rep_id));
-      const sentBack = (S.pending||[]).filter(p=>p.status==='rejected');
+      // Only this rep's own requests, sent back in the last 30 days
+      const sentBack = myRequests().filter(p=>p.status==='rejected' && (!p.decided_at || days(String(p.decided_at).slice(0,10)) >= -30));
       if(!sentBack.length) return '';
       return `<div class="callout rust"><strong>${sentBack.length} request${sentBack.length===1?'':'s'} sent back</strong>
         ${sentBack.slice(0,3).map(p=>`${esc(p.summary||'')} — ${esc(p.note||'')}`).join('<br>')}</div>`;
@@ -4323,12 +4323,21 @@ async function runStartCycle(){
  * Every summit and event on the portal, and a way to register members for
  * them. A registration goes to the office first; the rep sees what happened. */
 const isSummit = e => /summit/i.test(e.type || '');
+/** The requests this rep made. Signed in as the rep, the server sends only
+    theirs; looking at a rep's screen from the office, the list is everyone's,
+    so it is narrowed to the rep being viewed. */
+function myRequests(){
+  const all = S.pending || [];
+  if(isRep() && !previewRepId) return all;
+  const login = (PEOPLE.find(x => x.id === ui.me) || {}).loginId;
+  return all.filter(p => (p.rep_zoho_id && p.rep_zoho_id === ui.me) || (login && p.rep_id === login));
+}
 function vEvents(){
   const f = ui.evFilter || 'all';
   const all = (S.events || []).filter(e => e.date && days(e.date) >= -1 && !/\btest\b/i.test(e.title || ''))
     .sort((a, b) => a.date.localeCompare(b.date));
   const shown = all.filter(e => f === 'all' || (f === 'summits' ? isSummit(e) : f === 'info' ? /info/i.test(e.type || '') : !isSummit(e) && !/info/i.test(e.type || '')));
-  const mine = (S.pending || []).filter(p => p.kind === 'registration');
+  const mine = myRequests().filter(p => p.kind === 'registration');
   const chip = (k, l, n) => `<button class="chip ${f===k?'on':''}" onclick="ui.evFilter='${k}';renderContent()">${l}${n != null ? `<span class="chip-n">${n}</span>` : ''}</button>`;
   const card = e => { const regs = e.registrationCount || eventRegs(e.id).length, d = days(e.date);
     return `<div class="card ev-card ${isSummit(e) ? 'ev-summit' : ''}">
