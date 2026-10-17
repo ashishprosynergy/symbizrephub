@@ -719,6 +719,24 @@ describe('hours and expenses', () => {
     assert.equal((await invoke('POST',`/expenses/${rows[0].id}/approve`,{token:officeToken})).statusCode, 200);
   });
 
+  test('declined hours go back to the rep with the reason; the rep fixes and sends them again', async () => {
+    const made = JSON.parse((await invoke('POST', '/time', { token: repToken,
+      body: { date: '2026-09-18', hours: 9, category: 'Admin', description: 'Calls' } })).body);
+    assert.equal((await invoke('POST', `/time/${made.id}/decline`, { token: repToken, body: { reason: 'x' } })).statusCode, 403, 'reps cannot decline');
+    assert.equal((await invoke('POST', `/time/${made.id}/decline`, { token: officeToken, body: { reason: '' } })).statusCode, 400, 'a reason is needed');
+    assert.equal((await invoke('POST', `/time/${made.id}/decline`, { token: officeToken, body: { reason: 'Nine hours of calls looks high' } })).statusCode, 200);
+    let mine = JSON.parse((await invoke('GET', '/time', { token: repToken })).body).find(t => t.id === made.id);
+    assert.equal(mine.status, 'Declined'); assert.equal(mine.decline_note, 'Nine hours of calls looks high');
+    // The office list carries the rep's Zoho contact, so picking the rep finds it
+    const office = JSON.parse((await invoke('GET', '/time', { token: officeToken })).body).find(t => t.id === made.id);
+    assert.equal(office.rep_contact, 'CONTACT_REP_1');
+    assert.equal((await invoke('POST', `/time/${made.id}/resubmit`, { token: officeToken, body: { hours: 3 } })).statusCode, 404, 'only the rep resends their own');
+    assert.equal((await invoke('POST', `/time/${made.id}/resubmit`, { token: repToken, body: { hours: 3, description: 'Calls to 3 facilitators' } })).statusCode, 200);
+    mine = JSON.parse((await invoke('GET', '/time', { token: repToken })).body).find(t => t.id === made.id);
+    assert.equal(mine.status, 'Submitted'); assert.equal(Number(mine.hours), 3);
+    assert.equal((await invoke('POST', `/time/${made.id}/resubmit`, { token: repToken, body: { hours: 3 } })).statusCode, 404, 'only a sent-back claim can be resent');
+  });
+
   test('the accounting email carries each receipt, named by its line', async () => {
     // A photographed receipt, approved, alongside the PDF one above
     const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';

@@ -265,6 +265,8 @@ CREATE TABLE IF NOT EXISTS rep_notes (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS decline_note TEXT;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS decline_note TEXT;
 CREATE TABLE IF NOT EXISTS zoho_cache (key TEXT PRIMARY KEY, body TEXT NOT NULL, at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS visit_plans (ring_id TEXT PRIMARY KEY, visit_date DATE NOT NULL, visit_time TEXT, location TEXT, notes TEXT, set_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS rep_messages (
@@ -511,11 +513,11 @@ const q = {
      x.receiptName || null, x.receiptType || null, x.receiptData || null, x.vendor || null]),
   expensesFor: userId => query(
     `SELECT id,user_id,rep_name,entry_date,amount,category,description,ring_id,vendor,
-            receipt_name,receipt_type,status,created_at,approved_by,books_bill_id,books_error
+            receipt_name,receipt_type,status,created_at,approved_by,books_bill_id,books_error,decline_note
      FROM expenses WHERE user_id = $1 ORDER BY entry_date DESC LIMIT 500`, [userId]),
   allExpenses: () => query(
     `SELECT e.id,e.user_id,e.rep_name,e.entry_date,e.amount,e.category,e.description,e.ring_id,e.vendor,
-            e.receipt_name,e.receipt_type,e.status,e.created_at,e.approved_by,e.books_bill_id,e.books_error,
+            e.receipt_name,e.receipt_type,e.status,e.created_at,e.approved_by,e.books_bill_id,e.books_error,e.decline_note,
             u.zoho_owner_id AS rep_contact
      FROM expenses e LEFT JOIN users u ON u.id = e.user_id ORDER BY e.entry_date DESC LIMIT 1000`),
   // Zoho Books. Only expenses sent to accounting after Books was connected are
@@ -534,6 +536,16 @@ const q = {
     'UPDATE expenses SET books_bill_id = COALESCE($2, books_bill_id), books_error = $3 WHERE id = $1',
     [id, billId || null, error || null]),
   receiptFor: id => one('SELECT user_id,receipt_name,receipt_type,receipt_data FROM expenses WHERE id = $1', [id]),
+  /** Sent back to the rep with a reason; they can fix it and submit again */
+  declineTime: (id, by, note) => query(
+    "UPDATE time_entries SET status='Declined', approved_at=now(), approved_by=$2, decline_note=$3 WHERE id = $1 AND status IN ('Submitted','Approved') RETURNING user_id, entry_date, hours, category", [id, by, note]),
+  declineExpense: (id, by, note) => query(
+    "UPDATE expenses SET status='Declined', approved_at=now(), approved_by=$2, decline_note=$3 WHERE id = $1 AND status IN ('Submitted','Approved') RETURNING user_id, entry_date, amount, category", [id, by, note]),
+  /** The rep's own declined claim, corrected and sent again */
+  resubmitTime: (id, userId, hours, description) => query(
+    "UPDATE time_entries SET status='Submitted', hours=COALESCE($3,hours), description=COALESCE($4,description), approved_at=NULL, approved_by=NULL WHERE id = $1 AND user_id = $2 AND status = 'Declined' RETURNING id", [id, userId, hours, description]),
+  resubmitExpense: (id, userId, amount, description) => query(
+    "UPDATE expenses SET status='Submitted', amount=COALESCE($3,amount), description=COALESCE($4,description), approved_at=NULL, approved_by=NULL WHERE id = $1 AND user_id = $2 AND status = 'Declined' RETURNING id", [id, userId, amount, description]),
   approveExpense: (id, by) => query(
     "UPDATE expenses SET status='Approved', approved_at=now(), approved_by=$2 WHERE id = $1", [id, by]),
   markExpensesSent: () => query("UPDATE expenses SET status='Reimbursed' WHERE status='Approved'"),

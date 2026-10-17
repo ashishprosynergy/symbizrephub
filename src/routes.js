@@ -1940,6 +1940,51 @@ r.post('/time', auth.authRequired, wrap(async (req, res) => {
   res.status(201).json({ id: out[0]?.id });
 }));
 
+/* Decline: back to the rep with the reason, by email too */
+async function declineClaim(req, res, kind) {
+  const note = String(req.body?.reason || '').trim().slice(0, 1000);
+  if (!note) return res.status(400).json({ error: 'Say why, so the rep knows what to change' });
+  const id = parseInt(req.params.id, 10);
+  const rows = kind === 'time' ? await q.declineTime(id, req.user.id, note) : await q.declineExpense(id, req.user.id, note);
+  const row = rows[0];
+  if (!row) return res.status(404).json({ error: 'That claim is not waiting for approval' });
+  await audit(req.user.id, kind === 'time' ? 'time.declined' : 'expense.declined', { id, note }, req.ip);
+  const rep = await q.userById(row.user_id).catch(() => null);
+  if (rep && rep.email) {
+    const what = kind === 'time' ? `${Number(row.hours)} hour${Number(row.hours) === 1 ? '' : 's'} (${row.category})`
+      : `$${Number(row.amount).toFixed(2)} (${row.category})`;
+    const day = String(row.entry_date instanceof Date ? row.entry_date.toISOString() : row.entry_date).slice(0, 10);
+    const e2 = v => String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    reminders.sendEmail(rep.email, `Your ${kind === 'time' ? 'hours' : 'expense'} for ${day} were sent back`,
+      `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;font-size:15px;color:#1E2A20;max-width:520px">
+        <p>${e2((rep.name || '').split(' ')[0] || 'Hello')},</p>
+        <p>${e2(req.user.name || 'The office')} sent back your ${kind === 'time' ? 'hours' : 'expense'} of <strong>${e2(what)}</strong> on ${e2(day)}:</p>
+        <p style="background:#F5DCD3;border-radius:8px;padding:12px 14px">${e2(note)}</p>
+        <p>Open <a href="${cfg.appUrl}" style="color:#2E5132">Rep Hub</a> → Hours &amp; expenses to correct it and send it again. Reply to this email with any questions.</p></div>`,
+      { userId: rep.id, kind: 'claim-declined', replyTo: req.user.email }).catch(() => {});
+  }
+  res.json({ ok: true });
+}
+r.post('/time/:id/decline', auth.authRequired, access.requirePerm('accounting'), wrap((req, res) => declineClaim(req, res, 'time')));
+r.post('/expenses/:id/decline', auth.authRequired, access.requirePerm('accounting'), wrap((req, res) => declineClaim(req, res, 'exp')));
+
+async function resubmitClaim(req, res, kind) {
+  const b = req.body || {};
+  const num = kind === 'time' ? parseFloat(b.hours) : parseFloat(b.amount);
+  if (b.hours != null || b.amount != null) {
+    if (!(num > 0) || (kind === 'time' && num > 24)) return res.status(400).json({ error: kind === 'time' ? 'Hours must be between 0 and 24' : 'The amount must be more than 0' });
+  }
+  const desc = b.description != null ? String(b.description).slice(0, 2000) : null;
+  const id = parseInt(req.params.id, 10);
+  const rows = kind === 'time' ? await q.resubmitTime(id, req.user.id, isNaN(num) ? null : num, desc)
+    : await q.resubmitExpense(id, req.user.id, isNaN(num) ? null : num, desc);
+  if (!rows.length) return res.status(404).json({ error: 'Only your own sent-back claims can be sent again' });
+  await audit(req.user.id, kind === 'time' ? 'time.resubmitted' : 'expense.resubmitted', { id }, req.ip);
+  res.json({ ok: true });
+}
+r.post('/time/:id/resubmit', auth.authRequired, wrap((req, res) => resubmitClaim(req, res, 'time')));
+r.post('/expenses/:id/resubmit', auth.authRequired, wrap((req, res) => resubmitClaim(req, res, 'exp')));
+
 r.post('/time/:id/approve', auth.authRequired, access.requirePerm('accounting'), wrap(async (req, res) => {
   await q.approveTime(parseInt(req.params.id, 10), req.user.id);
   res.json({ ok: true });
