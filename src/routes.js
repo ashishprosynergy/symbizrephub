@@ -1338,11 +1338,23 @@ async function activeMemberAddresses() {
     .map(m => ({ ...m, state: m.region }));
 }
 let mapCache = null;
-r.get('/members/map', auth.authRequired, auth.requireOffice, access.requirePerm('members'), wrap(async (req, res) => {
+/* The office with Members access sees every member; a rep sees only the
+   members of their own rings (decided here, never in the browser). */
+function mapGuard(req, res, next) {
+  if (req.user.role === 'rep') return req.user.zoho_owner_id ? next() : res.status(403).json({ error: 'Your login is not linked to a Zoho contact yet' });
+  if (!req.user.perms || !req.user.perms.members) return res.status(403).json({ error: 'Your account does not have access to members. Ask the owner.' });
+  next();
+}
+const forViewer = (req, body) => req.user.role !== 'rep' ? body : (() => {
+  const mine = body.members.filter(m => (m.repIds || []).includes(req.user.zoho_owner_id));
+  return { ...body, members: mine, located: mine.filter(m => m.lat != null).length, total: mine.length,
+    noAddress: undefined, pending: mine.filter(m => m.lat == null && m.address).length ? body.pending : 0 };
+})();
+r.get('/members/map', auth.authRequired, mapGuard, wrap(async (req, res) => {
   // Built from five Zoho lists, so kept ready: 5 minutes, or 1 while addresses
   // are still being placed so new pins keep appearing
   if (mapCache && req.query.fresh !== '1' && Date.now() - mapCache.at < (mapCache.body.pending ? 60000 : 300000)) {
-    return res.json(mapCache.body);
+    return res.json(forViewer(req, mapCache.body));
   }
   const [members, links, ringRows, tiers, cached] = await Promise.all([
     activeMemberAddresses(), zoho.coql(queries.allGroupMembers()), zoho.coql(queries.ringsForRep(null)),
@@ -1358,7 +1370,8 @@ r.get('/members/map', auth.authRequired, auth.requireOffice, access.requirePerm(
     const t = tiers.get(m.id);
     return { id: m.id, name: m.name, business: m.business, address: m.address, phone: m.phone,
       lat: p ? p.lat : null, lng: p ? p.lng : null, tier: t ? t.Membership_Tier || '' : '',
-      rings: rg.map(r => r.name), rep: rg[0] ? (rg[0].repName || '') : '', repId: rg[0] ? (rg[0].repZohoId || null) : null };
+      rings: rg.map(r => r.name), rep: rg[0] ? (rg[0].repName || '') : '', repId: rg[0] ? (rg[0].repZohoId || null) : null,
+      repIds: [...new Set(rg.map(r => r.repZohoId).filter(Boolean))] };
   });
   const pending = geo.missing(members, new Map(cached.map(r => [r.address_key, r]))).length;
   const site = netlifySite(req);
@@ -1371,7 +1384,7 @@ r.get('/members/map', auth.authRequired, auth.requireOffice, access.requirePerm(
     noAddress: members.filter(m => !geo.hasAddress(m)).length, pending, at: new Date().toISOString() };
   // Placed here and now (no background worker): this answer is already stale
   if (!pending || site) mapCache = { at: Date.now(), body };
-  res.json(body);
+  res.json(forViewer(req, body));
 }));
 
 /* ═══════════ SUMMITS (Mel: history, planning, checklists, forms) ═══════════

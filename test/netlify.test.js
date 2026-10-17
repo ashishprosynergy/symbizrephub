@@ -1354,6 +1354,18 @@ describe("ring meetings, membership levels and the member map", () => {
     const saved = await db.q.allGeocodes();
     assert.ok(saved.some(r => r.source === 'census' && r.lat === 40.15), 'kept for next time');
   });
+
+  test('a rep sees only the members of their own rings on the map', async () => {
+    const repToken = JSON.parse((await invoke('POST', '/auth/login', { body: { email: 'rep@test.org', password: 'correct-horse' } })).body).token;
+    const res = await invoke('GET', '/members/map', { token: repToken });
+    assert.equal(res.statusCode, 200);
+    const map = JSON.parse(res.body);
+    assert.ok(!map.members.some(x => x.id === 'C9'), "another rep's member is not sent to this rep");
+    assert.ok(map.members.every(x => (x.repIds || []).includes('CONTACT_REP_1')));
+    // The office still sees everyone, from the same saved answer
+    const all = JSON.parse((await invoke('GET', '/members/map', { token })).body);
+    assert.ok(all.members.some(x => x.id === 'C9'));
+  });
 });
 
 /* ═══════════ SCHEDULED FUNCTIONS ═══════════ */

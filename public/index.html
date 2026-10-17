@@ -170,6 +170,9 @@
   .howto-t strong{color:var(--ink);font-size:14.5px}
   .howto-go{margin-left:auto;font-size:22px;color:var(--primary)}
   @media (max-width:640px){ .howto-qr,.howto-scan{display:none} }
+  .addr-map{padding:0;overflow:hidden;margin-bottom:12px}
+  .addr-map iframe{display:block;width:100%;height:220px;border:0;background:var(--surface-2)}
+  .addr-map-bar{display:flex;gap:8px;align-items:center;padding:10px 12px;flex-wrap:wrap}
   .qr-panel{display:flex;gap:14px;align-items:center;flex-wrap:wrap;border-left:4px solid var(--primary);margin-bottom:12px}
   .qr-panel-code{flex:none;width:96px;height:96px;background:#fff;border-radius:10px;padding:4px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line)}
   .qr-big{display:flex;justify-content:center;margin:6px 0 12px}
@@ -2542,7 +2545,7 @@ function vMemberDetail(){
       ${m.email?`<div class="kv"><span class="k">Email</span><a href="mailto:${esc(m.email)}">${esc(m.email)}</a></div>`:''}
       ${m.address?`<div class="kv"><span class="k">Address</span>
         <span><a href="https://maps.google.com/?q=${encodeURIComponent(m.address)}" target="_blank" rel="noopener">${esc(m.address)}</a>
-        ${isOffice() && can('members') && API.live ? ` · <a href="#" class="inline-link" onclick="event.preventDefault();showOnMap('${m.id}')">Show on map</a>` : ''}</span></div>`:''}
+        ${mapAllowed() ? ` · <a href="#" class="inline-link" onclick="event.preventDefault();showOnMap('${m.id}')">Show on member map</a>` : ''}</span></div>`:''}
       ${m.lifeStage?`<div class="kv"><span class="k">Life stage</span><span>${esc(m.lifeStage)}${LIFE_STAGES[m.lifeStage]?` — ${esc(LIFE_STAGES[m.lifeStage].hint)}`:''}</span></div>`:''}
       ${m.tier||m.memberType?`<div class="kv"><span class="k">Membership level</span><span>${m.tier?`<span class="tag tier tier-${esc(m.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(m.tier)}</span>`:esc(m.memberType)}</span></div>`:''}
       <div class="kv"><span class="k">Member since</span><span>${fmt(m.memberSince||m.joined)}</span></div>
@@ -2550,6 +2553,7 @@ function vMemberDetail(){
       ${att!==null?`<div class="kv"><span class="k">Meeting attendance</span><span>${att}%</span></div>`:''}
       <div class="kv"><span class="k">Rep</span><span>${pname(m.repId)}</span></div>
     </div>
+    ${addressMap(m.address)}
     ${m.status==='active'&&mine?`<div class="btnrow" style="margin-bottom:8px;">
       <a class="btn" href="mailto:${esc(m.email)}">Email</a>
       <button class="btn primary" onclick='openLog(${JSON.stringify({ringId:m.ringId,who:m.name,type:"Member Call",memberId:m.id})})'>Log a call</button>
@@ -2561,6 +2565,19 @@ function vMemberDetail(){
     </div></div>`).join('')||`<div class="empty">Nothing logged yet.</div>`}`;
 }
 
+/* Where someone is: a small map of the address, with directions. Google's
+   embedded map needs no key; it loads only when scrolled to. */
+function addressMap(address){
+  const a = String(address || '').trim();
+  if(!a || a.replace(/[^a-z0-9]/gi, '').length < 6) return '';
+  const q = encodeURIComponent(a);
+  return `<div class="card addr-map">
+    <iframe title="Map of ${esc(a)}" loading="lazy" referrerpolicy="no-referrer-when-downgrade"
+      src="https://maps.google.com/maps?q=${q}&z=14&output=embed"></iframe>
+    <div class="addr-map-bar"><span class="row-sub" style="flex:1;min-width:0">${esc(a)}</span>
+      <a class="btn sm" href="https://www.google.com/maps/dir/?api=1&destination=${q}" target="_blank" rel="noopener">Directions</a>
+      <a class="btn sm" href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Open in Google Maps</a></div></div>`;
+}
 function vFacDetail(){
   const f=fac(ui.facId); if(!f) return `<div class="empty">Not found.</div>`;
   const rs=S.rings.filter(r=>r.facId===f.id);
@@ -5667,7 +5684,8 @@ function prefetchView(id){
   else if(id === 'summits' && can('summits')) loadSummits();
 }
 /* Pointing at "Member map" starts loading it, so it is ready by the click */
-function prefetchMap(){ if(!API.live || !can('members')) return; ensureLeaflet().catch(() => {}); loadMapData(); }
+const mapAllowed = () => API.live && (isRep() || can('members'));
+function prefetchMap(){ if(!mapAllowed()) return; ensureLeaflet().catch(() => {}); loadMapData(); }
 const TIER_COLOURS = { 'Seedling':'#7FB24F', 'Sapling':'#2E5132', 'Mighty Oak':'#AD7E21', 'Bookshelf':'#2C5A6E' };
 function addCss(href){ const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l); }
 function addScript(src){ return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
@@ -5726,7 +5744,7 @@ function mapChipCounts(){
 }
 function vMemberMap(){
   const head = `<div class="section-head"><div><h2>Member map</h2>
-    <div class="sub">Every active member at their mailing address. Tap a pin or a name for details.</div></div>
+    <div class="sub">${isRep() ? 'Your members, at their mailing addresses.' : 'Every active member at their mailing address.'} Tap a pin or a name for details.</div></div>
     ${mapData && !mapData.error ? `<button class="btn sm" id="mapRefresh" onclick="loadMapData(true)" ${mapBusy?'disabled':''}>${mapBusy?'Updating…':'Refresh'}</button>` : ''}</div>`;
   if(!API.live) return head + `<div class="empty">The map needs the live server.</div>`;
   loadMapData();            // once per visit, behind whatever is showing
@@ -5739,7 +5757,7 @@ function vMemberMap(){
     onclick="setMapFilter('${key}','${val}')">${dot ? `<span class="d-dot" style="background:${dot}"></span>` : ''}${label}</button>`;
   return head + `
     <div class="map-tools">
-      ${repPicker('mapRep', reps, ui.mapRep, 'All reps')}
+      ${isRep() ? '' : repPicker('mapRep', reps, ui.mapRep, 'All reps')}
       <input class="map-search" placeholder="Find a member, business, ring or town…" value="${esc(ui.mapQ||'')}"
         oninput="ui.mapQ=this.value;clearTimeout(window.__mq);window.__mq=setTimeout(()=>mapSearchDone(false),220)"
         onkeydown="if(event.key==='Enter'){event.preventDefault();ui.mapQ=this.value;clearTimeout(window.__mq);mapSearchDone(true)}">
@@ -5751,7 +5769,7 @@ function vMemberMap(){
     <div class="map-tools">
       <div class="chips" style="margin:0"><span class="row-sub" style="align-self:center">Colour by</span>
         <button class="chip ${(ui.mapColour||'level')==='level'?'on':''}" data-mc="level" onclick="setMapColour('level')">Level</button>
-        <button class="chip ${ui.mapColour==='rep'?'on':''}" data-mc="rep" onclick="setMapColour('rep')">Rep</button></div>
+        ${isRep() ? '' : `<button class="chip ${ui.mapColour==='rep'?'on':''}" data-mc="rep" onclick="setMapColour('rep')">Rep</button>`}</div>
       <div class="chips" style="margin:0">
         <button class="chip ${ui.mapRings?'on':''}" id="mapRingsChip" onclick="toggleMapRings()">${icon('ring',13)} Growth Rings</button>
         <button class="chip" onclick="exportMapCSV()">Export these</button></div>
@@ -6631,7 +6649,7 @@ function navItems(){
 
 function navGroups(){
   if(isRep()) return [
-    ['', [['today','Today'],['rings','My Rings'],['people','People'],['calendar','Calendar'],['events','Events & summits']]],
+    ['', [['today','Today'],['rings','My Rings'],['people','People'],['map','Member map'],['calendar','Calendar'],['events','Events & summits']]],
     ['Admin', [['timesheet','Hours & expenses'],['resources','Web Toolbox'],['callsheet','Call sheet']]],
   ];
   const office = [
@@ -8012,6 +8030,7 @@ function renderContentInner(el){
   if(v==='visits'){ el.innerHTML=vVisits(); return; }
   if(v==='events'){ el.innerHTML=vEvents(); return; }
   if(isRep()){
+    if(v==='map'){ el.innerHTML=vMemberMap(); return; }
     el.innerHTML=v==='rings'?vMyRings():v==='people'?vPeople():v==='requests'?vRequests():v==='progress'?vMyProgress():vToday();
     return;
   }
