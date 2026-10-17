@@ -101,5 +101,9 @@ module.exports = {
     nudgeAfterDays: parseInt(process.env.NUDGE_AFTER || '14', 10),
   },
 
-  appUrl: process.env.APP_URL || 'http://localhost:3000',
+  // Where links in emails point. APP_URL wins; on Netlify the site's own
+  // address (URL is set by Netlify); localhost only when running locally.
+  // Every email button pointed at localhost while APP_URL was unset.
+  appUrl: (process.env.APP_URL || process.env.URL ||
+    (process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME ? 'https://symbizrep.netlify.app' : 'http://localhost:3000')).replace(/\/$/, ''),
 };

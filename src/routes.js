@@ -864,7 +864,7 @@ r.post('/rings', auth.authRequired, writesAllowed, wrap(async (req, res) => {
   for (const u of await q.allOffice()) {
     reminders.sendEmail(u.email, `New Growth Ring awaiting approval: ${b.name}`,
       `<p>${req.user.name} submitted <strong>${b.name}</strong> for approval.</p>
-       <p><a href="${cfg.appUrl}/approvals">Review it</a></p>`, { userId: u.id, kind: 'approval' });
+       <p><a href="${cfg.appUrl}/?view=approvals">Review it</a></p>`, { userId: u.id, kind: 'approval' });
   }
   res.status(201).json({ id, status: 'pending' });
 }));
@@ -1516,7 +1516,7 @@ async function tellOwner(person, task, eventId, req) {
       <p>${esc2((person.name || '').split(' ')[0] || 'Hello')},</p>
       <p>${esc2(req.user.name || 'The office')} has given you a task for <strong>${esc2(e ? e.name : 'a summit')}</strong>${e && !/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(e.name) ? ' on ' + esc2(nice(e.date)) : ''}:</p>
       <p style="font-size:16px;background:#F2F5EC;border-radius:8px;padding:12px 14px"><strong>${esc2(task.title)}</strong>${due ? '<br><span style="color:#5A6455">Due ' + esc2(due) + '</span>' : ''}</p>
-      <p><a href="${cfg.appUrl}" style="background:#2E5132;color:#fff;padding:9px 15px;border-radius:7px;text-decoration:none">Open Summits in Rep Hub</a></p>
+      <p><a href="${siteUrl(req)}/?summit=${encodeURIComponent(eventId)}" style="background:#2E5132;color:#fff;padding:9px 15px;border-radius:7px;text-decoration:none">Open this summit in Rep Hub</a></p>
       <p style="color:#8A9284;font-size:12px">It also shows in your notifications as the due date gets close.</p></div>`,
     { userId: person.id, kind: 'summit-task', replyTo: req.user.email }).catch(() => {});
 }
@@ -2032,7 +2032,7 @@ async function declineClaim(req, res, kind) {
         <p>${e2((rep.name || '').split(' ')[0] || 'Hello')},</p>
         <p>${e2(req.user.name || 'The office')} sent back your ${kind === 'time' ? 'hours' : 'expense'} of <strong>${e2(what)}</strong> on ${e2(day)}:</p>
         <p style="background:#F5DCD3;border-radius:8px;padding:12px 14px">${e2(note)}</p>
-        <p>Open <a href="${cfg.appUrl}" style="color:#2E5132">Rep Hub</a> → Hours &amp; expenses to correct it and send it again. Reply to this email with any questions.</p></div>`,
+        <p>Open <a href="${siteUrl(req)}/?view=timesheet" style="color:#2E5132">Rep Hub</a> → Hours &amp; expenses to correct it and send it again. Reply to this email with any questions.</p></div>`,
       { userId: rep.id, kind: 'claim-declined', replyTo: req.user.email }).catch(() => {});
   }
   res.json({ ok: true });

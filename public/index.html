@@ -8213,17 +8213,40 @@ function fillShell(){
   setPart('tabbar', tabbarHTML());
 }
 
+/* Links in emails open a screen: /?view=approvals, /?summit=<id>. Kept until
+   the person is signed in, then followed once. */
+(function readGoto(){
+  try{
+    const p = new URLSearchParams(location.search), view = p.get('view'), summit = p.get('summit');
+    if(!view && !summit) return;
+    sessionStorage.setItem('rephub_goto', JSON.stringify({ view: view ? view.replace(/[^a-zA-Z]/g, '') : null, summit: summit ? summit.replace(/[^0-9]/g, '') : null }));
+    history.replaceState({}, '', location.pathname);
+  }catch(e){}
+})();
+function applyGoto(){
+  if(!ui.me) return;
+  let g = null;
+  try{ g = JSON.parse(sessionStorage.getItem('rephub_goto') || 'null'); sessionStorage.removeItem('rephub_goto'); }catch(e){}
+  if(!g) return;
+  if(g.summit && isOffice() && can('summits')) return openSummit(g.summit);
+  if(g.view && (VIEW_TITLE[g.view] || g.view === 'today' || g.view === 'dash') && canView(g.view)){ ui.view = g.view; ui.ringId = ui.memberId = ui.facId = ui.eventId = null; }
+}
+
 /* Opening or refreshing the app: if someone was signed in on this device,
    show their app at once, on the screen they were on, while the server
    confirms the session in the background. */
+var resumingSession = false;
 (function resumeSession(){
   if(!API.token || ui.me) return;
   try{
     const u = JSON.parse(localStorage.getItem('rephub_user') || 'null');
     if(!u) return;
+    resumingSession = true;          // the email link is followed below, after the saved screen
     signInAs(u);
+    resumingSession = false;
     const s = JSON.parse(sessionStorage.getItem('rephub_screen') || 'null');
     if(s && s.view) Object.assign(ui, s);
+    if(sessionStorage.getItem('rephub_goto')){ applyGoto(); return; }
     // A reload is not a first visit: the numbers don't count up again, and
     // the page goes back to where it was once there is enough of it
     countedFor = screenKey();
@@ -10474,6 +10497,7 @@ function signInAs(user, { keepView } = {}){
   ui.me = id;
   if(keepView && same) return;
   ui.view = isRep ? 'today' : 'dash';
+  if(!resumingSession) applyGoto();      // a link from an email, followed after signing in
   if (isRep && !user.zoho_owner_id) {
     setTimeout(()=>toast('Your login is not linked to a Zoho contact yet — ask the office'), 400);
   }

@@ -150,7 +150,7 @@ async function runManagerDigest({ dryRun = false, onlyUserId = null } = {}) {
   for (const u of managers) {
     if (!u.digest_email && !onlyUserId) { out.push({ to: u.email, skipped: 'turned off' }); continue; }
     const r = await sendEmail(u.email, `Your reps this week: ${warnings.length ? warnings.length + ' to look at' : 'all on track'}`,
-      digestHTML(snap, u.name, cfg.appUrl), { userId: u.id, kind: 'manager-digest' });
+      digestHTML(snap, u.name, cfg.appUrl + '/?view=manager'), { userId: u.id, kind: 'manager-digest' });
     out.push({ to: u.email, ok: !!r.ok, error: r.error });
   }
   return out;

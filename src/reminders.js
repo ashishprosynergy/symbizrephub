@@ -85,7 +85,7 @@ function renderDigestHTML(user, items) {
     ${!items.length ? `<p style="color:#2E5132;font-size:14px;">Nothing due this week. You're caught up.</p>` : ''}
     <p style="margin:22px 0 0;">
       <a href="${cfg.appUrl}" style="background:#2E5132;color:#fff;padding:10px 18px;border-radius:7px;text-decoration:none;font-size:14px;font-weight:600;">Open Rep Hub</a>
-      <a href="${cfg.appUrl}/callsheet" style="margin-left:8px;color:#2E5132;font-size:14px;">Print a call sheet</a>
+      <a href="${cfg.appUrl}/?view=callsheet" style="margin-left:8px;color:#2E5132;font-size:14px;">Print a call sheet</a>
     </p>
     <p style="color:#8A9284;font-size:12px;margin-top:22px;line-height:1.5;">
       Symbiz Network · reply to this email or call the office at 800-394-7970 if you'd rather have these keyed in for you.
@@ -109,7 +109,7 @@ function renderOfficeSummary(stats) {
         <td style="padding:9px 12px;border-bottom:1px solid #E9ECDF;text-align:right;font-weight:700;color:#1E2A20;">${esc(v)}</td>
       </tr>`).join('')}
     </table>
-    <p style="margin-top:18px;"><a href="${cfg.appUrl}/reports" style="color:#2E5132;font-weight:600;">Open full reports</a></p>
+    <p style="margin-top:18px;"><a href="${cfg.appUrl}/?view=reports" style="color:#2E5132;font-weight:600;">Open full reports</a></p>
   </div></body></html>`;
 }
 
