@@ -170,6 +170,21 @@
   .howto-t strong{color:var(--ink);font-size:14.5px}
   .howto-go{margin-left:auto;font-size:22px;color:var(--primary)}
   @media (max-width:640px){ .howto-qr,.howto-scan{display:none} }
+  .team-list{padding:4px 0;overflow:hidden}
+  .team-row{display:flex;align-items:center;gap:12px;width:100%;padding:11px 16px;border:0;border-top:1px solid var(--line-soft);background:none;
+    font:inherit;color:inherit;text-align:left;cursor:pointer}
+  .team-row:first-child{border-top:0}
+  button.team-row:hover{background:var(--surface-2)}
+  .team-row.static{cursor:default}
+  .tr-main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .tr-main .row-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .tr-go{font-size:20px;color:var(--ink-faint)}
+  .tr-acts{display:flex;gap:6px}
+  .team-log{margin-top:18px}
+  .team-log summary{cursor:pointer;font-weight:600;color:var(--ink-muted);padding:6px 0}
+  .rep-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:6px}
+  .rep-grid .card{margin:0}
+  @media (max-width:560px){ .team-row{padding:10px 12px} .tr-acts{flex-direction:column} }
   .addr-map{padding:0;overflow:hidden;margin-bottom:12px}
   .addr-map iframe{display:block;width:100%;height:220px;border:0;background:var(--surface-2)}
   .addr-map-bar{display:flex;gap:8px;align-items:center;padding:10px 12px;flex-wrap:wrap}
@@ -1729,7 +1744,7 @@ function can(cap){
 }
 /* Which switch each office screen sits behind (Overview is always there) */
 const VIEW_CAP = { events:'calendar', manager:'manager', approvals:'approvals', calendar:'calendar', members:'members', map:'members', summits:'summits', summitDetail:'summits', allrings:'rings',
-  visits:'visits', unaffiliated:'unaffiliated', reports:'reports', coverage:'reports', insights:'reports', team:'team',
+  visits:'visits', unaffiliated:'unaffiliated', reports:'reports', coverage:'reports', insights:'reports', team:'team', repAccount:'team',
   reminders:'reminders', timesheet:'accounting', checks:'system' };
 function canView(v){
   if(!isOffice()) return true;
@@ -3446,7 +3461,7 @@ function loadUsers(force){
     API.repsFromZoho().then(v => { zohoReps = v; }).catch(e => { if(!Array.isArray(zohoReps)) zohoReps = { error: e.message }; }),
   ]).then(() => {
     usersLoadedAt = Date.now(); keepTeam();
-    if(ui.view === 'team') renderContent();
+    if(ui.view === 'team' || ui.view === 'repAccount') renderContent();
   }).finally(() => { usersInFlight = null; });
   return usersInFlight;
 }
@@ -3729,84 +3744,127 @@ async function submitAddUser(e){
   }
 }
 
+/* ══════════════ REPS ══════════════
+ * One row per rep: their rings, where they cover and whether they use Rep Hub.
+ * Opening a rep shows everything about them on one page. Office staff and
+ * directors are listed separately below. */
+/** Every rep, from Zoho (who is named on a ring) joined to their Rep Hub account */
+function teamReps(){
+  const su = Array.isArray(serverUsers) ? serverUsers : [];
+  const z = Array.isArray(zohoReps) ? zohoReps : [];
+  const out = z.map(r => ({ id: r.contactId, name: r.name, rings: r.rings, regions: r.regions || [], email: r.email || '',
+    phone: r.phone || '', business: r.business || '', account: r.account || su.find(u => u.zoho_owner_id === r.contactId) || null }));
+  // Accounts for reps no longer named on a ring, or never linked to Zoho
+  su.filter(u => u.role === 'rep' && !out.some(r => r.account && r.account.id === u.id)).forEach(u =>
+    out.push({ id: u.zoho_owner_id || 'u:' + u.id, name: u.name, rings: 0, regions: u.region ? [u.region] : [], email: u.email, account: u, unlinked: !u.zoho_owner_id }));
+  out.forEach(r => { r.status = r.account && r.account.last_login_at ? 'active' : r.account ? 'invited' : r.email ? 'none' : 'noemail'; });
+  return out.sort((a, b) => b.rings - a.rings || String(a.name).localeCompare(String(b.name)));
+}
+const TEAM_STATUS = { active: ['Signed in', 'ok'], invited: ['Not signed in yet', 'soon'], none: ['Not invited', 'later'], noemail: ['No email in Zoho', 'overdue'] };
+function teamStatusTag(r){
+  const [l, t] = TEAM_STATUS[r.status];
+  return `<span class="tag ${t}">${r.status === 'active' && r.account.last_login_at ? 'Signed in ' + fmtShort(String(r.account.last_login_at).slice(0, 10)) : l}</span>`;
+}
 function vTeam(){
-  const reps=PEOPLE.filter(p=>p.role==='rep');
   const su = serverUsers;
-  return `<div class="section-head"><div><h2>Reps</h2><div class="sub">Who covers what, and how to move rings between them.</div></div>
+  if(!API.live) return `<div class="section-head"><div><h2>Reps</h2></div></div>
+    <div class="callout info"><strong>Accounts need the server</strong>This copy is running on your device only, so there are no logins to manage.</div>`;
+  const loading = su === null || zohoReps === null;
+  const reps = teamReps(), f = ui.teamFilter || 'all', q = (ui.teamQ || '').trim().toLowerCase();
+  const n = k => reps.filter(r => r.status === k).length;
+  const shown = reps.filter(r => (f === 'all' || r.status === f) && (!q || [r.name, r.email, r.regions.join(' ')].join(' ').toLowerCase().includes(q)));
+  const toInvite = reps.filter(r => r.status === 'none' || r.status === 'invited');
+  const office = Array.isArray(su) ? su.filter(u => u.role !== 'rep') : [];
+  const chip = (k, label, count) => `<button class="chip ${f === k ? 'on' : ''}" onclick="ui.teamFilter='${k}';renderContent()">${label}<span class="chip-n">${count}</span></button>`;
+  return `<div class="section-head"><div><h2>Reps${reps.length ? ' · ' + reps.length : ''}</h2>
+      <div class="sub">Open a rep to see their account, rings and everything you can do for them.</div></div>
     <div class="btnrow">
-      ${PEOPLE.some(p=>p.role==='rep') ? `<button class="btn" onclick="openPreviewPicker()">See a rep's view</button>` : ''}
-      ${API.live && can('users') ? `<button class="btn primary" onclick="openAddUser()">Add someone</button>` : ''}
+      ${reps.length ? `<button class="btn" onclick="openPreviewPicker()">See a rep's view</button>` : ''}
+      ${can('users') && toInvite.filter(r => r.email).length ? `<button class="btn" onclick="repsInvite(${esc(JSON.stringify(toInvite.filter(r => r.email && !String(r.id).startsWith('u:')).map(r => r.id)))}, null)">Invite ${toInvite.filter(r => r.email).length} not signed in</button>` : ''}
+      ${can('users') ? `<button class="btn primary" onclick="openAddUser()">Add someone</button>` : ''}
     </div></div>
-    ${API.live ? `
-      <h3 class="sub-h">Accounts</h3>
-      ${su === null ? `<div class="card flat"><div class="row-sub">Loading accounts…</div></div>` : ''}
-      ${su && su.error ? `<div class="callout rust"><strong>Could not load accounts</strong>${esc(su.error)}</div>` : ''}
-      ${Array.isArray(su) ? su.map(u=>`<div class="row">
-        <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
-          <div class="av">${initials(u.name)}</div>
-          <div class="row-main"><div class="row-title">${esc(u.name)}</div>
-            <div class="row-sub">${esc(u.email)}${u.region?' · '+esc(u.region):''}</div></div></div>
-        <div class="row-actions">
-          ${u.role==='rep' && !u.zoho_owner_id ? `<span class="tag overdue">not linked to Zoho</span>` : ''}
-          <span class="tag ${u.role==='admin'?'info':u.role==='staff'?'ok':'later'}">${u.role==='rep'?'Rep':u.role==='staff'?'Office':'Director'}</span>
-          ${can('users') && u.id !== ui.me && (isOwner() || u.role !== 'admin') ? `
-            <button class="btn sm" onclick="resendLogin('${u.id}','${esc(u.name)}')">Send reset link</button>
-            <button class="btn sm danger" onclick="removeAccount('${u.id}','${esc(u.name)}')">Remove</button>` : ''}
-        </div>
-      </div>`).join('') : ''}
-      ${Array.isArray(su) && su.some(u=>u.role==='rep' && !u.zoho_owner_id) ? `<div class="callout rust">
-        <strong>Some reps are not linked to a Zoho contact</strong>
-        They will sign in and see nothing. Create them from the Zoho list below instead.</div>` : ''}
-
-      <h3 class="sub-h">Reps in Zoho${Array.isArray(zohoReps)?` · ${zohoReps.length}`:''}</h3>
-      ${zohoReps === null ? `<div class="card flat"><div class="row-sub">Looking them up in Zoho…</div></div>` : ''}
-      ${zohoReps && zohoReps.error ? `<div class="callout info"><strong>Could not read reps from Zoho</strong>
-        ${esc(zohoReps.error)}<br>Connect Zoho first, or add people with "Add someone".</div>` : ''}
-      ${Array.isArray(zohoReps) && zohoReps.length ? `
-        <div class="row-sub" style="margin-bottom:10px">Everyone named as Regional Rep on an active Growth Ring.
-          Inviting a rep emails them a welcome with a link to choose their own password; their account is linked to their rings automatically.</div>
-        ${(() => { const unused = zohoReps.filter(r => r.account && !r.account.last_login_at && r.account.role === 'rep');
-          return unused.length ? `<div class="callout info" style="margin-bottom:10px"><strong>${unused.length} account${unused.length===1?' was':'s were'} made but ${unused.length===1?'has':'have'} not been used yet</strong>
-            ${unused.length===1?'That rep has':'Those reps have'} not signed in. You can send ${unused.length===1?'them':'each'} the welcome invitation now, or remove ${unused.length===1?'the account':'these accounts'} and start again.
-            <div class="btnrow" style="margin-top:9px">
-              <button class="btn sm primary" onclick="repsInvite(${esc(JSON.stringify(unused.map(r=>r.contactId)))}, this)">Send ${unused.length===1?'the invitation':'all '+unused.length+' the invitation'}</button>
-              <button class="btn sm" onclick="undoUnusedAccounts()">Undo: remove ${unused.length===1?'it':'these '+unused.length}</button></div></div>` : ''; })()}
-        ${zohoReps.filter(r=>!r.hasAccount && r.email).length > 1 ? `<div class="btnrow" style="margin-bottom:10px">
-          <button class="btn primary" onclick="inviteAllReps()">Invite all
-            ${zohoReps.filter(r=>!r.hasAccount && r.email).length} remaining</button></div>` : ''}
-        ${zohoReps.map(r=>`<div class="row">
-          <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
-            <div class="av">${initials(r.name)}</div>
-            <div class="row-main">
-              <div class="row-title">${esc(r.name)}</div>
-              <div class="row-sub">${r.rings} ring${r.rings===1?'':'s'}${r.regions&&r.regions.length?' · '+r.regions.slice(0,3).map(esc).join(', '):''}${r.email?' · '+esc(r.email):' · no email in Zoho'}</div>
-            </div></div>
-          <div class="row-actions">
-            <button class="btn sm" onclick="previewAsRep('${esc(r.contactId)}','${esc(r.name)}')">See their view</button>
-            ${r.hasAccount
-              ? (r.account && r.account.last_login_at
-                  ? `<span class="tag ok">signed in ${fmt(String(r.account.last_login_at).slice(0,10))}</span>`
-                  : `<span class="tag soon">not signed in yet</span>
-                     <button class="btn sm" onclick="repsInvite(['${esc(r.contactId)}'], this)">Send invitation</button>`)
-              : r.email
-                ? `<button class="btn sm primary" onclick="repsInvite(['${esc(r.contactId)}'], this)">Invite</button>`
-                : `<span class="tag overdue">no email</span>`}
-          </div></div>`).join('')}
-      ` : ''}
-    ` : `<div class="callout info"><strong>Accounts need the server</strong>
-        This copy is running on your device only, so there are no logins to manage. Connect a database to switch sign-in on.</div>`}
-    ${reps.map(p=>`<div class="card">
-      <div style="display:flex;gap:10px;align-items:center"><div class="av" style="background:var(--primary-soft);color:var(--primary)">${initials(p.name)}</div>
-      <div><div class="row-title">${esc(p.name)}</div><div class="row-sub">${esc(p.region||'')} · ${esc(p.email)}</div></div></div>
-      <div class="row-sub" style="margin-top:9px">${myRings(p.id).length} rings · ${activeMembers(p.id).length} members</div>
-      ${myRings(p.id).map(r=>`<div class="kv"><span>${esc(r.name)}</span>
-        <button class="btn sm ghost" onclick="openReassign('${r.id}')">Reassign</button></div>`).join('')||'<div class="row-sub" style="margin-top:6px">No rings assigned.</div>'}
-    </div>`).join('')}
-    <h3 class="sub-h">Recent changes</h3>
-    ${S.audit.slice(0,12).map(x=>`<div class="row"><div class="row-main">
+    ${su && su.error ? `<div class="callout rust"><strong>Could not load accounts</strong>${esc(su.error)}</div>` : ''}
+    ${zohoReps && zohoReps.error ? `<div class="callout info"><strong>Could not read reps from Zoho</strong>${esc(zohoReps.error)}</div>` : ''}
+    ${loading && !reps.length ? skeleton(5) : `
+    <div class="map-tools" style="margin-bottom:6px">
+      <div class="chips" style="margin:0">${chip('all', 'Everyone', reps.length)}${chip('active', 'Signed in', n('active'))}${chip('invited', 'Not signed in yet', n('invited'))}${chip('none', 'Not invited', n('none'))}${n('noemail') ? chip('noemail', 'No email', n('noemail')) : ''}</div>
+      <input class="map-search" style="max-width:260px" placeholder="Find a rep…" value="${esc(ui.teamQ || '')}" oninput="ui.teamQ=this.value;clearTimeout(window.__tq);window.__tq=setTimeout(()=>{renderContent();const i=document.querySelector('.team-q');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},200)" class="team-q">
+    </div>
+    <div class="card team-list">${shown.map(r => `<button class="team-row" onclick="openRepAccount('${esc(r.id)}')">
+        <span class="av">${initials(splitRepName(r.name).name)}</span>
+        <span class="tr-main"><span class="row-title">${esc(splitRepName(r.name).name)}${splitRepName(r.name).num ? `<span class="rp-num">#${esc(splitRepName(r.name).num)}</span>` : ''}</span>
+          <span class="row-sub">${r.rings} ring${r.rings === 1 ? '' : 's'}${r.regions.length ? ' · ' + esc(r.regions.slice(0, 2).join(', ')) : ''}${r.unlinked ? ' · <span style="color:var(--rust)">not linked to Zoho</span>' : ''}</span></span>
+        ${teamStatusTag(r)}<span class="tr-go">›</span></button>`).join('') || `<div class="empty" style="margin:10px">Nobody matches.</div>`}</div>`}
+    ${office.length ? `<h3 class="sub-h">Office team · ${office.length}</h3>
+      <div class="card team-list">${office.map(u => `<div class="team-row static">
+        <span class="av">${initials(u.name)}</span>
+        <span class="tr-main"><span class="row-title">${esc(u.name)}</span><span class="row-sub">${esc(u.email)}${u.last_login_at ? ' · signed in ' + fmtShort(String(u.last_login_at).slice(0, 10)) : ' · not signed in yet'}</span></span>
+        <span class="tag ${u.role === 'admin' ? 'info' : 'ok'}">${u.role === 'admin' ? 'Director' : 'Office'}</span>
+        ${can('users') && u.id !== ui.me && (isOwner() || u.role !== 'admin') ? `<span class="tr-acts">
+          <button class="btn sm" onclick="resendLogin('${u.id}','${esc(u.name)}')">Reset link</button>
+          <button class="btn sm danger" onclick="removeAccount('${u.id}','${esc(u.name)}')">Remove</button></span>` : ''}</div>`).join('')}</div>` : ''}
+    <details class="team-log"><summary>Recent changes</summary>
+    ${S.audit.slice(0, 12).map(x => `<div class="row"><div class="row-main">
       <div class="row-title">${esc(x.what)}</div>
-      <div class="row-sub">${pname(x.who)} · ${new Date(x.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>
-    </div></div>`).join('')||`<div class="empty">No changes recorded yet in this session.</div>`}`;
+      <div class="row-sub">${pname(x.who)} · ${new Date(x.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
+    </div></div>`).join('') || `<div class="empty">No changes recorded yet in this session.</div>`}</details>`;
+}
+function openRepAccount(id){ goingTo(); ui.repAcct = id; ui.view = 'repAccount'; closeSheet(); render(); if(API.live) loadUsers(); }
+/** Everything about one rep, on one page */
+function vRepAccount(){
+  const back = `<button class="back" onclick="goBack('team')">← Reps</button>`;
+  const r = teamReps().find(x => x.id === ui.repAcct);
+  if(!r) return back + ((serverUsers === null || zohoReps === null) ? skeleton(5) : `<div class="empty">That rep was not found.</div>`);
+  const nm = splitRepName(r.name), acct = r.account, zid = String(r.id).startsWith('u:') ? null : r.id;
+  const rings = zid ? S.rings.filter(g => g.repId === zid).sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true })) : [];
+  const card = zid ? repScorecard().find(c => c.id === zid) : null;
+  const m = zid && typeof mgrRep === 'function' ? mgrRep(zid) : null;
+  const kv = (k, v) => `<div class="kv"><span class="k">${k}</span><span>${v}</span></div>`;
+  return back + `
+    <div class="section-head"><div style="display:flex;gap:12px;align-items:center">
+        <div class="av mgr-av" style="width:52px;height:52px;font-size:18px">${initials(nm.name)}</div>
+        <div><h2 style="margin:0">${esc(nm.name)}${nm.num ? ` <span class="rp-num">#${esc(nm.num)}</span>` : ''}</h2>
+          <div class="sub">${r.rings} ring${r.rings === 1 ? '' : 's'}${r.regions.length ? ' · ' + esc(r.regions.join(', ')) : ''}</div></div></div>
+      ${teamStatusTag(r)}</div>
+    <div class="btnrow" style="margin-bottom:12px">
+      ${zid ? `<button class="btn" onclick="previewAsRep('${esc(zid)}','${esc(r.name)}')">See their view</button>
+        <button class="btn" onclick="ui.calRep='${esc(zid)}';setView('calendar')">Their calendar</button>` : ''}
+      ${zid && can('manager') ? `<button class="btn" onclick="openMessageReps(['${esc(zid)}'])">Email them</button>
+        <button class="btn" onclick="openGoals('${esc(zid)}')">Goals</button>
+        <button class="btn" onclick="openRepNotes('${esc(zid)}')">Check-ins</button>` : ''}
+    </div>
+
+    <div class="rep-grid">
+      <div class="card"><div class="trend-t">Rep Hub account</div>
+        ${kv('Email', r.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : '<span style="color:var(--rust)">none in Zoho</span>')}
+        ${r.phone ? kv('Phone', `<a href="${telHref(r.phone)}">${esc(r.phone)}</a>`) : ''}
+        ${r.business ? kv('Business', esc(r.business)) : ''}
+        ${kv('Status', r.status === 'active' ? 'Signed in, last ' + fmt(String(acct.last_login_at).slice(0, 10))
+          : r.status === 'invited' ? 'Has an account, has not signed in yet' : r.status === 'none' ? 'No account yet' : 'Cannot be invited until Zoho has their email')}
+        ${r.unlinked ? `<div class="callout rust" style="margin:8px 0 0"><strong>Not linked to a Zoho contact</strong>They will sign in and see nothing. Remove this account and invite them from Zoho instead.</div>` : ''}
+        <div class="btnrow" style="margin-top:10px">
+          ${(r.status === 'none' || r.status === 'invited') && zid && can('users') ? `<button class="btn sm primary" onclick="repsInvite(['${esc(zid)}'], this)">${r.status === 'none' ? 'Invite to Rep Hub' : 'Send the invitation again'}</button>` : ''}
+          ${acct && can('users') && r.status === 'active' ? `<button class="btn sm" onclick="resendLogin('${acct.id}','${esc(acct.name)}')">Send a password reset link</button>` : ''}
+          ${acct && can('users') && acct.id !== ui.me ? `<button class="btn sm danger" onclick="removeAccount('${acct.id}','${esc(acct.name)}')">Remove account</button>` : ''}
+        </div></div>
+
+      ${card ? `<div class="card"><div class="trend-t">How they are doing</div>
+        <div class="mgr-nums" style="margin-top:8px">
+          ${[[card.members, 'members'], [card.overdue, 'calls overdue'], [card.soon, 'due soon'], [card.logged, 'logged 30 days'], [card.neverVisited, 'rings not visited']]
+            .map(([v, l]) => `<div class="num"><span class="num-n">${v}</span><span class="num-l">${l}</span></div>`).join('')}</div>
+        ${m && m.goal ? goalBars({ calls: m.callsQuarter, visits: m.visitsQuarter, newMembers: newMembersFor(zid) }, m.goal) : ''}
+        ${m && m.nextCheckin ? `<div class="row-sub" style="margin-top:8px">Next check-in ${m.nextCheckin <= TODAY_S ? '<strong style="color:var(--rust)">due</strong>' : fmt(m.nextCheckin)}</div>` : ''}
+        ${can('manager') ? `<div class="btnrow" style="margin-top:10px"><button class="btn sm" onclick="setView('manager')">Open in Rep manager</button></div>` : ''}</div>` : ''}
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <h3 class="sub-h">Rings · ${rings.length}</h3>
+      ${rings.length && can('manager') ? `<button class="btn sm" onclick="openMoveRings('${esc(zid)}')">Move rings to another rep</button>` : ''}</div>
+    ${rings.length ? `<div class="card" style="padding:4px 15px">${rings.map(g => `<div class="row">
+        <div class="row-main clicky" onclick="openRing('${g.id}')"><div class="row-title">${esc(g.name)}</div>
+          <div class="row-sub">${g.serverMemberCount || ringMembers(g.id).length} members${g.facName ? ' · ' + esc(g.facName) : ''}${g.meetDay ? ' · meets ' + esc(g.meetDay) : ''}${lastVisitOf(g) ? ' · visited ' + fmtShort(lastVisitOf(g)) : ' · never visited'}</div></div>
+        ${can('manager') ? `<button class="btn sm ghost" onclick="openReassign('${g.id}')">Reassign</button>` : ''}</div>`).join('')}</div>`
+      : `<div class="empty">No rings assigned.</div>`}`;
 }
 
 function vSettings(){
@@ -6501,8 +6559,14 @@ function openReassign(ringId){
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
       <button type="submit" class="btn primary">Reassign</button></div></form>`);
 }
-function submitReassign(e,ringId){
+async function submitReassign(e,ringId){
   e.preventDefault(); const r=ring(ringId), to=fv(e.target,'repId');
+  if(API.live){
+    if(to === r.repId){ closeModal(); return; }
+    try{ await API.call('/rings/' + ringId + '/reassign', { method:'POST', body: JSON.stringify({ repZohoId: to }) }); }
+    catch(ex){ toast(ex.message || 'Could not move the ring'); return; }
+    r.repName = pname(to); mgrData = null;
+  }
   r.repId=to;
   S.members.filter(m=>m.ringId===ringId).forEach(m=>m.repId=to);
   S.activities.filter(a=>a.ringId===ringId&&a.nextDue).forEach(a=>a.repId=to);
@@ -7944,14 +8008,14 @@ var scrollTopNext = false;   // var, not let: render() may run before this line 
 // member to the People list) returns them to the same spot instead of
 // throwing them to the top.
 var placeByScreen = {};
-function screenKey(){ return [ui.view, ui.ringId, ui.memberId, ui.facId, ui.eventId].join('|'); }
+function screenKey(){ return [ui.view, ui.ringId, ui.memberId, ui.facId, ui.eventId, ui.view === 'repAccount' ? ui.repAcct : ''].join('|'); }
 function goingTo(){
   if (ui && ui.me) placeByScreen[screenKey()] = window.scrollY;
   // Remember where we were, so "Back" on a detail screen returns there (the
   // map, the calendar, a ring) rather than to a fixed list
   if (ui && ui.me && ui.view) {
     ui.trail = (ui.trail || []).slice(-11);
-    ui.trail.push({ view: ui.view, ringId: ui.ringId, memberId: ui.memberId, facId: ui.facId, eventId: ui.eventId, summitId: ui.summitId });
+    ui.trail.push({ view: ui.view, ringId: ui.ringId, memberId: ui.memberId, facId: ui.facId, eventId: ui.eventId, summitId: ui.summitId, repAcct: ui.repAcct });
   }
   scrollTopNext = true;
   // Attendee lists start closed again on every screen you come to
@@ -8011,7 +8075,7 @@ function renderContentSafe(el){
   }
 }
 const VIEW_TITLE = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', map:'Member map', summits:'Summits', summitDetail:'Summits', allrings:'Rings',
-  visits:'Visits', unaffiliated:'No ring yet', reports:'Reports', coverage:'Coverage', insights:'Retention', team:'Reps',
+  visits:'Visits', unaffiliated:'No ring yet', reports:'Reports', coverage:'Coverage', insights:'Retention', team:'Reps', repAccount:'Reps',
   reminders:'Reminders', events:'Events & summits', timesheet:'Hours and expenses', checks:'System check', settings:'Settings', access:'Access & security' };
 function renderContentInner(el){
   const v=ui.view;
@@ -8038,7 +8102,7 @@ function renderContentInner(el){
     :v==='members'?vMembersAll():v==='allrings'?vAllRings():v==='insights'?vInsights()
     :v==='team'?(API.live ? (setTimeout(()=>loadUsers(),0), vTeam()) : vTeam()):v==='reminders'?vReminders()
     :v==='settings'?((can('settings')||can('books'))?vSettings():noAccess('Settings'))
-    :v==='access'?vAccess():v==='map'?vMemberMap():v==='summits'?vSummits():v==='summitDetail'?vSummitDetail():vOfficeDash();
+    :v==='repAccount'?vRepAccount():v==='access'?vAccess():v==='map'?vMemberMap():v==='summits'?vSummits():v==='summitDetail'?vSummitDetail():vOfficeDash();
 }
 
 /**
