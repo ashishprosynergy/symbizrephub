@@ -170,6 +170,8 @@
   .howto-t strong{color:var(--ink);font-size:14.5px}
   .howto-go{margin-left:auto;font-size:22px;color:var(--primary)}
   @media (max-width:640px){ .howto-qr,.howto-scan{display:none} }
+  .qr-panel{display:flex;gap:14px;align-items:center;flex-wrap:wrap;border-left:4px solid var(--primary);margin-bottom:12px}
+  .qr-panel-code{flex:none;width:96px;height:96px;background:#fff;border-radius:10px;padding:4px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line)}
   .qr-big{display:flex;justify-content:center;margin:6px 0 12px}
   .qr-big>div{background:#fff;padding:12px;border-radius:12px;border:1px solid var(--line);min-width:244px;min-height:244px;display:flex;align-items:center;justify-content:center}
   .qr-link input{width:100%;font:13px ui-monospace,Menlo,monospace;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink)}
@@ -4360,11 +4362,12 @@ function drawQRs(root){
     el.innerHTML = ''; new QRCode(el, { text: url, width: size, height: size, correctLevel: QRCode.CorrectLevel.M }); el.dataset.done = '1';
   })).catch(() => {});
 }
-function regLink(eventId){ return location.origin + '/register.html' + (eventId ? '?e=' + encodeURIComponent(eventId) : '?summits=1'); }
+/* One event, every summit coming up (null), or every event (`all`) */
+function regLink(eventId){ return location.origin + '/register.html' + (eventId === 'all' ? '' : eventId ? '?e=' + encodeURIComponent(eventId) : '?summits=1'); }
 function openRegQR(eventId, title){
   const link = regLink(eventId);
   openModal(`<h3>Registration QR · ${esc(title)}</h3>
-    <p class="lead">${eventId ? 'Anyone who scans this' : 'This one code lists every summit coming up; anyone who scans it'} can register themselves on their phone.
+    <p class="lead">${eventId === 'all' ? 'This one code lists every event and summit coming up; anyone who scans it' : eventId ? 'Anyone who scans this' : 'This one code lists every summit coming up; anyone who scans it'} can register themselves on their phone.
       Each sign-up waits on <strong>Approvals</strong> until the office approves it, then goes into Zoho. Members are matched by their email.</p>
     <div class="qr-big"><div id="qrBox" data-qr="${esc(link)}" data-size="220"></div></div>
     <div class="qr-link"><input value="${esc(link)}" readonly onclick="this.select()"></div>
@@ -4427,9 +4430,18 @@ function vEvents(){
       <div class="btnrow" style="margin-top:10px">
         <button class="btn sm primary" onclick="openAddRegistration('${e.id}')">Register a member</button>
         <button class="btn sm" onclick="openEvent('${e.id}')">Who's coming</button>
-        <button class="btn sm" onclick="openRegQR('${e.id}', ${esc(JSON.stringify(e.title))})" title="A code people scan to register themselves">QR</button></div></div>`; };
+        <button class="btn sm" onclick="openRegQR('${e.id}', ${esc(JSON.stringify(e.title))})" title="A code people scan to register themselves">${icon('grid',13)} Registration QR</button></div></div>`; };
+  setTimeout(() => drawQRs(document.getElementById('content')), 0);
   return `<div class="section-head"><div><h2>Events &amp; summits</h2>
       <div class="sub">Regional and Global Summits, info meetings and other events. Register your members; the office confirms it in Zoho.</div></div></div>
+    ${API.live ? `<div class="card qr-panel">
+      <div class="qr-panel-code" data-qr="${esc(regLink(null))}" data-size="88" aria-hidden="true"></div>
+      <div style="flex:1;min-width:200px"><div class="row-title">Registration QR codes</div>
+        <div class="row-sub">Show one at a ring meeting or put it on a slide: people scan it and register themselves on their phone. Each sign-up goes to the office to confirm.</div>
+        <div class="btnrow" style="margin-top:9px">
+          <button class="btn sm primary" onclick="openRegQR(null, 'Upcoming summits')">All summits</button>
+          <button class="btn sm" onclick="openRegQR('all', 'Upcoming events and summits')">All events</button></div>
+        <div class="row-sub" style="margin-top:6px">Or use <strong>Registration QR</strong> on any one event below.</div></div></div>` : ''}
     <div class="chips">${chip('all','Everything',all.length)}${chip('summits','Summits',all.filter(isSummit).length)}${chip('info','Info meetings',all.filter(e=>/info/i.test(e.type||'')).length)}${chip('other','Other',all.filter(e=>!isSummit(e)&&!/info/i.test(e.type||'')).length)}</div>
     ${shown.length ? `<div class="ev-grid">${shown.map(card).join('')}</div>` : `<div class="empty">Nothing coming up here.</div>`}
     <h3 class="sub-h">Your registrations · ${mine.length}</h3>
