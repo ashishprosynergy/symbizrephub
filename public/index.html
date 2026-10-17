@@ -201,6 +201,7 @@
   .ev-count span{font-size:11px;color:var(--ink-muted)}
   .decline-note{margin:-4px 0 8px;padding:7px 10px;border-radius:8px;background:var(--rust-soft);color:var(--rust);font-size:13px}
   .summit-prog{margin-bottom:14px}
+  .summit-prog.sp-wait{min-height:357px}
   .sp-row{padding:10px 0;border-top:1px solid var(--line-soft)}
   .sp-row:first-of-type{border-top:0}
   .sp-num{white-space:nowrap}
@@ -2820,7 +2821,11 @@ function vOfficeDash(){
     ${(() => {
       const counts = weeklyCounts(S.activities.filter(a => a.outcome));   // calls made, not merely booked
       // Nothing logged yet: one line, not an empty chart that loads last
-      if(!counts.some(n => n)) return (loading || loadingDetail) ? '' : `<div class="card nudge">${icon('phone',18)}<div style="flex:1">
+      // Always the same box while loading, so nothing below it jumps when it settles
+      if(!counts.some(n => n)) return (loading || loadingDetail) && !S.activities.length
+        ? `<div class="card nudge">${icon('phone',18)}<div style="flex:1"><strong>Calls logged by the reps</strong>
+            <div class="row-sub">Checking the last 8 weeks…</div></div></div>`
+        : `<div class="card nudge">${icon('phone',18)}<div style="flex:1">
         <strong>No calls logged by any rep in the last 8 weeks</strong>
         <div class="row-sub">The weekly chart and the most-active list appear here as reps log calls.</div></div></div>`;
       // Who logged the most this month, so the office sees effort, not just totals
@@ -5460,7 +5465,8 @@ function loadSummits(force){
 function summitProgressCard(){
   if(!API.live || !isOffice() || !can('summits')) return '';
   loadSummits();
-  if(!Array.isArray(summitList)) return '';
+  // Its place is kept while the summits load, so the page below doesn't jump
+  if(!Array.isArray(summitList)) return summitList && summitList.error ? '' : `<div class="card summit-prog sp-wait"><div class="trend-t">Summit planning</div>${skeleton(4)}</div>`;
   const ahead = summitList.filter(s => s.date >= TODAY_S).sort((a,b) => a.date.localeCompare(b.date)).slice(0, 4);
   if(!ahead.length) return '';
   return `<div class="card summit-prog"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
