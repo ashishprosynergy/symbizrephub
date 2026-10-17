@@ -129,7 +129,7 @@ function welcomeEmail({ name, email, password }) {
     <p style="color:#5A6455;font-size:13px;line-height:1.6;margin:16px 0 0;">
       Please change that password after you sign in. It works on a phone or tablet as well as a computer.
     </p>
-    <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network · 800-394-7970</p>
+    <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network · {{SUPPORT}}</p>
   </div></body></html>`;
 }
 function esc(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -174,7 +174,7 @@ function signInEmail({ name, url, minutes }) {
       If you didn't ask to sign in, you can ignore this — nobody can get in without the link.</p>
     <p style="color:#8A9284;font-size:11.5px;margin-top:18px;word-break:break-all;">
       Button not working? Paste this into your browser:<br>${esc(url)}</p>
-    <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network · 800-394-7970</p>
+    <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network · {{SUPPORT}}</p>
   </div></body></html>`;
 }
 
@@ -605,7 +605,7 @@ function welcomeEmail({ name, email, url, from, site }) {
       go to <a href="${esc(site)}" style="color:#2E5132">${esc(site.replace(/^https?:\/\//, ''))}</a>, tap <em>Invited? Email me a link to set up my account</em> and enter your email for a fresh one.</p>
     <p style="color:#5A6455;font-size:13px;line-height:1.6;margin:10px 0 0;">Questions? Just reply to this email and it goes to ${by}.</p>
     <p style="color:#8A9284;font-size:11.5px;margin-top:18px;word-break:break-all;">${esc(url)}</p>
-    <p style="color:#8A9284;font-size:12px;margin-top:16px;">Symbiz Network · 800-394-7970</p>
+    <p style="color:#8A9284;font-size:12px;margin-top:16px;">Symbiz Network · {{SUPPORT}}</p>
   </div></body></html>`;
 }
 
@@ -625,7 +625,7 @@ function passwordLinkEmail({ name, url, invite, hours }) {
       This link works once and expires in ${hours} hour${hours===1?'':'s'}.
       ${invite ? '' : "If you didn't ask for this, ignore it — your password has not changed."}</p>
     <p style="color:#8A9284;font-size:11.5px;margin-top:18px;word-break:break-all;">${esc(url)}</p>
-    <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network · 800-394-7970</p>
+    <p style="color:#8A9284;font-size:12px;margin-top:20px;">Symbiz Network · {{SUPPORT}}</p>
   </div></body></html>`;
 }
 

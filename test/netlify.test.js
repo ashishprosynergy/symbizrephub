@@ -1470,6 +1470,15 @@ describe('scheduled functions', () => {
   });
 });
 
+describe('emails', () => {
+  test('emails name the support contact from Settings, not the office line', async () => {
+    const reminders = require('../src/reminders');
+    assert.equal(await reminders.supportText(), 'Need help? Ashish Raj · 540-212-9403');
+    const src = require('fs').readFileSync(__dirname + '/../src/routes.js', 'utf8');
+    assert.ok(!src.includes('800-394-7970'), 'no email still carries the office number');
+  });
+});
+
 /* ═══════════ SELF-REGISTRATION BY QR CODE ═══════════ */
 describe('self-registration for summits and events', () => {
   const { handler } = require('../netlify/functions/api');

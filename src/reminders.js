@@ -88,7 +88,7 @@ function renderDigestHTML(user, items) {
       <a href="${cfg.appUrl}/?view=callsheet" style="margin-left:8px;color:#2E5132;font-size:14px;">Print a call sheet</a>
     </p>
     <p style="color:#8A9284;font-size:12px;margin-top:22px;line-height:1.5;">
-      Symbiz Network · reply to this email or call the office at 800-394-7970 if you'd rather have these keyed in for you.
+      Symbiz Network · reply to this email if you'd rather have these keyed in for you. {{SUPPORT}}
     </p>
   </div></body></html>`;
 }
@@ -140,7 +140,20 @@ function htmlToText(html) {
     .trim();
 }
 
+/* Who to ask for help, as set in Settings (support name and phone). Emails
+   carry {{SUPPORT}} and it is filled in here when they are sent, so changing
+   the contact in Settings changes every email. */
+let supportCache = null;
+async function supportText() {
+  if (!supportCache || Date.now() - supportCache.at > 300000) {
+    const { settings } = require('./db');
+    const s = await settings({ supportName: 'Ashish Raj', supportPhone: '540-212-9403' }).catch(() => ({ supportName: 'Ashish Raj', supportPhone: '540-212-9403' }));
+    supportCache = { at: Date.now(), text: `Need help? ${s.supportName} · ${s.supportPhone}` };
+  }
+  return supportCache.text;
+}
 async function sendEmail(to, subject, html, { userId, kind, replyTo, attachments, bcc } = {}) {
+  if (html && html.includes('{{SUPPORT}}')) html = html.split('{{SUPPORT}}').join(String(await supportText()).replace(/</g, '&lt;'));
   const t = mailer();
   if (!t) {
     // Be explicit: a caller that marks work as "sent" must know it wasn't.
@@ -256,5 +269,5 @@ async function runOfficeSummary({ dryRun = false } = {}) {
 
 module.exports = {
   dueForRep, runWeeklyDigest, runOverdueNudge, runOfficeSummary,
-  renderDigestHTML, renderDigestSMS, renderOfficeSummary, sendEmail, sendSMS, htmlToText,
+  renderDigestHTML, renderDigestSMS, renderOfficeSummary, sendEmail, sendSMS, htmlToText, supportText,
 };
