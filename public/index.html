@@ -158,6 +158,9 @@
   .chk-row.done .chk-title{text-decoration:line-through;color:var(--ink-faint);}
   .chk-late{color:var(--rust);font-weight:600;}
   a.rail-link{text-decoration:none;color:inherit}
+  .map-item.on{background:var(--primary-soft);outline:2px solid var(--primary);outline-offset:-2px}
+  .map-here{animation:mapHere 1.4s ease-out 2}
+  @keyframes mapHere{0%{stroke-opacity:1}100%{stroke-opacity:.15}}
   .howto{display:flex;align-items:center;gap:12px;margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;
     background:var(--surface);text-decoration:none;color:var(--ink);text-align:left}
   .howto:hover{border-color:var(--primary)}
@@ -2536,7 +2539,8 @@ function vMemberDetail(){
     <div class="card">
       ${m.email?`<div class="kv"><span class="k">Email</span><a href="mailto:${esc(m.email)}">${esc(m.email)}</a></div>`:''}
       ${m.address?`<div class="kv"><span class="k">Address</span>
-        <a href="https://maps.google.com/?q=${encodeURIComponent(m.address)}" target="_blank" rel="noopener">${esc(m.address)}</a></div>`:''}
+        <span><a href="https://maps.google.com/?q=${encodeURIComponent(m.address)}" target="_blank" rel="noopener">${esc(m.address)}</a>
+        ${isOffice() && can('members') && API.live ? ` · <a href="#" class="inline-link" onclick="event.preventDefault();showOnMap('${m.id}')">Show on map</a>` : ''}</span></div>`:''}
       ${m.lifeStage?`<div class="kv"><span class="k">Life stage</span><span>${esc(m.lifeStage)}${LIFE_STAGES[m.lifeStage]?` — ${esc(LIFE_STAGES[m.lifeStage].hint)}`:''}</span></div>`:''}
       ${m.tier||m.memberType?`<div class="kv"><span class="k">Membership level</span><span>${m.tier?`<span class="tag tier tier-${esc(m.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(m.tier)}</span>`:esc(m.memberType)}</span></div>`:''}
       <div class="kv"><span class="k">Member since</span><span>${fmt(m.memberSince||m.joined)}</span></div>
@@ -5725,7 +5729,8 @@ function vMemberMap(){
     <div class="map-tools">
       ${repPicker('mapRep', reps, ui.mapRep, 'All reps')}
       <input class="map-search" placeholder="Find a member, business, ring or town…" value="${esc(ui.mapQ||'')}"
-        oninput="ui.mapQ=this.value;clearTimeout(window.__mq);window.__mq=setTimeout(()=>drawMemberMap(false),180)">
+        oninput="ui.mapQ=this.value;clearTimeout(window.__mq);window.__mq=setTimeout(()=>mapSearchDone(false),220)"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();ui.mapQ=this.value;clearTimeout(window.__mq);mapSearchDone(true)}">
     </div>
     <div class="map-tools">
       <div class="chips" style="margin:0">${chip('mapTier','','All levels')}${Object.keys(TIER_COLOURS).map(t => chip('mapTier', t, esc(t), TIER_COLOURS[t])).join('')}</div>
@@ -5886,7 +5891,7 @@ async function drawMemberMap(fit){
   fit = fit === 'enter' ? firstTime : (firstTime || fit === true);
   buildMapPins();
   if(!mapCluster){
-    mapCluster = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 45, spiderfyOnMaxZoom: true, chunkedLoading: true,
+    mapCluster = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 45, spiderfyOnMaxZoom: true,
       iconCreateFunction: c => L.divIcon({ html: `<span>${c.getChildCount()}</span>`, className: 'map-cluster', iconSize: [36, 36] }) });
     leafletMap.addLayer(mapCluster);
   }
@@ -5909,15 +5914,64 @@ async function drawMemberMap(fit){
   mapLegend();
   mapChipCounts();
 }
-/* From the list to the pin: zoom in, open its card */
+/* From the list, the search or a member's page to their address: fly there,
+   mark the spot, open their card */
+var mapHere = null;
 function focusMapMember(id){
+  const m = mapById.get(id) || (mapData && (mapData.members || []).find(x => x.id === id));
   const mk = mapMarkers.get(id);
-  if(!mk){ toast('That address is not on the map yet'); return; }
+  if(!mk || !m || m.lat == null){
+    // Not pinned yet: Google Maps can still find the address
+    if(m && m.address){
+      openModal(`<h3>${esc(m.name)}</h3><p class="lead">${esc(m.address)}</p>
+        <div class="callout info" style="margin:0">This address isn't placed on the Rep Hub map yet. Google Maps can still find it.</div>
+        <div class="m-actions"><button class="btn" onclick="closeModal()">Close</button>
+          <a class="btn primary" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(m.address)}" target="_blank" rel="noopener" onclick="closeModal()">Open in Google Maps</a></div>`);
+    } else toast('There is no address for this member in Zoho');
+    return;
+  }
   const wrap = document.querySelector('.map-wrap');
   if(wrap && wrap.dataset.pane === 'list'){ ui.mapPane = 'map'; wrap.dataset.pane = 'map';
     document.querySelectorAll('.map-tabs .chip').forEach((c, i) => c.classList.toggle('on', i === 0));
     setTimeout(() => leafletMap.invalidateSize(), 50); }
-  mapCluster.zoomToShowLayer(mk, () => mk.openPopup());
+  document.querySelectorAll('#mapList .map-item.on').forEach(el => el.classList.remove('on'));
+  const row = document.querySelector(`#mapList .map-item[data-id="${CSS.escape(id)}"]`);
+  if(row){ row.classList.add('on'); row.scrollIntoView({ block: 'nearest' }); }
+  if(mapHere){ leafletMap.removeLayer(mapHere); mapHere = null; }
+  const mark = () => {
+    if(mapHere) leafletMap.removeLayer(mapHere);
+    mk.openPopup();
+    mapHere = L.circleMarker([m.lat, m.lng], { radius: 18, color: '#AD7E21', weight: 3, fill: false, className: 'map-here', interactive: false }).addTo(leafletMap);
+  };
+  // Pins here are drawn shapes, not icons, and the pin grouping only notices
+  // icons: when the pin is already on the map, open it directly
+  const reveal = () => { if(mk._map) return mark(); let done = false;
+    mapCluster.zoomToShowLayer(mk, () => { if(!done){ done = true; mark(); } });
+    setTimeout(() => { if(!done && mk._map){ done = true; mark(); } }, 900); };
+  const near = leafletMap.getZoom() >= 15 && leafletMap.getBounds().contains([m.lat, m.lng]);
+  if(near) reveal();
+  else { leafletMap.once('moveend', reveal); leafletMap.flyTo([m.lat, m.lng], 16, { duration: 0.8 }); }
+  // Keep the map in view on a phone
+  const slot = document.getElementById('mapSlot');
+  if(slot && slot.getBoundingClientRect().top < 0) slot.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+/** After a search: one member (or Enter) takes you to them */
+async function mapSearchDone(enter){
+  await drawMemberMap(false);
+  if(!(ui.mapQ || '').trim()) return;
+  const hits = mapShown();
+  const placed = hits.filter(m => m.lat != null);
+  if(hits.length === 1 || (enter && hits.length)) focusMapMember((placed[0] || hits[0]).id);
+}
+/** From a member's page: open the map on them */
+function showOnMap(id){
+  ui.mapRep = null; ui.mapTier = null; ui.mapRing = null; ui.mapQ = '';
+  setView('map');
+  const ready = () => { if(!leafletMap || !mapCluster || !mapData || mapData.error) return false;
+    const mk = mapMarkers.get(id); return mk ? mapCluster.hasLayer(mk) : mapMarkers.size > 0; };
+  const go = (tries) => { if(ready()){ focusMapMember(id); }
+    else if(tries < 40) setTimeout(() => go(tries + 1), 250); };
+  setTimeout(() => go(0), 300);
 }
 /** The members currently shown, as a spreadsheet: for mailings and visit planning */
 function exportMapCSV(){
