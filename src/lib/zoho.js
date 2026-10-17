@@ -97,10 +97,17 @@ function release() {
 /* ─────────── core request ─────────── */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function request(path, { method = 'GET', body, query, _attempt = 0 } = {}) {
+async function request(path, { method = 'GET', body, query, _attempt = 0, _inner = false } = {}) {
   // Anything that changes Zoho makes cached answers out of date. COQL reads
   // are POSTs too, so they are let through.
-  if (method !== 'GET' && path !== '/coql') clearCache();
+  const writing = method !== 'GET' && path !== '/coql';
+  if (writing && !_inner) {
+    await clearCache();
+    // Cleared again once the change is in Zoho, so no copy of the function
+    // can keep an answer it read while the change was being made
+    try { return await request(path, { method, body, query, _attempt, _inner: true }); }
+    finally { await clearCache(); }
+  }
   await acquire();
   try {
     const url = new URL(`${API()}${path}`);
@@ -193,7 +200,37 @@ const cache = new Map();
 // short enough that a change made directly in Zoho shows soon. Anything Rep
 // Hub writes clears it at once (see request()).
 const cacheMs = () => parseInt(process.env.ZOHO_CACHE_SECONDS ?? '120', 10) * 1000;
-function clearCache() { cache.clear(); }
+/* The same answers, shared by every running copy of the function. Opening
+   the app fires a dozen requests at once and Netlify spreads them over
+   several copies, each with an empty memory: each asked Zoho the same slow
+   questions. Now the first copy's answer is kept in the database for the
+   others (a few milliseconds to read, against seconds from Zoho). */
+const crypto = require('crypto');
+const keyOf = q => crypto.createHash('sha1').update(q).digest('hex');
+async function sharedGet(q, ttl) {
+  try {
+    const { one } = require('../db');
+    const row = await one('SELECT body, at FROM zoho_cache WHERE key = $1', [keyOf(q)]);
+    if (row && Date.now() - new Date(row.at).getTime() < ttl) return JSON.parse(row.body);
+  } catch (_) { /* no database or no table yet: ask Zoho */ }
+  return null;
+}
+function sharedPut(q, rows) {
+  try {
+    const { query } = require('../db');
+    query(`INSERT INTO zoho_cache (key, body, at) VALUES ($1, $2, now())
+      ON CONFLICT (key) DO UPDATE SET body = EXCLUDED.body, at = now()`, [keyOf(q), JSON.stringify(rows)]).catch(() => {});
+    // Now and then, drop answers nobody has asked for in an hour
+    if (Math.random() < 0.05) query("DELETE FROM zoho_cache WHERE at < now() - interval '1 hour'").catch(() => {});
+  } catch (_) {}
+}
+/** Forget every saved answer, here and for the other copies. Returns when the shared copy is gone. */
+function clearCache() {
+  cache.clear();
+  if (cacheMs() <= 0) return Promise.resolve();
+  try { return require('../db').query('DELETE FROM zoho_cache').catch(() => {}); } catch (_) { return Promise.resolve(); }
+}
+const inflight = new Map();      // the same question asked twice at once goes to Zoho once
 
 /**
  * Every row, not just the first 200.
@@ -227,15 +264,20 @@ async function coqlPaged(selectQuery) {
 
 async function coql(selectQuery) {
   const ttl = cacheMs();
-  const hit = ttl > 0 && cache.get(selectQuery);
+  if (ttl <= 0) return coqlPaged(selectQuery);
+  const hit = cache.get(selectQuery);
   if (hit && Date.now() - hit.at < ttl) return structuredClone(hit.rows);
-
-  const rows = await coqlPaged(selectQuery);
-  if (ttl > 0) {
-    if (cache.size > 300) cache.delete(cache.keys().next().value);
-    cache.set(selectQuery, { at: Date.now(), rows: structuredClone(rows) });
+  if (!inflight.has(selectQuery)) {
+    inflight.set(selectQuery, (async () => {
+      const shared = await sharedGet(selectQuery, ttl);
+      const rows = shared || await coqlPaged(selectQuery);
+      if (!shared) sharedPut(selectQuery, rows);
+      if (cache.size > 300) cache.delete(cache.keys().next().value);
+      cache.set(selectQuery, { at: Date.now(), rows: structuredClone(rows) });
+      return rows;
+    })().finally(() => inflight.delete(selectQuery)));
   }
-  return rows;
+  return structuredClone(await inflight.get(selectQuery));
 }
 
 /** Zoho accepts a maximum of 100 records per insert/update call. */

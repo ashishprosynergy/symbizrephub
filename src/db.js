@@ -265,6 +265,7 @@ CREATE TABLE IF NOT EXISTS rep_notes (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS zoho_cache (key TEXT PRIMARY KEY, body TEXT NOT NULL, at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS visit_plans (ring_id TEXT PRIMARY KEY, visit_date DATE NOT NULL, visit_time TEXT, location TEXT, notes TEXT, set_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS rep_messages (
   id          SERIAL PRIMARY KEY,
@@ -469,7 +470,9 @@ const q = {
     [t.userId, t.repName, t.date, t.hours, t.category, t.description, t.ringId || null]),
   timeFor: userId => query(
     'SELECT * FROM time_entries WHERE user_id = $1 ORDER BY entry_date DESC LIMIT 500', [userId]),
-  allTime: () => query('SELECT * FROM time_entries ORDER BY entry_date DESC LIMIT 1000'),
+  // With the rep's Zoho contact, which is how the office screens pick a rep
+  allTime: () => query(`SELECT t.*, u.zoho_owner_id AS rep_contact FROM time_entries t LEFT JOIN users u ON u.id = t.user_id
+    ORDER BY t.entry_date DESC LIMIT 1000`),
   approveTime: (id, by) => query(
     "UPDATE time_entries SET status='Approved', approved_at=now(), approved_by=$2 WHERE id = $1", [id, by]),
   markTimeSent: () => query("UPDATE time_entries SET status='Reimbursed' WHERE status='Approved'"),
@@ -511,9 +514,10 @@ const q = {
             receipt_name,receipt_type,status,created_at,approved_by,books_bill_id,books_error
      FROM expenses WHERE user_id = $1 ORDER BY entry_date DESC LIMIT 500`, [userId]),
   allExpenses: () => query(
-    `SELECT id,user_id,rep_name,entry_date,amount,category,description,ring_id,vendor,
-            receipt_name,receipt_type,status,created_at,approved_by,books_bill_id,books_error
-     FROM expenses ORDER BY entry_date DESC LIMIT 1000`),
+    `SELECT e.id,e.user_id,e.rep_name,e.entry_date,e.amount,e.category,e.description,e.ring_id,e.vendor,
+            e.receipt_name,e.receipt_type,e.status,e.created_at,e.approved_by,e.books_bill_id,e.books_error,
+            u.zoho_owner_id AS rep_contact
+     FROM expenses e LEFT JOIN users u ON u.id = e.user_id ORDER BY e.entry_date DESC LIMIT 1000`),
   // Zoho Books. Only expenses sent to accounting after Books was connected are
   // queued, so a batch already handled by hand is never billed a second time.
   queueBills: ids => ids.length ? query(

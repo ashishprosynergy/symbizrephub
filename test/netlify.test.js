@@ -1440,6 +1440,36 @@ describe('scheduled functions', () => {
   });
 });
 
+/* ═══════════ ZOHO ANSWERS SHARED BETWEEN COPIES OF THE FUNCTION ═══════════ */
+describe('zoho cache', () => {
+  const zoho = require('../src/lib/zoho');
+  test('one trip for the same question asked together, kept for other copies, and cleared by a change', async () => {
+    const was = process.env.ZOHO_CACHE_SECONDS;
+    process.env.ZOHO_CACHE_SECONDS = '60';
+    try {
+      await zoho.clearCache();
+      const q = "select id, Name from Growth_Ring_Groups where Active = true limit 200";
+      const coqlCalls = () => zohoCalls.filter(c => c.path === '/crm/v8/coql').length;
+      const before = coqlCalls();
+      const [a, b] = await Promise.all([zoho.coql(q), zoho.coql(q)]);
+      assert.equal(coqlCalls() - before, 1, 'asked together, sent once');
+      assert.deepEqual(a, b);
+      await zoho.coql(q);
+      assert.equal(coqlCalls() - before, 1, 'answered from memory');
+      await new Promise(r => setTimeout(r, 20));
+      const saved = await db.query('SELECT key FROM zoho_cache');
+      assert.equal(saved.length, 1, 'kept for the other copies');
+      await zoho.updateRecords('Growth_Ring_Groups', [{ id: 'GR9', Name: '99' }]);
+      assert.equal((await db.query('SELECT key FROM zoho_cache')).length, 0, 'a change clears the shared copy');
+      await zoho.coql(q);
+      assert.equal(coqlCalls() - before, 2, 'asked again after the change');
+    } finally {
+      process.env.ZOHO_CACHE_SECONDS = was;
+      await zoho.clearCache();
+    }
+  });
+});
+
 /* ═══════════ MANAGING THE REPS ═══════════ */
 describe('managing the reps: warnings, goals, check-ins, moving rings, visits, messages', () => {
   const { handler } = require('../netlify/functions/api');

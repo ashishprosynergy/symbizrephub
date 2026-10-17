@@ -2178,6 +2178,12 @@ function allNotifications(){
       out.push({k:'acct:'+b.id, t:`Hours and expenses ready for your final approval`,
         s:`${b.expenses} expense${b.expenses===1?'':'s'}, ${b.time} time entr${b.time===1?'y':'ies'} · sent by ${b.requestedBy||'the office'}`,
         go:()=>{ setView('approvals'); openBatchReview(b.id); }}));
+    if(can('accounting')){
+      const sub = S.timeEntries.filter(t => t.status === 'Submitted').length + S.expenses.filter(x => x.status === 'Submitted').length;
+      if(sub) out.push({k:'claims:'+sub+':'+TODAY_S, t:`${sub} hours or expense claim${sub===1?'':'s'} to approve`,
+        s:[...new Set([...S.timeEntries, ...S.expenses].filter(x => x.status === 'Submitted').map(x => splitRepName(x.repName || pname(x.repId)).name))].slice(0,3).join(', '),
+        go:()=>setView('approvals')});
+    }
     S.rings.filter(r=>r.status==='pending').forEach(r=>
       out.push({k:'pending:'+r.id, t:`${r.name} is waiting on approval`, s:`Submitted by ${pname(r.repId)}`, go:()=>setView('approvals')}));
     const od=dueItems(null).filter(a=>days(a.nextDue)<-30);
@@ -2406,7 +2412,7 @@ function vRingDetail(){
         ${mine?`<button class="btn sm primary" onclick='openLog(${JSON.stringify({ringId:r.id,who:m.name,type:"Member Call",memberId:m.id})})'>Log</button>`:''}</div></div>`;
   }).join('')||`<div class="row-sub" style="padding:9px 0">No members placed yet.</div>`;
 
-  return `<button class="back" onclick="setView(isRep()?'rings':'allrings')">← Back</button>
+  return `<button class="back" onclick="goBack(isRep()?'rings':'allrings')">← Back</button>
     <div class="section-head">
       <div><h2>${esc(r.name)}</h2><div class="sub">${f?esc(f.name):'no facilitator'} · ${r.facFreq.toLowerCase()} facilitator calls · ${r.memFreq.toLowerCase()} member calls · meets ${r.meetingRhythm.toLowerCase()}</div></div>
       <div style="text-align:right"><div class="status ${r.status}"><span class="dot"></span>${statusText(r.status)}</div>
@@ -2487,7 +2493,7 @@ function vMemberDetail(){
   const taken=mts.filter(t=>listOf(t.attended).length+listOf(t.absent).length>0);
   const att=taken.length?Math.round(taken.filter(t=>listOf(t.attended).includes(m.id)).length/taken.length*100):null;
 
-  return `<button class="back" onclick="setView(isRep()?'people':'members')">← Back</button>
+  return `<button class="back" onclick="goBack(isRep()?'people':'members')">← Back</button>
     <div class="section-head"><div><h2>${esc(m.name)}</h2>
       <div class="sub">${esc(m.business)} · ${g?esc(g.name):'no ring'}${m.memberNo?' · #'+m.memberNo:''}</div>
       <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
@@ -2527,7 +2533,7 @@ function vFacDetail(){
   const hist=S.activities.filter(a=>a.facId===f.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
   const due=S.activities.find(a=>a.facId===f.id&&a.nextDue);
   const mine=rs.some(r=>r.repId===ui.me);
-  return `<button class="back" onclick="setView(isRep()?'people':'members')">← Back</button>
+  return `<button class="back" onclick="goBack(isRep()?'people':'members')">← Back</button>
     <div class="section-head"><div><h2>${esc(f.name)}</h2><div class="sub">Facilitator · ${esc(f.business)}</div></div></div>
     <div class="card">
       <div class="kv"><span class="k">Phone</span><a href="tel:${esc(f.phone)}">${esc(f.phone)}</a></div>
@@ -2846,8 +2852,18 @@ function vApprovals(){
     ${waiting.length ? pendingRows(waiting, true) : `<div class="empty">Nothing waiting.</div>`}
     ${decided.length ? `<h3 class="sub-h">Recently decided</h3>${pendingRows(decided, false)}` : ''}
   `;
+  // Hours and expenses reps have submitted: the first thing to approve
+  const claims = can('accounting') ? [...S.timeEntries.filter(t => t.status === 'Submitted').map(t => ({ ...t, kind:'time' })),
+    ...S.expenses.filter(x => x.status === 'Submitted').map(x => ({ ...x, kind:'exp' }))].sort((a,b) => String(a.date).localeCompare(String(b.date))) : [];
+  const claimRows = claims.length ? `<h3 class="sub-h">Hours and expenses to approve · ${claims.length}</h3>
+    <div class="card" style="padding:4px 15px;margin-bottom:12px">${claims.map(c => `<div class="row">
+      <div class="row-main"><div class="row-title">${c.kind === 'exp' ? money(c.amount) : c.hours + (c.hours === 1 ? ' hour' : ' hours')} — ${esc(c.category)}</div>
+        <div class="row-sub"><strong>${esc(c.repName || pname(c.repId) || 'Unknown')}</strong> · ${fmt(c.date)}${c.kind === 'exp' && c.vendor ? ' · ' + esc(c.vendor) : ''} · ${esc(c.description)}</div></div>
+      <div class="row-actions">${c.kind === 'exp' && c.receipt ? `<button class="btn sm" onclick="viewReceipt('${c.id}')">Receipt</button>` : c.kind === 'exp' ? '<span class="tag later">no receipt</span>' : ''}
+        <button class="btn sm primary" onclick="approveEntry('${c.kind}','${c.id}')">Approve</button></div></div>`).join('')}
+      <div class="row-sub" style="padding:8px 0">Approved items go to accounting from <a href="#" class="inline-link" onclick="event.preventDefault();setView('timesheet')">Hours and expenses</a>.</div></div>` : '';
   // Hours and expenses waiting for an admin's final approval come first
-  return (can('accounting') && S.acctBatches && S.acctBatches.pending && S.acctBatches.pending.length
+  return claimRows + (can('accounting') && S.acctBatches && S.acctBatches.pending && S.acctBatches.pending.length
     ? `<h3 class="sub-h">Hours and expenses · final approval</h3>${acctStatusCallouts()}` : '')
     + vApprovalsInner(zohoAsks);
 }
@@ -4785,8 +4801,18 @@ function openDigestSettings(){
       facilitator calls long overdue, check-ins due and the coming week's ring meetings.</p>
     <div class="m-actions">
       <button class="btn" onclick="previewDigest()">Preview this week's</button>
+      <button class="btn" onclick="sendDigestToMe(this)">Send it to me now</button>
       <button class="btn ${on?'':'primary'}" onclick="setDigest(${!on})">${on?'Turn it off':'Turn it on'}</button></div>
+    <div class="row-sub" style="margin-top:8px">It goes out every Monday at 8am Eastern.</div>
     <div id="digestOut"></div>`);
+}
+async function sendDigestToMe(btn){
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try{ const r = await API.call('/manager/digest/run', { method:'POST', body: JSON.stringify({ dryRun: false, onlyMe: true }) });
+    const x = (r.results || [])[0] || {};
+    btn.textContent = x.ok ? 'Sent' : 'Not sent';
+    toast(x.ok ? 'Sent to ' + x.to + ' — check your inbox' : (x.error || x.reason || 'It could not be sent'));
+  }catch(e){ btn.disabled = false; btn.textContent = 'Send it to me now'; toast(e.message || 'Could not send'); }
 }
 async function setDigest(on){
   try{ await API.call('/manager/digest', { method:'PUT', body: JSON.stringify({ on }) });
@@ -5745,7 +5771,7 @@ function sparkline(counts){
     <circle cx="${w}" cy="${pts[pts.length-1].split(',')[1]}" r="2.6" class="sp-dot"/></svg>`;
 }
 /* Numbers count up the first time a screen opens; later redraws stay still */
-var countedFor = null;
+var countedFor = null, reloadScroll = null;
 function animateCounts(root){
   const key = screenKey();
   if(countedFor === key) return;
@@ -6374,7 +6400,18 @@ function badgeFor(id){
   if(id==='dash') return S.rings.filter(r=>r.status==='pending').length;
   return 0;
 }
-function setView(v){ goingTo(); ui.view=v; ui.ringId=null; ui.memberId=null; ui.facId=null; ui.eventId=null; ui.q=''; ui.ringHealth=null; resetPaging(); closeSheet(); render(); }
+/** Back to the screen we came from, or to `fallback` if we arrived some other way */
+function goBack(fallback){
+  const t = (ui.trail || []).pop();
+  if(!t || (t.view === ui.view && t.memberId === ui.memberId && t.ringId === ui.ringId && t.facId === ui.facId && t.eventId === ui.eventId)){
+    ui.trail = []; return setView(fallback);
+  }
+  placeByScreen[screenKey()] = window.scrollY;
+  Object.assign(ui, t);
+  scrollTopNext = true;          // returns to where that screen was scrolled
+  closeSheet(); render();
+}
+function setView(v){ goingTo(); ui.trail = []; ui.view=v; ui.ringId=null; ui.memberId=null; ui.facId=null; ui.eventId=null; ui.q=''; ui.ringHealth=null; resetPaging(); closeSheet(); render(); }
 function openRing(id){ goingTo(); ui.ringId=id; ui.view='ringDetail'; closeSheet(); render(); }
 function openMember(id){ goingTo(); ui.memberId=id; ui.view='memberDetail'; closeSheet(); render(); }
 function openFac(id){ goingTo(); ui.facId=id; ui.view='facDetail'; closeSheet(); render(); }
@@ -7372,7 +7409,7 @@ const adapt = {
       // the current viewer — hours are stored against the LOGIN id, while rep
       // scoping everywhere else uses the Zoho CONTACT id.
       id: 't_'+t.id, serverId: t.id,
-      repId: (isRep() ? ui.me : t.user_id), loginId: t.user_id, repName: t.rep_name,
+      repId: (isRep() ? ui.me : (t.rep_contact || t.user_id)), loginId: t.user_id, repName: t.rep_name,
       date: String(t.entry_date).slice(0,10), hours: Number(t.hours),
       category: t.category, description: t.description || '', status: t.status,
     };
@@ -7381,7 +7418,7 @@ const adapt = {
   expense(x){
     return {
       id: 'x_'+x.id, serverId: x.id,
-      repId: (isRep() ? ui.me : x.user_id), loginId: x.user_id, repName: x.rep_name,
+      repId: (isRep() ? ui.me : (x.rep_contact || x.user_id)), loginId: x.user_id, repName: x.rep_name,
       date: String(x.entry_date).slice(0,10), amount: Number(x.amount),
       category: x.category, description: x.description || '', status: x.status,
       vendor: x.vendor || '',
@@ -7635,6 +7672,12 @@ var placeByScreen = {};
 function screenKey(){ return [ui.view, ui.ringId, ui.memberId, ui.facId, ui.eventId].join('|'); }
 function goingTo(){
   if (ui && ui.me) placeByScreen[screenKey()] = window.scrollY;
+  // Remember where we were, so "Back" on a detail screen returns there (the
+  // map, the calendar, a ring) rather than to a fixed list
+  if (ui && ui.me && ui.view) {
+    ui.trail = (ui.trail || []).slice(-11);
+    ui.trail.push({ view: ui.view, ringId: ui.ringId, memberId: ui.memberId, facId: ui.facId, eventId: ui.eventId, summitId: ui.summitId });
+  }
   scrollTopNext = true;
   // Attendee lists start closed again on every screen you come to
   if (ui) ui.calLists = {};
@@ -7657,6 +7700,7 @@ function keepPlace(draw){
 function renderContent(){
   const el=document.getElementById('content'); if(!el) return;
   keepPlace(() => renderContentSafe(el));
+  if(reloadScroll) restoreReloadScroll();
 }
 var renderRetry = null;
 function renderContentSafe(el){
@@ -7832,8 +7876,24 @@ function fillShell(){
     signInAs(u);
     const s = JSON.parse(sessionStorage.getItem('rephub_screen') || 'null');
     if(s && s.view) Object.assign(ui, s);
+    // A reload is not a first visit: the numbers don't count up again, and
+    // the page goes back to where it was once there is enough of it
+    countedFor = screenKey();
+    const sc = JSON.parse(sessionStorage.getItem('rephub_scroll') || 'null');
+    if(sc && sc.key === screenKey() && sc.y > 0) reloadScroll = { key: sc.key, y: sc.y, until: Date.now() + 15000 };
   }catch(e){}
 })();
+try{ history.scrollRestoration = 'manual'; }catch(e){}
+addEventListener('pagehide', () => { try{ if(ui.me) sessionStorage.setItem('rephub_scroll', JSON.stringify({ key: screenKey(), y: window.scrollY })); }catch(e){} });
+/* Once the restored screen is tall enough, go back to the remembered place.
+   Stops as soon as the person scrolls themselves or opens another screen. */
+function restoreReloadScroll(){
+  const r = reloadScroll; if(!r) return;
+  if(Date.now() > r.until || screenKey() !== r.key){ reloadScroll = null; return; }
+  if(document.documentElement.scrollHeight - window.innerHeight >= r.y - 4){ window.scrollTo(0, r.y); reloadScroll = null; }
+}
+addEventListener('wheel', () => { reloadScroll = null; }, { passive: true });
+addEventListener('touchstart', () => { reloadScroll = null; }, { passive: true });
 // Drawn once the whole script has run (still before the first paint). Drawing
 // here and now reached for helpers defined further down — the calendar's,
 // the money formatter — and a refresh on those screens showed
@@ -8234,7 +8294,7 @@ function vEventDetail() {
   const yes = regs.filter(r => r.attending === 'Yes');
   const heads = regs.reduce((s, r) => s + 1 + (r.guests || 0), 0);
 
-  return `<button class="back" onclick="setView('calendar')">← Calendar</button>
+  return `<button class="back" onclick="goBack('calendar')">← Back</button>
     <div class="section-head">
       <div><h2>${esc(e.title)}</h2><div class="sub">${e.type} · ${fmt(e.date)}${e.time ? ' at ' + esc(e.time) : ''}</div></div>
       <span class="tag info">${days(e.date) < 0 ? 'past' : whenWords(e.date)}</span>

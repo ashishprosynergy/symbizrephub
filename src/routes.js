@@ -2968,7 +2968,8 @@ r.put('/manager/digest', ...mgrGuard, wrap(async (req, res) => {
 
 r.post('/manager/digest/run', ...mgrGuard, wrap(async (req, res) => {
   const dryRun = req.body?.dryRun !== false;
-  const out = await manager.runManagerDigest({ dryRun });
+  // "Send it to me now": this week's email, to the person asking only
+  const out = await manager.runManagerDigest({ dryRun, onlyUserId: req.body?.onlyMe ? req.user.id : null });
   await audit(req.user.id, 'manager.digestRun', { dryRun }, req.ip);
   res.json({ dryRun, results: out });
 }));

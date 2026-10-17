@@ -135,11 +135,11 @@ function digestHTML(snap, name, appUrl) {
  * Monday email to everyone in the office who manages reps (the `manager`
  * access) and has not switched the weekly email off.
  */
-async function runManagerDigest({ dryRun = false } = {}) {
+async function runManagerDigest({ dryRun = false, onlyUserId = null } = {}) {
   const { permsFor } = require('./access');
   const { sendEmail } = require('./reminders');
   const cfg = require('./config');
-  const office = (await q.allUsers()).filter(u => u.role !== 'rep');
+  const office = (await q.allUsers()).filter(u => u.role !== 'rep' && (!onlyUserId || u.id === onlyUserId));
   const managers = [];
   for (const u of office) if ((await permsFor(u)).manager) managers.push(u);
   if (!managers.length) return [{ sent: 0, reason: 'nobody manages reps' }];
@@ -148,7 +148,7 @@ async function runManagerDigest({ dryRun = false } = {}) {
   if (dryRun) return [{ dryRun: true, to: managers.map(m => m.email), reps: snap.reps.length, warnings }];
   const out = [];
   for (const u of managers) {
-    if (!u.digest_email) { out.push({ to: u.email, skipped: 'turned off' }); continue; }
+    if (!u.digest_email && !onlyUserId) { out.push({ to: u.email, skipped: 'turned off' }); continue; }
     const r = await sendEmail(u.email, `Your reps this week: ${warnings.length ? warnings.length + ' to look at' : 'all on track'}`,
       digestHTML(snap, u.name, cfg.appUrl), { userId: u.id, kind: 'manager-digest' });
     out.push({ to: u.email, ok: !!r.ok, error: r.error });
