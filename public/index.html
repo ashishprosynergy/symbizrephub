@@ -157,6 +157,19 @@
   .chk-title{font-size:14px;}
   .chk-row.done .chk-title{text-decoration:line-through;color:var(--ink-faint);}
   .chk-late{color:var(--rust);font-weight:600;}
+  a.rail-link{text-decoration:none;color:inherit}
+  .howto{display:flex;align-items:center;gap:12px;margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;
+    background:var(--surface);text-decoration:none;color:var(--ink);text-align:left}
+  .howto:hover{border-color:var(--primary)}
+  .howto-qr{flex:none;width:84px;height:84px;background:#fff;border-radius:8px;padding:4px;display:flex;align-items:center;justify-content:center}
+  .howto-qr img,.howto-qr canvas{width:76px!important;height:76px!important}
+  .howto-t{display:flex;flex-direction:column;gap:2px;font-size:13px;color:var(--ink-muted)}
+  .howto-t strong{color:var(--ink);font-size:14.5px}
+  .howto-go{margin-left:auto;font-size:22px;color:var(--primary)}
+  @media (max-width:640px){ .howto-qr,.howto-scan{display:none} }
+  .qr-big{display:flex;justify-content:center;margin:6px 0 12px}
+  .qr-big>div{background:#fff;padding:12px;border-radius:12px;border:1px solid var(--line);min-width:244px;min-height:244px;display:flex;align-items:center;justify-content:center}
+  .qr-link input{width:100%;font:13px ui-monospace,Menlo,monospace;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink)}
   .ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
   .ev-card{margin:0}
   .ev-summit{border-left:4px solid var(--accent)}
@@ -2185,6 +2198,12 @@ function allNotifications(){
       out.push({k:'acct:'+b.id, t:`Hours and expenses ready for your final approval`,
         s:`${b.expenses} expense${b.expenses===1?'':'s'}, ${b.time} time entr${b.time===1?'y':'ies'} · sent by ${b.requestedBy||'the office'}`,
         go:()=>{ setView('approvals'); openBatchReview(b.id); }}));
+    if(can('approvals')){
+      const waiting = (S.pending || []).filter(p => p.status === 'pending');
+      const self = waiting.filter(p => p.rep_id === 'public').length;
+      if(waiting.length) out.push({k:'asks:'+waiting.length+':'+TODAY_S, t:`${waiting.length} registration${waiting.length===1?'':'s'} or lead${waiting.length===1?'':'s'} to approve`,
+        s: self ? `${self} signed up themselves by QR code` : 'From reps', go:()=>setView('approvals')});
+    }
     if(can('accounting')){
       const sub = S.timeEntries.filter(t => t.status === 'Submitted').length + S.expenses.filter(x => x.status === 'Submitted').length;
       if(sub) out.push({k:'claims:'+sub+':'+TODAY_S, t:`${sub} hours or expense claim${sub===1?'':'s'} to approve`,
@@ -4319,6 +4338,60 @@ async function runStartCycle(){
  * Nothing here touches the CRM directly. A rep submits, the office approves,
  * and only then is anything written — so a mistyped name never reaches Zoho.
  */
+/* ══════════════ QR CODES ══════════════
+ * Drawn in the browser (qrcode.js, loaded the first time one is needed).
+ * Registration codes open /register.html for that event (or every summit
+ * coming up): people sign themselves up, and it waits on Approvals. */
+var qrLib = null;
+function ensureQR(){
+  if(window.QRCode) return Promise.resolve();
+  return qrLib || (qrLib = addScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js').catch(e => { qrLib = null; throw e; }));
+}
+/** Fill every [data-qr] on the page with its code */
+function drawQRs(root){
+  const els = [...(root || document).querySelectorAll('[data-qr]')].filter(el => !el.dataset.done);
+  if(!els.length) return;
+  ensureQR().then(() => els.forEach(el => {
+    const url = new URL(el.dataset.qr, location.origin).href, size = parseInt(el.dataset.size || '84', 10);
+    el.innerHTML = ''; new QRCode(el, { text: url, width: size, height: size, correctLevel: QRCode.CorrectLevel.M }); el.dataset.done = '1';
+  })).catch(() => {});
+}
+function regLink(eventId){ return location.origin + '/register.html' + (eventId ? '?e=' + encodeURIComponent(eventId) : '?summits=1'); }
+function openRegQR(eventId, title){
+  const link = regLink(eventId);
+  openModal(`<h3>Registration QR · ${esc(title)}</h3>
+    <p class="lead">${eventId ? 'Anyone who scans this' : 'This one code lists every summit coming up; anyone who scans it'} can register themselves on their phone.
+      Each sign-up waits on <strong>Approvals</strong> until the office approves it, then goes into Zoho. Members are matched by their email.</p>
+    <div class="qr-big"><div id="qrBox" data-qr="${esc(link)}" data-size="220"></div></div>
+    <div class="qr-link"><input value="${esc(link)}" readonly onclick="this.select()"></div>
+    <div class="m-actions">
+      <button class="btn" onclick="navigator.clipboard&&navigator.clipboard.writeText(${esc(JSON.stringify(link))}).then(()=>toast('Link copied'))">Copy link</button>
+      <button class="btn" onclick="downloadQR(${esc(JSON.stringify(title))})">Download image</button>
+      <button class="btn primary" onclick="printQRPoster(${esc(JSON.stringify(title))}, ${esc(JSON.stringify(link))})">Print poster</button></div>`);
+  drawQRs(document.getElementById('modalBody'));
+}
+function qrImage(){ const box = document.getElementById('qrBox'); const c = box && box.querySelector('canvas'); const i = box && box.querySelector('img');
+  return c ? c.toDataURL('image/png') : i ? i.src : ''; }
+function downloadQR(title){
+  const src = qrImage(); if(!src) return toast('The code is still being drawn');
+  const a = document.createElement('a'); a.href = src; a.download = 'register-' + String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '.png'; a.click();
+}
+function printQRPoster(title, link){
+  const src = qrImage(); if(!src) return toast('The code is still being drawn');
+  const ev = (S.events || []).find(e => regLink(e.id) === link) || (Array.isArray(summitList) ? summitList.find(x => regLink(x.id) === link) : null);
+  const when = ev ? fmt(ev.date) + (ev.time ? ' · ' + ev.time : '') : '';
+  const where = ev ? [ev.venue, [ev.city, ev.state].filter(Boolean).join(', ')].filter(Boolean).join(', ') : '';
+  openPrintable('Register · ' + title, `
+    <div style="text-align:center;padding:30px 10px">
+      <div style="font:600 15px Georgia,serif;color:#2E5132;letter-spacing:.06em;text-transform:uppercase">Symbiz Network</div>
+      <h1 style="font-size:34px;margin:14px 0 6px;line-height:1.15">${esc(title)}</h1>
+      ${when ? `<div style="font-size:18px;color:#3A4537">${esc(when)}</div>` : ''}${where ? `<div style="font-size:16px;color:#5A6455">${esc(where)}</div>` : ''}
+      <div style="font-size:22px;font-weight:700;margin:30px 0 14px">Scan to register</div>
+      <img src="${src}" style="width:300px;height:300px;image-rendering:pixelated;border:12px solid #fff;outline:2px solid #2E5132;border-radius:6px">
+      <div style="margin-top:16px;font-size:13px;color:#5A6455">Point your phone's camera at the code, or go to<br><strong style="font-size:14px;color:#1E2A20">${esc(link.replace(/^https?:\/\//, ''))}</strong></div>
+    </div>`);
+}
+
 /* ══════════════ EVENTS & SUMMITS (reps) ══════════════
  * Every summit and event on the portal, and a way to register members for
  * them. A registration goes to the office first; the rep sees what happened. */
@@ -4349,7 +4422,8 @@ function vEvents(){
         <div class="ev-count"><strong>${regs}</strong><span>registered</span></div></div>
       <div class="btnrow" style="margin-top:10px">
         <button class="btn sm primary" onclick="openAddRegistration('${e.id}')">Register a member</button>
-        <button class="btn sm" onclick="openEvent('${e.id}')">Who's coming</button></div></div>`; };
+        <button class="btn sm" onclick="openEvent('${e.id}')">Who's coming</button>
+        <button class="btn sm" onclick="openRegQR('${e.id}', ${esc(JSON.stringify(e.title))})" title="A code people scan to register themselves">QR</button></div></div>`; };
   return `<div class="section-head"><div><h2>Events &amp; summits</h2>
       <div class="sub">Regional and Global Summits, info meetings and other events. Register your members; the office confirms it in Zoho.</div></div></div>
     <div class="chips">${chip('all','Everything',all.length)}${chip('summits','Summits',all.filter(isSummit).length)}${chip('info','Info meetings',all.filter(e=>/info/i.test(e.type||'')).length)}${chip('other','Other',all.filter(e=>!isSummit(e)&&!/info/i.test(e.type||'')).length)}</div>
@@ -5332,7 +5406,8 @@ const summitPlace = s => [s.venue, [s.city, s.state].filter(Boolean).join(', ')]
 function vSummits(){
   const head = `<div class="section-head"><div><h2>Summits</h2>
     <div class="sub">Every Regional and Global Summit: planning for the next ones, and how past ones went.</div></div>
-    ${summitList && !summitList.error ? `<button class="btn sm" onclick="loadSummits(true)" ${summitBusy?'disabled':''}>${summitBusy?'Refreshing…':'Refresh'}</button>` : ''}</div>`;
+    <div class="btnrow" style="margin:0"><button class="btn sm" onclick="openRegQR(null, 'Upcoming summits')" title="One code for every summit coming up">Registration QR</button>
+    ${summitList && !summitList.error ? `<button class="btn sm" onclick="loadSummits(true)" ${summitBusy?'disabled':''}>${summitBusy?'Refreshing…':'Refresh'}</button>` : ''}</div></div>`;
   if(!API.live) return head + `<div class="empty">Summits need the live server.</div>`;
   loadSummits();
   if(!summitList) return head + skeleton(4);
@@ -5399,6 +5474,7 @@ function vSummitDetail(){
       <div style="min-width:0;flex:1"><h2 style="font-size:22px">${esc(s.name)}</h2>
         <div class="row-sub" style="font-size:13.5px;margin-top:4px">${fmt(s.date)}${s.time ? ' · ' + esc(s.time) : ''} · ${mapLink(summitPlace(s))}</div>
         <div class="btnrow" style="margin-top:10px">
+          ${!pastEvent ? `<button class="btn sm primary" onclick="openRegQR('${s.id}', ${esc(JSON.stringify(s.name))})">Registration QR</button>` : ''}
           ${S.events.some(e => e.id === s.id) ? `<button class="btn sm" onclick="openEvent('${s.id}')">Registrations</button>
             <button class="btn sm" onclick="printSignInSheet('${s.id}')">Sign-in sheet</button>` : ''}</div></div>
       <div class="summit-stats">
@@ -6957,6 +7033,10 @@ function shell(inner){
     ${ui.linkError?`<div class="callout rust" style="margin-top:12px;text-align:left">
       <strong>That link didn't work</strong>${esc(ui.linkError)}</div>`:''}
     <div id="setupNote"></div>
+    <a class="howto" href="/help.html" target="_blank" rel="noopener">
+      <span class="howto-qr" data-qr="/help.html" aria-hidden="true"></span>
+      <span class="howto-t"><strong>New to Rep Hub?</strong><span>Read how to use it — for reps, and for Mel and the office.<span class="howto-scan"> Or scan with your phone.</span></span></span>
+      <span class="howto-go">›</span></a>
     <p class="tag" style="margin-top:16px;font-size:12.5px">${supportLine()}</p>
     ${poweredBy()}
   </div></div>`;
@@ -7927,7 +8007,7 @@ function tabbarHTML(){
 function render(){
   const app=document.getElementById('app');
   if(setupToken){ shellFor=null; app.innerHTML=setupScreen(); return; }
-  if(!ui.me){ shellFor=null; app.innerHTML=loginScreen(); checkSetup(); mountCaptcha(); return; }
+  if(!ui.me){ shellFor=null; app.innerHTML=loginScreen(); checkSetup(); mountCaptcha(); drawQRs(app); return; }
   // Remember the screen, so a refresh comes back to it
   try{ sessionStorage.setItem('rephub_screen', JSON.stringify({view:ui.view, ringId:ui.ringId, memberId:ui.memberId, facId:ui.facId, eventId:ui.eventId})); }catch(e){}
 
@@ -7944,6 +8024,7 @@ function render(){
             <div><div class="nm">${esc(me().name)}</div><div class="rl">${me().owner?'Owner':me().role==='rep'?'Rep':me().role==='admin'?'Director':'Office'}</div></div></div>
           <div class="rail-nav" id="railNav"></div>
           <div class="rail-foot">
+            <a class="rail-link" href="/help.html${isOffice() ? '#office' : ''}" target="_blank" rel="noopener"><span class="rl-l">${icon('folder',17)}<span>How to use Rep Hub</span></span></a>
             ${API.live?`<button class="rail-link" onclick="openChangePassword()"><span class="rl-l">${icon('key',17)}<span>Change password</span></span></button>`:''}
             <button class="rail-link" onclick="logout()"><span class="rl-l">${icon('logout',17)}<span>Sign out</span></span></button>
             <div style="font-size:10.5px;color:var(--ink-faint);padding:10px 11px 0;line-height:1.5">
@@ -8457,6 +8538,7 @@ function vEventDetail() {
 
       <div class="btnrow" style="margin:12px 0">
         <button class="btn primary" onclick="${API.live?`openAddRegistration('${e.id}')`:`openReg('${e.id}')`}">Register someone</button>
+        ${API.live && days(e.date) >= 0 ? `<button class="btn" onclick="openRegQR('${e.id}', ${esc(JSON.stringify(e.title))})">Registration QR</button>` : ''}
         <button class="btn" onclick="printSignInSheet('${e.id}')">Sign-in sheet</button>
         <button class="btn" onclick="exportAttendees('${e.id}')">Export list</button>
       </div>

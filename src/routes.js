@@ -1800,6 +1800,65 @@ r.get('/pending', auth.authRequired, wrap(async (req, res) => {
   res.json(rows);
 }));
 
+/* ═══════════ SELF-REGISTRATION BY QR CODE ═══════════
+ * Anyone with the link (or the QR on a poster) can register for a summit or
+ * event on the portal. Nothing reaches Zoho on its own: it waits on the
+ * Approvals screen like a rep's registration. Only events shown on the portal,
+ * still to come, and not tests, can be registered for. */
+async function openEvents() {
+  const t = today();
+  return (await zoho.coql(queries.portalEvents())).map(fromZoho.event)
+    .filter(e => e.date && e.date >= t && !/\btest\b/i.test(e.title || ''));
+}
+/** The visitor's own address: Netlify passes it on; otherwise the first forwarded one */
+const clientIp = req => String(req.headers['x-nf-client-connection-ip'] || String(req.headers['x-forwarded-for'] || '').split(',')[0] || req.ip || '').trim();
+const publicEvent = e => ({ id: e.id, name: e.title, type: e.type, date: e.date, time: e.time || '',
+  venue: e.venue || '', city: e.city || '', state: e.state || '', format: e.format || '' });
+
+r.get('/public/events', wrap(async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=120');
+  const list = (await openEvents()).sort((a, b) => a.date.localeCompare(b.date));
+  res.json(list.filter(e => req.query.summits !== '1' || /summit/i.test(e.type || '')).map(publicEvent));
+}));
+r.get('/public/events/:id', wrap(async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=120');
+  const e = (await openEvents()).find(x => x.id === String(req.params.id));
+  if (!e) return res.status(404).json({ error: 'Registration for this event is not open. It may have taken place already.' });
+  res.json(publicEvent(e));
+}));
+r.post('/public/events/:id/register', wrap(async (req, res) => {
+  if (!(await humanCheck(req, res))) return;
+  const b = req.body || {};
+  const clean = (v, n) => String(v || '').trim().slice(0, n || 120);
+  const firstName = clean(b.firstName), lastName = clean(b.lastName), email = clean(b.email, 200).toLowerCase(), phone = clean(b.phone, 40);
+  if (!firstName || !lastName) return res.status(400).json({ error: 'Please give your first and last name' });
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && !phone) return res.status(400).json({ error: 'Please give an email address or a phone number, so we can confirm' });
+  if (((await q.recentAuditByIp(clientIp(req), 'public.registration', 60))?.c || 0) >= 15) {
+    return res.status(429).json({ error: 'Several registrations have come from here in the last hour. Please try again later, or call the office.' });
+  }
+  const e = (await openEvents()).find(x => x.id === String(req.params.id));
+  if (!e) return res.status(404).json({ error: 'Registration for this event is not open.' });
+  if (email && await q.pendingSelfRegistration(e.id, email)) {
+    return res.json({ ok: true, already: true, event: e.title });
+  }
+  // A member already in Zoho is registered as themselves, not as a new lead
+  let contactId;
+  if (email) {
+    const found = await zoho.coql(`select id from ${M.CONTACT} where Email = '${email.replace(/'/g, '')}' limit 1`).catch(() => []);
+    contactId = found[0] ? found[0].id : undefined;
+  }
+  const g = !!b.bringingGuest;
+  const payload = { eventId: e.id, contactId, firstName, lastName, name: `${firstName} ${lastName}`, email, phone,
+    business: clean(b.business), city: clean(b.city, 60), state: clean(b.state, 20),
+    registrantType: contactId ? 'Member' : 'Lead', bringingGuest: g,
+    guestFirstName: g ? clean(b.guestFirstName) : undefined, guestLastName: g ? clean(b.guestLastName) : undefined,
+    guestType: g ? (b.guestType === 'Spouse' ? 'Spouse' : 'Other Guest') : undefined, source: 'qr' };
+  const out = await q.addWriteRequest({ kind: 'registration', payload, repId: 'public', repName: 'Self-registered (QR code)',
+    summary: `${payload.name}${contactId ? ' (member)' : ''} registered for ${e.title}${g ? ' with a guest' : ''}` });
+  await audit(null, 'public.registration', { eventId: e.id, id: out[0]?.id, member: !!contactId }, clientIp(req));
+  res.status(201).json({ ok: true, event: e.title });
+}));
+
 /** A rep registers someone for an event. */
 r.post('/pending/registration', auth.authRequired, wrap(async (req, res) => {
   const b = req.body || {};

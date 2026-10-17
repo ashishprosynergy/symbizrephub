@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to use Rep Hub · Symbiz Network</title>
+<meta name="theme-color" content="#2E5132">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{ --bg:#F2F5EC; --card:#fff; --ink:#1E2A20; --muted:#5A6455; --faint:#8A9284; --line:#DCE0CE;
+         --primary:#2E5132; --primary-soft:#DDEADC; --accent:#AD7E21; --accent-soft:#F4E7C9; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#141810; --card:#1D2317; --ink:#EDEFE4; --muted:#A4AC97; --faint:#7C8472; --line:#323A2A;
+         --primary:#7FB184; --primary-soft:#243120; --accent:#D9B160; --accent-soft:#3A3021; } }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15.5px/1.6 'Work Sans',-apple-system,Segoe UI,Arial,sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:22px 16px 60px}
+  .brand{display:flex;align-items:center;gap:9px;font:600 18px 'Fraunces',Georgia,serif;color:var(--primary)}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+  .btn{display:inline-block;padding:9px 15px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:600 14px 'Work Sans',sans-serif;text-decoration:none;cursor:pointer}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+  h1{font:600 32px/1.15 'Fraunces',Georgia,serif;margin:6px 0 8px;letter-spacing:-.01em}
+  h2{font:600 24px/1.2 'Fraunces',Georgia,serif;margin:34px 0 6px}
+  h3{font-size:16.5px;margin:0 0 4px}
+  p{margin:0 0 8px}
+  .lead{color:var(--muted);font-size:16.5px;margin-bottom:16px}
+  .tabs{display:flex;gap:8px;position:sticky;top:0;background:var(--bg);padding:10px 0;z-index:5;border-bottom:1px solid var(--line);margin-bottom:6px}
+  .tabs a{flex:1;text-align:center;padding:10px;border-radius:10px;background:var(--card);border:1px solid var(--line);text-decoration:none;color:var(--ink);font-weight:600}
+  .tabs a.on{background:var(--primary);border-color:var(--primary);color:#fff}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin-top:12px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px 16px;page-break-inside:avoid}
+  .card .ic{font-size:22px;line-height:1;margin-bottom:6px}
+  .card ul{margin:6px 0 0;padding-left:18px}
+  .card li{margin:2px 0;font-size:14.5px}
+  .card p{font-size:14.5px;color:var(--muted)}
+  .steps{counter-reset:s;list-style:none;padding:0;margin:12px 0 0}
+  .steps li{counter-increment:s;position:relative;padding:10px 0 10px 46px;border-bottom:1px solid var(--line)}
+  .steps li::before{content:counter(s);position:absolute;left:0;top:10px;width:32px;height:32px;border-radius:50%;background:var(--primary-soft);color:var(--primary);font:700 16px/32px Georgia,serif;text-align:center}
+  .tip{background:var(--accent-soft);border-radius:12px;padding:12px 15px;margin-top:12px;font-size:14.5px}
+  .foot{color:var(--faint);font-size:13px;text-align:center;margin-top:36px}
+  .foot a{color:var(--primary)}
+  b{font-weight:700}
+  @media print{ .tabs,.top .btn{display:none} body{background:#fff} .card{border-color:#ccc} h2{page-break-before:always} h2#reps{page-break-before:avoid} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand"><svg width="24" height="24" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="13" cy="13" r="11"/><circle cx="13" cy="13" r="7.2"/><circle cx="13" cy="13" r="3.4"/></svg>Rep Hub</div>
+    <div><a class="btn" href="#" onclick="print();return false">Print</a> <a class="btn primary" href="/">Open Rep Hub</a></div>
+  </div>
+  <h1>How to use Rep Hub</h1>
+  <p class="lead">Rep Hub is Symbiz's tool for looking after Growth Rings: who to call, when rings meet, visits, events and summits, and hours and expenses. It works on a phone, a tablet or a computer, and everything comes from Zoho.</p>
+
+  <nav class="tabs"><a href="#reps" id="tReps" class="on">For reps</a><a href="#office" id="tOffice">For Mel &amp; the office</a></nav>
+
+  <h2 id="reps">For reps</h2>
+  <p class="lead" style="font-size:15px">Your rings, your calls and your events, in one place.</p>
+  <h3 style="margin-top:14px">Getting started</h3>
+  <ol class="steps">
+    <li>Open the email <b>"… has invited you to Rep Hub"</b> and tap <b>Choose my password</b>. No email? Go to the sign-in page and tap <b>Invited? Email me a link to set up my account</b>.</li>
+    <li>Sign in with your email and the password you chose.</li>
+    <li>Add it to your home screen so it opens like an app: Safari → Share → <b>Add to Home Screen</b>; Chrome → ⋮ → <b>Add to Home screen</b>.</li>
+  </ol>
+  <div class="grid">
+    <div class="card"><div class="ic">☀️</div><h3>Today</h3><p>Who is due a call, soonest first.</p>
+      <ul><li>Tap a name to phone them.</li><li>Tap <b>Log</b> after the call — Rep Hub books the next one for you.</li><li>No answer? Log that too; it tries again in a few days.</li></ul></div>
+    <div class="card"><div class="ic">◎</div><h3>My Rings</h3><p>Every Growth Ring you look after.</p>
+      <ul><li>Members, facilitator and when they meet.</li><li>Record a ring meeting and who came.</li><li>Start a new ring; the office approves it.</li></ul></div>
+    <div class="card"><div class="ic">👥</div><h3>People</h3><p>Your members and facilitators.</p>
+      <ul><li>Phone, email and address in one tap.</li><li>When you last spoke, and renewals coming up.</li><li>Members not yet in a ring.</li></ul></div>
+    <div class="card"><div class="ic">📅</div><h3>Calendar</h3><p>Ring meetings, your visits, events and summits — in one month view.</p>
+      <ul><li>Tap a day to see what's on.</li><li>Tap a place to open it in Maps.</li></ul></div>
+    <div class="card"><div class="ic">🚩</div><h3>Events &amp; summits</h3><p>Regional and Global Summits and info meetings.</p>
+      <ul><li><b>Register a member</b>: pick one of your members and it fills in their details.</li><li>See who's coming.</li><li>Follow each registration: waiting, in Zoho, or sent back.</li></ul></div>
+    <div class="card"><div class="ic">📍</div><h3>Visits</h3><p>Sitting in with each ring once or twice a year.</p>
+      <ul><li>Schedule a visit — search the place by name.</li><li>Afterwards, file the short <b>visit report</b>.</li></ul></div>
+    <div class="card"><div class="ic">🧾</div><h3>Hours &amp; expenses</h3><p>Paid for what you do.</p>
+      <ul><li>Log hours, or start the timer.</li><li>Add an expense and photograph the receipt.</li><li>Sent back? Read why, then <b>Fix and send again</b>.</li></ul></div>
+    <div class="card"><div class="ic">🔔</div><h3>Notifications</h3><p>The bell tells you what needs you: calls due, renewals, visits, events coming up, and anything sent back.</p></div>
+  </div>
+  <div class="tip"><b>No signal?</b> Keep working. Calls you log are kept on your phone or tablet and sent when you're back online.</div>
+
+  <h2 id="office">For Mel &amp; the office</h2>
+  <p class="lead" style="font-size:15px">How the network is doing, how each rep is doing, and what needs you.</p>
+  <div class="grid">
+    <div class="card"><div class="ic">▦</div><h3>Overview</h3><p>The network at a glance.</p>
+      <ul><li>Members, rings, retention and who joined.</li><li>Rings at risk, and why.</li><li><b>Summit planning</b>: how far each summit's checklist has got.</li></ul></div>
+    <div class="card"><div class="ic">💼</div><h3>Rep manager</h3><p>How each rep is doing.</p>
+      <ul><li><b>Needs your attention</b>: reps gone quiet, late facilitator calls, rings not meeting, check-ins due.</li><li>Sort by what matters; open any number for the detail.</li><li><b>See their screen</b> exactly as the rep sees it.</li></ul></div>
+    <div class="card"><div class="ic">🎯</div><h3>Goals &amp; check-ins</h3>
+      <ul><li>Set quarterly goals for calls, visits and new members; reps see their progress.</li><li>Keep private check-in notes with a next check-in date.</li></ul></div>
+    <div class="card"><div class="ic">✉️</div><h3>Reps</h3>
+      <ul><li><b>Invite reps</b>: a welcome email with a link to choose a password.</li><li>See who has signed in, and send again.</li><li><b>Message reps</b>: one email to all or some.</li><li><b>Move rings</b> between reps; Zoho is updated.</li></ul></div>
+    <div class="card"><div class="ic">✅</div><h3>Approvals</h3><p>Nothing reaches Zoho until you say so.</p>
+      <ul><li>Hours and expenses: <b>Approve</b> or <b>Decline</b> with a reason.</li><li>Registrations and leads from reps — and from QR sign-ups.</li><li>New Growth Rings.</li></ul></div>
+    <div class="card"><div class="ic">🚩</div><h3>Summits</h3>
+      <ul><li>Planning checklist for each summit; pick <b>Who</b> does each task — they're emailed.</li><li>Edit Symbiz's standard checklist.</li><li><b>Registration QR</b>: print it on a poster or slide; people register themselves.</li><li>Notes for next time and past summits' numbers.</li></ul></div>
+    <div class="card"><div class="ic">🗺️</div><h3>Member map &amp; visits</h3>
+      <ul><li>Every member on a map, by level or by rep.</li><li>Growth Rings layer, and the nearest rings for members not in one.</li><li><b>Visit plan</b>: rings not visited in 6 months; book a visit for a rep.</li></ul></div>
+    <div class="card"><div class="ic">📈</div><h3>Reports</h3>
+      <ul><li>Retention, who joined and who left.</li><li>Coverage by rep; export to CSV or PDF.</li><li>The <b>Monday email</b> sums up each rep's week.</li></ul></div>
+  </div>
+  <div class="tip"><b>Registering people with a QR code:</b> open a summit or event and press <b>Registration QR</b>. Print the poster or show it on screen. Each sign-up arrives on Approvals; approve it and it goes into Zoho.</div>
+
+  <div class="foot" id="foot">Rep Hub · Symbiz Network</div>
+</div>
+<script>
+fetch('/api/support').then(r => r.ok ? r.json() : null).then(s => {
+  if(s && s.phone) document.getElementById('foot').innerHTML = 'Need help? Call ' + s.name.replace(/</g,'&lt;') + ' on <a href="tel:' + s.phone.replace(/[^0-9+]/g,'') + '">' + s.phone.replace(/</g,'&lt;') + '</a> · <a href="/">Open Rep Hub</a>';
+}).catch(() => {});
+// The tab follows where you are on the page
+const tr = document.getElementById('tReps'), to = document.getElementById('tOffice'), off = document.getElementById('office');
+const mark = () => { const inOffice = off.getBoundingClientRect().top < 120; to.classList.toggle('on', inOffice); tr.classList.toggle('on', !inOffice); };
+addEventListener('scroll', mark, { passive: true }); mark();
+if(location.hash === '#office') setTimeout(() => off.scrollIntoView(), 50);
+</script>
+</body>
+</html>

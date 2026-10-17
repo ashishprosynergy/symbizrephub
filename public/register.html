@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Register · Symbiz Network</title>
+<meta name="theme-color" content="#2E5132">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{ --bg:#F2F5EC; --card:#fff; --ink:#1E2A20; --muted:#5A6455; --faint:#8A9284; --line:#DCE0CE;
+         --primary:#2E5132; --primary-soft:#DDEADC; --accent:#AD7E21; --accent-soft:#F4E7C9; --rust:#A2452C; --rust-soft:#F5DCD3; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#141810; --card:#1D2317; --ink:#EDEFE4; --muted:#A4AC97; --faint:#7C8472; --line:#323A2A;
+         --primary:#7FB184; --primary-soft:#243120; --accent:#D9B160; --accent-soft:#3A3021; --rust:#E28C6B; --rust-soft:#3C241B; } }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 'Work Sans',-apple-system,Segoe UI,Arial,sans-serif}
+  .wrap{max-width:560px;margin:0 auto;padding:22px 16px 40px}
+  .brand{display:flex;align-items:center;gap:9px;font:600 18px 'Fraunces',Georgia,serif;color:var(--primary);margin-bottom:18px}
+  h1{font:600 26px/1.2 'Fraunces',Georgia,serif;margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--muted);margin:0 0 18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+  .ev{border-left:4px solid var(--accent)}
+  .ev .t{font-weight:700;font-size:17px} .ev .m{color:var(--muted);font-size:14px}
+  .tag{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent);margin-bottom:6px}
+  label{display:block;font-weight:600;font-size:13.5px;margin:12px 0 5px}
+  input,select{width:100%;font:inherit;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink)}
+  input:focus,select:focus{outline:2px solid var(--primary);outline-offset:0;border-color:var(--primary)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .two label{margin-top:12px}
+  .check{display:flex;gap:9px;align-items:center;font-weight:500;margin-top:14px}
+  .check input{width:18px;height:18px;accent-color:var(--primary)}
+  .guest{border-left:3px solid var(--line);padding-left:12px;margin-top:6px}
+  button.go{width:100%;margin-top:18px;padding:14px;font:600 16px 'Work Sans',sans-serif;border:0;border-radius:11px;background:var(--primary);color:#fff;cursor:pointer}
+  button.go:disabled{opacity:.6}
+  .err{background:var(--rust-soft);color:var(--rust);border-radius:10px;padding:10px 12px;margin-top:12px;display:none}
+  .ok{text-align:center;padding:30px 18px}
+  .ok .tick{width:64px;height:64px;border-radius:50%;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:34px}
+  .pick{display:block;text-decoration:none;color:inherit}
+  .pick:hover .card{border-color:var(--primary)}
+  .foot{color:var(--faint);font-size:12.5px;text-align:center;margin-top:20px}
+  .foot a{color:var(--primary)}
+  .note{font-size:12.5px;color:var(--muted);margin-top:10px}
+  .grecaptcha-badge{visibility:hidden}
+  @media (max-width:420px){ .two{grid-template-columns:1fr;gap:0} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><svg width="24" height="24" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="13" cy="13" r="11"/><circle cx="13" cy="13" r="7.2"/><circle cx="13" cy="13" r="3.4"/></svg>Symbiz Network</div>
+  <div id="app"><div class="card">Loading…</div></div>
+  <div class="foot" id="foot"></div>
+</div>
+<script>
+/* Self-registration for a Symbiz summit or event, reached by QR code.
+   ?e=<event id> opens that event's form; without it, the upcoming events to
+   choose from (?summits=1 for summits only). Each registration waits for the
+   office to approve it before it goes into Zoho. */
+const $ = s => document.querySelector(s);
+const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+const params = new URLSearchParams(location.search);
+const eventId = (params.get('e') || '').replace(/[^0-9]/g, '');
+const fmt = d => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+const place = e => [e.venue, [e.city, e.state].filter(Boolean).join(', ')].filter(Boolean).join(', ');
+let captcha = { siteKey: null, type: 'v3' }, v2Widget = null;
+
+fetch('/api/support').then(r => r.ok ? r.json() : null).then(s => {
+  if(s && s.phone) $('#foot').innerHTML = `Questions? Call ${esc(s.name)} on <a href="tel:${esc(s.phone.replace(/[^0-9+]/g,''))}">${esc(s.phone)}</a>`;
+}).catch(() => {});
+
+function eventCard(e){
+  return `<div class="card ev"><span class="tag">${esc(e.type || 'Event')}</span>
+    <div class="t">${esc(e.name)}</div>
+    <div class="m">${esc(fmt(e.date))}${e.time ? ' · ' + esc(e.time) : ''}</div>
+    ${place(e) ? `<div class="m">${esc(place(e))}</div>` : ''}</div>`;
+}
+
+async function loadCaptcha(){
+  try{
+    const c = await (await fetch('/api/auth/captcha')).json();
+    captcha = { siteKey: c.siteKey || null, type: c.type || 'v3' };
+    if(!captcha.siteKey) return;
+    const s = document.createElement('script');
+    s.async = true;
+    if(captcha.type === 'v3') s.src = 'https://www.google.com/recaptcha/api.js?render=' + encodeURIComponent(captcha.siteKey);
+    else { window.__cap = () => { const el = $('#cap'); if(el) v2Widget = grecaptcha.render(el, { sitekey: captcha.siteKey }); };
+      s.src = 'https://www.google.com/recaptcha/api.js?onload=__cap&render=explicit'; }
+    document.head.appendChild(s);
+  }catch(e){}
+}
+function captchaToken(){
+  if(!captcha.siteKey || !window.grecaptcha) return Promise.resolve('');
+  if(captcha.type !== 'v3') return Promise.resolve(v2Widget !== null ? grecaptcha.getResponse(v2Widget) : '');
+  return new Promise(ok => { const t = setTimeout(() => ok(''), 4000);
+    grecaptcha.ready(() => grecaptcha.execute(captcha.siteKey, { action: 'register' }).then(x => { clearTimeout(t); ok(x); }, () => { clearTimeout(t); ok(''); })); });
+}
+
+async function showList(){
+  const summits = params.get('summits') === '1';
+  let list = [];
+  try{ list = await (await fetch('/api/public/events' + (summits ? '?summits=1' : ''))).json(); }catch(e){}
+  $('#app').innerHTML = `<h1>${summits ? 'Register for a summit' : 'Register for an event'}</h1>
+    <p class="sub">Choose the one you'd like to come to.</p>
+    ${Array.isArray(list) && list.length ? list.map(e => `<a class="pick" href="?e=${esc(e.id)}">${eventCard(e)}</a>`).join('')
+      : `<div class="card">There are no ${summits ? 'summits' : 'events'} open for registration right now.</div>`}`;
+}
+
+async function showForm(){
+  let e;
+  try{ const r = await fetch('/api/public/events/' + eventId); e = await r.json(); if(!r.ok) throw new Error(e.error || 'Not found'); }
+  catch(err){ $('#app').innerHTML = `<h1>Registration</h1><div class="card">${esc(err.message)}</div><p><a href="?">See what's coming up</a></p>`; return; }
+  document.title = 'Register · ' + e.name;
+  loadCaptcha();
+  $('#app').innerHTML = `<h1>Register</h1><p class="sub">Fill this in and the Symbiz office will confirm your place.</p>
+    ${eventCard(e)}
+    <form class="card" id="f" novalidate>
+      <div class="two"><div><label for="fn">First name</label><input id="fn" name="firstName" autocomplete="given-name" required></div>
+        <div><label for="ln">Last name</label><input id="ln" name="lastName" autocomplete="family-name" required></div></div>
+      <label for="em">Email</label><input id="em" name="email" type="email" autocomplete="email" inputmode="email">
+      <label for="ph">Phone</label><input id="ph" name="phone" type="tel" autocomplete="tel" inputmode="tel">
+      <label for="bz">Business</label><input id="bz" name="business" autocomplete="organization">
+      <div class="two"><div><label for="ct">Town</label><input id="ct" name="city" autocomplete="address-level2"></div>
+        <div><label for="st">State</label><input id="st" name="state" autocomplete="address-level1" maxlength="20" placeholder="PA"></div></div>
+      <label class="check"><input type="checkbox" name="bringingGuest" id="bg"> I'm bringing a guest</label>
+      <div class="guest" id="guest" hidden>
+        <div class="two"><div><label for="gf">Guest first name</label><input id="gf" name="guestFirstName"></div>
+          <div><label for="gl">Guest last name</label><input id="gl" name="guestLastName"></div></div>
+        <label for="gt">Who are they?</label><select id="gt" name="guestType"><option>Spouse</option><option value="Other Guest">Someone else</option></select>
+      </div>
+      <div id="cap" style="margin-top:14px"></div>
+      <div class="err" id="err"></div>
+      <button class="go" type="submit">Register</button>
+      <p class="note">We use your details only to confirm your place and to contact you about this event. Already a member? Use the email Symbiz has for you and we'll link it to your membership.</p>
+    </form>`;
+  $('#bg').onchange = ev => { $('#guest').hidden = !ev.target.checked; };
+  $('#f').onsubmit = async ev => {
+    ev.preventDefault();
+    const f = ev.target, btn = f.querySelector('button.go'), err = $('#err');
+    const data = Object.fromEntries(new FormData(f).entries());
+    data.bringingGuest = $('#bg').checked;
+    err.style.display = 'none';
+    if(!data.firstName.trim() || !data.lastName.trim()){ err.textContent = 'Please give your first and last name.'; err.style.display = 'block'; return; }
+    if(!data.email.trim() && !data.phone.trim()){ err.textContent = 'Please give an email address or a phone number, so we can confirm.'; err.style.display = 'block'; return; }
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try{
+      data.captcha = await captchaToken();
+      const r = await fetch('/api/public/events/' + eventId + '/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      const out = await r.json().catch(() => ({}));
+      if(!r.ok) throw new Error(out.error || 'That did not go through. Please try again.');
+      $('#app').innerHTML = `<div class="card ok"><div class="tick">✓</div>
+        <h1>${out.already ? "You're already on the list" : 'Thank you!'}</h1>
+        <p class="sub" style="margin:0">${out.already ? 'We already have your registration' : 'Your registration'} for <strong>${esc(e.name)}</strong> ${out.already ? 'and it is with the office.' : 'has been sent to the Symbiz office. They will confirm your place.'}</p>
+        <p class="m" style="margin-top:12px;color:var(--muted)">${esc(fmt(e.date))}${e.time ? ' · ' + esc(e.time) : ''}${place(e) ? '<br>' + esc(place(e)) : ''}</p></div>
+        <p style="text-align:center"><a href="?e=${esc(eventId)}" style="color:var(--primary)">Register someone else</a></p>`;
+      window.scrollTo(0, 0);
+    }catch(x){
+      err.textContent = x.message; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Register';
+      if(v2Widget !== null) try{ grecaptcha.reset(v2Widget); }catch(_){}
+    }
+  };
+}
+eventId ? showForm() : showList();
+</script>
+</body>
+</html>

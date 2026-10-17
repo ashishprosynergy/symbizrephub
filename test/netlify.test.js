@@ -1458,6 +1458,49 @@ describe('scheduled functions', () => {
   });
 });
 
+/* ═══════════ SELF-REGISTRATION BY QR CODE ═══════════ */
+describe('self-registration for summits and events', () => {
+  const { handler } = require('../netlify/functions/api');
+  const invoke = (method, path, { body, token, headers } = {}) => handler({
+    httpMethod: method, path: `/.netlify/functions/api${path}`,
+    rawUrl: `https://x.netlify.app/.netlify/functions/api${path}`,
+    headers: { 'content-type': 'application/json', ...(headers || {}), ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    queryStringParameters: {}, body: body ? JSON.stringify(body) : null, isBase64Encoded: false,
+  }, {});
+  const J = r => JSON.parse(r.body);
+  const soon = new Date(Date.now() + 20 * 864e5).toISOString().slice(0, 10);
+  before(() => {
+    store.Symbiz_Events = (store.Symbiz_Events || []).concat([
+      { id: '881', Name: 'TN Regional Summit', Event_Type: 'Regional Summit', Event_Date_and_Time: `${soon}T18:00:00-05:00`, Event_City: 'Nashville', Event_State: 'TN', Show_on_Portal: true },
+      { id: '882', Name: 'Test Summit QR', Event_Type: 'Regional Summit', Event_Date_and_Time: `${soon}T18:00:00-05:00`, Show_on_Portal: true },
+      { id: '883', Name: 'Old Info Mtg', Event_Type: 'Info Meeting', Event_Date_and_Time: '2025-01-10T18:00:00-05:00', Show_on_Portal: true },
+    ]);
+  });
+
+  test('anyone can see what is open, but not tests or past events', async () => {
+    const list = J(await invoke('GET', '/public/events'));
+    assert.ok(list.some(e => e.id === '881'));
+    assert.ok(!list.some(e => e.id === '882' || e.id === '883'));
+    assert.equal(J(await invoke('GET', '/public/events/881')).name, 'TN Regional Summit');
+    assert.equal((await invoke('GET', '/public/events/883')).statusCode, 404);
+  });
+
+  test('a sign-up waits on Approvals; the same person twice is one request; names and a contact are needed', async () => {
+    assert.equal((await invoke('POST', '/public/events/881/register', { body: { firstName: 'Ann' } })).statusCode, 400);
+    assert.equal((await invoke('POST', '/public/events/881/register', { body: { firstName: 'Ann', lastName: 'Lee' } })).statusCode, 400, 'email or phone needed');
+    const body = { firstName: 'Ann', lastName: 'Lee', email: 'ann.qr@example.com', business: 'Lee Farms', bringingGuest: true, guestFirstName: 'Sam', guestLastName: 'Lee', guestType: 'Spouse' };
+    const r = await invoke('POST', '/public/events/881/register', { body, headers: { 'x-nf-client-connection-ip': '9.9.9.9' } });
+    assert.equal(r.statusCode, 201, r.body);
+    const again = J(await invoke('POST', '/public/events/881/register', { body, headers: { 'x-nf-client-connection-ip': '9.9.9.9' } }));
+    assert.equal(again.already, true);
+    const rows = (await db.query("SELECT * FROM pending_writes WHERE rep_id = 'public'")).filter(p => (typeof p.payload === 'string' ? JSON.parse(p.payload) : p.payload).email === 'ann.qr@example.com');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].status, 'pending');
+    assert.match(rows[0].summary, /Ann Lee.*TN Regional Summit.*guest/);
+    assert.equal((await invoke('POST', '/public/events/882/register', { body })).statusCode, 404, 'tests cannot be registered for');
+  });
+});
+
 /* ═══════════ ZOHO ANSWERS SHARED BETWEEN COPIES OF THE FUNCTION ═══════════ */
 describe('zoho cache', () => {
   const zoho = require('../src/lib/zoho');

@@ -370,6 +370,14 @@ const q = {
 
   audit:      (userId, action, detail, ip) => query('INSERT INTO audit (user_id,action,detail,ip) VALUES ($1,$2,$3,$4)', [userId, action, detail, ip]),
   recentAudit: limit => query('SELECT * FROM audit ORDER BY created_at DESC LIMIT $1', [limit]),
+  /** How often one internet address did something lately (public forms) */
+  recentAuditByIp: (ip, action, minutes) => one(
+    'SELECT count(*)::int AS c FROM audit WHERE ip = $1 AND action = $2 AND created_at > $3',
+    [ip || '', action, new Date(Date.now() - minutes * 60000).toISOString()]),
+  /** A self-registration already waiting for this person and event */
+  pendingSelfRegistration: (eventId, email) => one(
+    "SELECT id FROM pending_writes WHERE kind = 'registration' AND status = 'pending' AND rep_id = 'public' AND payload->>'eventId' = $1 AND lower(payload->>'email') = lower($2)",
+    [eventId, email]),
   recentAuditCount: (userId, action, minutes) => one(
     'SELECT count(*)::int AS c FROM audit WHERE user_id = $1 AND action = $2 AND created_at > $3',
     [userId, action, new Date(Date.now() - minutes * 60000).toISOString()]),

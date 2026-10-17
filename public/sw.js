@@ -8,7 +8,7 @@
  *   - fonts and map libraries: saved copy first, refreshed in the background
  *   - the API: never cached here (the app keeps its own data)
  */
-const VERSION = 'rephub-v1';
+const VERSION = 'rephub-v2';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', e => {
@@ -26,6 +26,9 @@ self.addEventListener('fetch', e => {
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/.netlify/')) return;   // live data only
 
   // The app itself: always the newest when online, the saved copy when not
+  // Separate pages (the how-to guide, event sign-up) are not the app: never
+  // saved as its offline copy
+  if (req.mode === 'navigate' && /\.html$/.test(url.pathname) && url.pathname !== '/index.html') return;
   if (req.mode === 'navigate') {
     e.respondWith(fetch(req).then(res => {
       const copy = res.clone();
