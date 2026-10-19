@@ -150,7 +150,7 @@ async function showForm(){
       if(!r.ok) throw new Error(out.error || 'That did not go through. Please try again.');
       $('#app').innerHTML = `<div class="card ok"><div class="tick">✓</div>
         <h1>${out.already ? "You're already on the list" : 'Thank you!'}</h1>
-        <p class="sub" style="margin:0">${out.already ? 'We already have your registration' : 'Your registration'} for <strong>${esc(e.name)}</strong> ${out.already ? 'and it is with the office.' : 'has been sent to the Symbiz office. They will confirm your place.'}</p>
+        <p class="sub" style="margin:0">${out.already ? 'You are already registered' : 'Your registration'} for <strong>${esc(e.name)}</strong>${out.already ? '. There is no need to register again; if something has changed, call the office.' : ' has been sent to the Symbiz office. They will confirm your place.'}</p>
         <p class="m" style="margin-top:12px;color:var(--muted)">${esc(fmt(e.date))}${e.time ? ' · ' + esc(e.time) : ''}${place(e) ? '<br>' + esc(place(e)) : ''}</p></div>
         <p style="text-align:center"><a href="?e=${esc(eventId)}" style="color:var(--primary)">Register someone else</a></p>`;
       window.scrollTo(0, 0);

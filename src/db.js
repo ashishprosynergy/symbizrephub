@@ -568,6 +568,10 @@ const q = {
   allWriteRequests: () => query(
     "SELECT * FROM pending_writes ORDER BY (status='pending') DESC, created_at DESC LIMIT 300"),
   oneWriteRequest: id => one('SELECT * FROM pending_writes WHERE id = $1', [id]),
+  /** Registrations still waiting on the office, for one event */
+  pendingRegistrationsFor: eventId => query(
+    "SELECT id, payload, summary, rep_name, created_at FROM pending_writes WHERE kind = 'registration' AND status = 'pending' AND payload->>'eventId' = $1",
+    [String(eventId)]),
   markWriteRequest: (id, status, by, extra = {}) => query(
     `UPDATE pending_writes SET status=$2, decided_at=now(), decided_by=$3,
             zoho_id=COALESCE($4,zoho_id), error=$5, note=COALESCE($6,note)

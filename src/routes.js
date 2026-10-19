@@ -1813,6 +1813,58 @@ r.get('/pending', auth.authRequired, wrap(async (req, res) => {
   res.json(rows);
 }));
 
+/* ═══════════ MEMBERS OVER 60 DAYS IN A/R (Mel) ═══════════
+ * Unpaid invoices more than 60 days past due, from Zoho Books, matched to
+ * the member (Books customers carry the member's CRM name, "Name #1234")
+ * and through their ring to the rep, who calls to find out where the
+ * membership stands. Reps get only their own members. */
+let arCache = null;          // { at, list }
+const memberNo = n => { const m = String(n || '').match(/#\s*(\d+)/); return m ? m[1].replace(/^0+/, '') : null; };
+async function arOver(days) {
+  if (arCache && Date.now() - arCache.at < 10 * 60 * 1000 && arCache.days === days) return arCache.list;
+  const [invoices, links, ringRows] = await Promise.all([
+    books.overdueInvoices(), zoho.coql(queries.allGroupMembers()), zoho.coql(queries.ringsForRep(null)),
+  ]);
+  const rings = new Map(ringRows.map(fromZoho.ring).map(r => [r.id, r]));
+  // Member number -> the contact and their rings
+  const byNo = new Map(), byName = new Map();
+  links.forEach(l => {
+    const c = l.Members, g = l.Growth_Ring_Groups; if (!c || !c.id) return;
+    const k = memberNo(c.name);
+    const e = (k && byNo.get(k)) || byName.get(normName(c.name)) || { contactId: c.id, name: c.name, rings: [] };
+    if (g && rings.has(g.id) && !e.rings.some(x => x.id === g.id)) e.rings.push(rings.get(g.id));
+    if (k) byNo.set(k, e); byName.set(normName(c.name), e);
+  });
+  const t = today(), cutoff = addDays(t, -days), by = new Map();
+  invoices.filter(i => i.balance > 0 && i.due && i.due <= cutoff && !/\btest\b/i.test(i.customer || '')).forEach(i => {
+    if (!by.has(i.customer)) by.set(i.customer, { customer: i.customer, invoices: [], balance: 0 });
+    const e = by.get(i.customer);
+    e.invoices.push({ number: i.number, date: i.date, due: i.due, balance: i.balance, days: -daysUntil(i.due) });
+    e.balance += i.balance;
+  });
+  const list = [...by.values()].map(e => {
+    const m = byNo.get(memberNo(e.customer)) || byName.get(normName(e.customer)) || null;
+    const ring = m && m.rings[0];
+    return { name: e.customer, contactId: m ? m.contactId : null, balance: Math.round(e.balance * 100) / 100,
+      days: Math.max(...e.invoices.map(x => x.days)), invoices: e.invoices.sort((a, b) => a.due.localeCompare(b.due)),
+      rings: m ? m.rings.map(r => r.name) : [], repId: ring ? ring.repZohoId : null, repName: ring ? ring.repName : null,
+      repIds: m ? [...new Set(m.rings.map(r => r.repZohoId).filter(Boolean))] : [] };
+  }).sort((a, b) => b.days - a.days || b.balance - a.balance);
+  arCache = { at: Date.now(), days, list };
+  return list;
+}
+r.get('/members/ar', auth.authRequired, wrap(async (req, res) => {
+  const days = Math.max(1, Math.min(365, parseInt(req.query.days || '60', 10) || 60));
+  if (!(await books.configured())) return res.json({ connected: false, days, members: [] });
+  if (req.query.fresh === '1' || req.headers['x-fresh']) arCache = null;
+  let list;
+  try { list = await arOver(days); }
+  catch (e) { return res.json({ connected: true, days, error: e.message, members: [] }); }
+  if (req.user.role === 'rep') list = list.filter(m => req.user.zoho_owner_id && m.repIds.includes(req.user.zoho_owner_id));
+  else if (!req.user.perms || !(req.user.perms.members || req.user.perms.manager)) return res.status(403).json({ error: 'Your account does not have access to members.' });
+  res.json({ connected: true, days, at: arCache ? new Date(arCache.at).toISOString() : null, members: list });
+}));
+
 /* ═══════════ SELF-REGISTRATION BY QR CODE ═══════════
  * Anyone with the link (or the QR on a poster) can register for a summit or
  * event on the portal. Nothing reaches Zoho on its own: it waits on the
@@ -1854,6 +1906,12 @@ r.post('/public/events/:id/register', wrap(async (req, res) => {
   if (email && await q.pendingSelfRegistration(e.id, email)) {
     return res.json({ ok: true, already: true, event: e.title });
   }
+  const dupes = await registrationDuplicates(e.id, { email, phone, name: `${firstName} ${lastName}` });
+  if (dupes.some(d => d.where === 'zoho' && (d.why.includes('same email') || d.why.includes('same phone')))) {
+    // Their place is already booked: nothing new for the office to approve
+    await audit(null, 'public.registration.duplicate', { eventId: e.id }, clientIp(req));
+    return res.json({ ok: true, already: true, event: e.title });
+  }
   // A member already in Zoho is registered as themselves, not as a new lead
   let contactId;
   if (email) {
@@ -1865,12 +1923,49 @@ r.post('/public/events/:id/register', wrap(async (req, res) => {
     business: clean(b.business), city: clean(b.city, 60), state: clean(b.state, 20),
     registrantType: contactId ? 'Member' : 'Lead', bringingGuest: g,
     guestFirstName: g ? clean(b.guestFirstName) : undefined, guestLastName: g ? clean(b.guestLastName) : undefined,
-    guestType: g ? (b.guestType === 'Spouse' ? 'Spouse' : 'Other Guest') : undefined, source: 'qr' };
+    guestType: g ? (b.guestType === 'Spouse' ? 'Spouse' : 'Other Guest') : undefined, source: 'qr', eventName: e.title,
+    duplicate: dupes.length ? dupes : undefined };
   const out = await q.addWriteRequest({ kind: 'registration', payload, repId: 'public', repName: 'Self-registered (QR code)',
-    summary: `${payload.name}${contactId ? ' (member)' : ''} registered for ${e.title}${g ? ' with a guest' : ''}` });
+    summary: `${payload.name}${contactId ? ' (member)' : ''} registered for ${e.title}${g ? ' with a guest' : ''}${dupes.length ? ' — possible duplicate' : ''}` });
   await audit(null, 'public.registration', { eventId: e.id, id: out[0]?.id, member: !!contactId }, clientIp(req));
   res.status(201).json({ ok: true, event: e.title });
 }));
+
+/* ── Is this person already registered? ──
+ * Checked against the event's registrations in Zoho and the requests still
+ * waiting on Approvals: the same member, email, phone or name counts. */
+const normName = v => String(v || '').replace(/#\s*\d+/g, '').replace(/[^a-z ]/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+const normPhone = v => String(v || '').replace(/\D/g, '').slice(-10);
+function samePerson(a, b) {
+  const why = [];
+  if (a.contactId && b.contactId && a.contactId === b.contactId) why.push('same member');
+  if (a.email && b.email && a.email.toLowerCase() === b.email.toLowerCase()) why.push('same email');
+  if (normPhone(a.phone).length === 10 && normPhone(a.phone) === normPhone(b.phone)) why.push('same phone');
+  if (normName(a.name) && normName(a.name) === normName(b.name)) why.push('same name');
+  return why;
+}
+async function registrationDuplicates(eventId, p, { exceptPendingId } = {}) {
+  const me = { contactId: p.contactId || null, email: p.email || '', phone: p.phone || '',
+    name: p.name || [p.firstName, p.lastName].filter(Boolean).join(' ') };
+  const [regs, waiting] = await Promise.all([
+    zoho.coql(queries.registrationsFor(eventId)).catch(() => []),
+    q.pendingRegistrationsFor(eventId).catch(() => []),
+  ]);
+  const inZoho = regs.filter(z => !/cancel/i.test(z.Registration_Status || '')).map(z => {
+    const them = { contactId: z.Registrant_Name?.id || null, email: z.Guest_Email || '', phone: z.Phone || '',
+      name: z.Registrant_Name?.name || z.Registrant_Name1 || '' };
+    const why = samePerson(me, them);
+    return why.length ? { where: 'zoho', id: z.id, name: them.name, date: z.Registration_Date || null, status: z.Registration_Status || '', why } : null;
+  }).filter(Boolean);
+  const pending = waiting.filter(w => String(w.id) !== String(exceptPendingId || '')).map(w => {
+    const wp = typeof w.payload === 'string' ? JSON.parse(w.payload) : w.payload;
+    const why = samePerson(me, { contactId: wp.contactId, email: wp.email, phone: wp.phone, name: wp.name || [wp.firstName, wp.lastName].join(' ') });
+    return why.length ? { where: 'pending', id: w.id, name: wp.name, by: w.rep_name, date: String(w.created_at || '').slice(0, 10), why } : null;
+  }).filter(Boolean);
+  return [...inZoho, ...pending];
+}
+const dupText = d => d.where === 'zoho' ? `already registered in Zoho as ${d.name}${d.date ? ' (' + d.date + ')' : ''}`
+  : `already waiting on Approvals${d.by ? ', sent by ' + d.by : ''}`;
 
 /** A rep registers someone for an event. */
 r.post('/pending/registration', auth.authRequired, wrap(async (req, res) => {
@@ -1880,10 +1975,17 @@ r.post('/pending/registration', auth.authRequired, wrap(async (req, res) => {
 
   const event = await zoho.getRecord(M.EVENT, b.eventId).catch(() => null);
   const eventName = event ? event.Name : 'an event';
+  // Already registered, or already asked for? Say so first; the rep can still send it
+  const dupes = await registrationDuplicates(b.eventId, b);
+  if (dupes.length && !b.confirmDuplicate) {
+    return res.status(409).json({ error: `${b.name || 'This person'} is ${dupText(dupes[0])}.`, duplicate: dupes });
+  }
+  const payload = { ...b, eventName, duplicate: dupes.length ? dupes : undefined, source: 'rep' };
+  delete payload.confirmDuplicate;
 
   const out = await q.addWriteRequest({
     kind: 'registration',
-    payload: b,
+    payload,
     repId: req.user.id,
     repName: req.user.name,
     repZohoId: req.user.zoho_owner_id,
@@ -1943,6 +2045,10 @@ r.post('/pending/:id/approve', auth.authRequired, auth.requireOffice, access.req
     let zohoId = null;
 
     if (row.kind === 'registration') {
+      const dupes = (await registrationDuplicates(p.eventId, p, { exceptPendingId: row.id })).filter(d => d.where === 'zoho');
+      if (dupes.length && !req.body?.confirmDuplicate) {
+        return res.status(409).json({ error: `${p.name || 'This person'} is ${dupText(dupes[0])}. Approve anyway, or send it back.`, duplicate: dupes });
+      }
       const out = await zoho.insertRecords(M.REGISTRATION, [toZoho.registration(p)]);
       zohoId = out[0]?.details?.id;
 

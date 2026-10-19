@@ -199,6 +199,16 @@
   .ev-count{text-align:center;flex:none}
   .ev-count strong{display:block;font:600 22px/1 var(--serif,Georgia,serif)}
   .ev-count span{font-size:11px;color:var(--ink-muted)}
+  .ar-card{border-left:4px solid var(--rust);margin-bottom:14px}
+  .ar-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+  .ar-group{padding:12px 15px;margin-bottom:12px}
+  .ar-row{align-items:flex-start}
+  .pend-row{align-items:flex-start}
+  .pend-more{margin-top:6px}
+  .pend-more summary{cursor:pointer;font-size:12.5px;color:var(--primary);font-weight:600}
+  .pend-details{margin-top:6px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);max-width:560px}
+  .pend-details .kv{font-size:13px}
+  .dup-note{margin-top:6px;padding:7px 10px;border-radius:8px;background:var(--rust-soft);color:var(--rust);font-size:12.5px}
   .decline-note{margin:-4px 0 8px;padding:7px 10px;border-radius:8px;background:var(--rust-soft);color:var(--rust);font-size:13px}
   .summit-prog{margin-bottom:14px}
   .summit-prog.sp-wait{min-height:357px}
@@ -1285,7 +1295,7 @@ const API = {
   askRegistration(d){ return this.call('/pending/registration',{method:'POST',body:JSON.stringify(d)}); },
   askCancellation(d){ return this.call('/pending/cancellation',{method:'POST',body:JSON.stringify(d)}); },
   askLead(d){ return this.call('/pending/lead',{method:'POST',body:JSON.stringify(d)}); },
-  approvePending(id){ return this.call('/pending/'+id+'/approve',{method:'POST'}); },
+  approvePending(id, confirmDuplicate){ return this.call('/pending/'+id+'/approve',{method:'POST',body:JSON.stringify({ confirmDuplicate: !!confirmDuplicate })}); },
   rejectPending(id,reason){ return this.call('/pending/'+id+'/reject',{method:'POST',body:JSON.stringify({reason})}); },
   membersNoRing(){ return this.call('/members/no-ring'); },
   createRing(d){ return this.call('/rings',{method:'POST',body:JSON.stringify(d)}); },
@@ -1744,7 +1754,7 @@ function can(cap){
   return !!m.perms[cap];
 }
 /* Which switch each office screen sits behind (Overview is always there) */
-const VIEW_CAP = { events:'calendar', manager:'manager', approvals:'approvals', calendar:'calendar', members:'members', map:'members', summits:'summits', summitDetail:'summits', allrings:'rings',
+const VIEW_CAP = { ar:'members', events:'calendar', manager:'manager', approvals:'approvals', calendar:'calendar', members:'members', map:'members', summits:'summits', summitDetail:'summits', allrings:'rings',
   visits:'visits', unaffiliated:'unaffiliated', reports:'reports', coverage:'reports', insights:'reports', team:'team', repAccount:'team',
   reminders:'reminders', timesheet:'accounting', checks:'system' };
 function canView(v){
@@ -1993,7 +2003,7 @@ const ICON_PATHS = {
 };
 const VIEW_ICONS = { today:'home', dash:'grid', rings:'ring', allrings:'ring', people:'users', members:'users',
   calendar:'calendar', timesheet:'clock', resources:'folder', callsheet:'printer', manager:'briefcase',
-  approvals:'check', events:'flag', visits:'pin', unaffiliated:'userplus', reports:'chart', coverage:'map', insights:'trend',
+  approvals:'check', ar:'receipt', events:'flag', visits:'pin', unaffiliated:'userplus', reports:'chart', coverage:'map', insights:'trend',
   progress:'trend', team:'user', reminders:'bell', settings:'sliders', checks:'pulse', requests:'inbox', access:'shield', map:'pin', summits:'flag' };
 function icon(name, size){
   const p = ICON_PATHS[VIEW_ICONS[name] || name] || ICON_PATHS.grid;
@@ -2360,6 +2370,7 @@ function vToday(){
   return `${announceBanner()}
     <div class="hello"><h2>${greeting()}</h2><div class="sub">${todayLong()}</div></div>
     ${myGoalCard()}
+    ${arCard()}
     ${welcomed ? '' : `<div class="callout info"><strong>Welcome to Rep Hub</strong>
       This shows the Growth Rings you look after, who is due a call, and the forms you need.
       Tap a name to phone them, then log the call so the next one gets scheduled for you.
@@ -2840,6 +2851,7 @@ function vOfficeDash(){
             <div class="bar"><span style="width:${Math.round(n/most*100)}%"></span></div></div>
             <strong class="leader-n">${n}</strong></div>`).join('')}</div>` : ''}</div>`;
     })()}
+    ${arCard()}
     ${summitProgressCard()}
     ${(() => {
       const rated = rings.map(r=>({r, h:ringHealth(r)})).filter(x=>x.h!==null);
@@ -4479,6 +4491,66 @@ function printQRPoster(title, link){
     </div>`);
 }
 
+/* ══════════════ A/R OVER 60 DAYS (Mel) ══════════════
+ * Members with an invoice more than 60 days past due, from Zoho Books. The
+ * rep calls to find out where the membership stands. Reps see their own. */
+var arData = null, arBusy = false;
+function loadAR(force){
+  if(arBusy || (arData && !force) || !API.live || !(isRep() || can('members') || can('manager'))) return;
+  arBusy = true;
+  API.call('/members/ar' + (force ? '?fresh=1' : '')).then(v => { arData = v; }).catch(e => { arData = { error: e.message, members: [] }; })
+    .finally(() => { arBusy = false; if(['ar','today','dash'].includes(ui.view)) renderContent(); });
+}
+const arMember = a => a.contactId ? member(a.contactId) : null;
+function arCard(){
+  if(!API.live || !(isRep() || can('members') || can('manager'))) return '';
+  loadAR();
+  if(!arData || arData.error || arData.connected === false || !arData.members.length) return '';
+  const list = arData.members, total = list.reduce((s, a) => s + a.balance, 0);
+  return `<div class="card ar-card clicky" onclick="setView('ar')">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <div><div class="trend-t" style="margin:0">${isRep() ? 'Your members' : 'Members'} over 60 days in A/R · ${list.length}</div>
+        <div class="row-sub">${money(total)} unpaid${isRep() ? ' — a call to each to see where their membership stands' : ' across ' + new Set(list.map(a => a.repId || '')).size + ' rep' + (new Set(list.map(a => a.repId || '')).size === 1 ? '' : 's')}</div></div>
+      <span class="tr-go">›</span></div>
+    <div class="ar-chips">${list.slice(0, 4).map(a => `<span class="tag overdue">${esc(splitRepName(a.name).name)} · ${a.days}d</span>`).join('')}${list.length > 4 ? `<span class="row-sub">and ${list.length - 4} more</span>` : ''}</div></div>`;
+}
+function vAR(){
+  const head = `<div class="section-head"><div><h2>A/R over 60 days</h2>
+      <div class="sub">${isRep() ? 'Your members' : 'Members'} with an invoice more than 60 days past due in Zoho Books. ${isRep() ? 'Reach out to find out where their membership stands, then log the call.' : 'Each rep reaches out to find out where the membership stands.'}</div></div>
+    ${arData && !arData.error ? `<button class="btn sm" onclick="loadAR(true)" ${arBusy ? 'disabled' : ''}>${arBusy ? 'Refreshing…' : 'Refresh'}</button>` : ''}</div>`;
+  if(!API.live) return head + `<div class="empty">This needs the live server.</div>`;
+  loadAR();
+  if(!arData) return head + skeleton(5);
+  if(arData.connected === false) return head + `<div class="callout info"><strong>Zoho Books isn't connected yet</strong>
+    The list comes from unpaid invoices in Zoho Books. ${can('books') ? 'Connect it in Settings → Zoho Books.' : 'Ask the office to connect it in Settings.'}</div>`;
+  if(arData.error) return head + `<div class="callout rust"><strong>Could not read Zoho Books</strong>${esc(arData.error)}</div>`;
+  const list = arData.members;
+  if(!list.length) return head + `<div class="empty">Nobody is more than 60 days behind. 🎉</div>`;
+  const row = a => { const m = arMember(a), phone = m ? (m.phone || m.mobile) : '';
+    return `<div class="row ar-row"><div class="row-main">
+        <div class="row-title">${esc(a.name)} ${a.days >= 120 ? `<span class="tag overdue">${a.days} days</span>` : `<span class="tag soon">${a.days} days</span>`}</div>
+        <div class="row-sub">${money(a.balance)} unpaid · ${a.invoices.length} invoice${a.invoices.length === 1 ? '' : 's'} (${a.invoices.map(i => esc(i.number) + ' due ' + fmtShort(i.due)).join(', ')})${a.rings.length ? ' · ring ' + esc(a.rings.join(', ')) : ' · not in a ring'}</div></div>
+      <div class="row-actions">
+        ${phone ? `<a class="btn sm" href="${telHref(phone)}">Call</a>` : ''}
+        ${m ? `<button class="btn sm primary" onclick='openLog(${JSON.stringify({ ringId: m.ringId, who: m.name, type: "Member Call", memberId: m.id })})'>Log a call</button>
+          <button class="btn sm" onclick="openMember('${m.id}')">Open</button>` : ''}</div></div>`; };
+  const total = list.reduce((s, a) => s + a.balance, 0);
+  if(isRep()) return head + `<div class="stats"><div class="stat"><div class="n" style="color:var(--rust)">${list.length}</div><div class="l">members</div></div>
+      <div class="stat"><div class="n">${money(total)}</div><div class="l">unpaid</div></div></div>
+    <div class="card" style="padding:4px 15px">${list.map(row).join('')}</div>`;
+  // The office: one group per rep
+  const by = new Map(); list.forEach(a => { const k = a.repId || ''; if(!by.has(k)) by.set(k, []); by.get(k).push(a); });
+  const groups = [...by.entries()].sort((a, b) => b[1].length - a[1].length);
+  return head + `<div class="stats"><div class="stat"><div class="n" style="color:var(--rust)">${list.length}</div><div class="l">members</div></div>
+      <div class="stat"><div class="n">${money(total)}</div><div class="l">unpaid</div></div>
+      <div class="stat"><div class="n">${groups.filter(g => g[0]).length}</div><div class="l">reps with members to call</div></div></div>
+    ${groups.map(([rid, items]) => `<div class="card ar-group"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <div class="row-title">${rid ? esc(splitRepName(items[0].repName || pname(rid)).name) : 'Not in a Growth Ring (no rep)'} <span class="tag later">${items.length}</span></div>
+        <div class="row-sub">${money(items.reduce((s, a) => s + a.balance, 0))}
+          ${rid && can('manager') ? ` · <a href="#" class="inline-link" onclick="event.preventDefault();openMessageReps(['${esc(rid)}'])">Email this rep</a>` : ''}</div></div>
+      ${items.map(row).join('')}</div>`).join('')}`;
+}
+
 /* ══════════════ EVENTS & SUMMITS (reps) ══════════════
  * Every summit and event on the portal, and a way to register members for
  * them. A registration goes to the office first; the rep sees what happened. */
@@ -4606,8 +4678,10 @@ async function submitRegistration(ev, eventId){
   ev.preventDefault();
   const f=ev.target.elements, err=document.getElementById('regErr');
   const g = f.namedItem('bringingGuest').checked;
+  const confirmDuplicate = ev.target.dataset.confirmDup === '1';
   try{
     await API.askRegistration({
+      confirmDuplicate,
       eventId, contactId: f.namedItem('contactId') ? f.namedItem('contactId').value || undefined : undefined,
       firstName:f.namedItem('firstName').value,
       lastName:f.namedItem('lastName').value,
@@ -4629,7 +4703,16 @@ async function submitRegistration(ev, eventId){
     closeModal();
     toast('Sent to the office for approval');
     S.pending = await API.pending(); save(); render();
-  }catch(e){ err.style.display='block'; err.textContent=e.message||'Could not send that'; }
+  }catch(e){
+    err.style.display='block';
+    if(e.data && e.data.duplicate){
+      // Already registered or already asked for: say so, and let them decide
+      err.innerHTML = `<strong>Looks like a duplicate.</strong> ${esc(e.message)}
+        <div class="row-sub" style="margin-top:4px">${e.data.duplicate.map(d => esc((d.name || '') + ' — ' + d.why.join(', '))).join('<br>')}</div>`;
+      ev.target.dataset.confirmDup = '1';
+      const b = ev.target.querySelector('button[type=submit]'); if(b) b.textContent = 'Send anyway';
+    } else err.textContent=e.message||'Could not send that';
+  }
 }
 
 function openCancelRegistration(regId, name, eventName){
@@ -6128,12 +6211,24 @@ function animateCounts(root){
 }
 
 /* ── the office decides ── */
-async function approvePending(id){
+async function approvePending(id, confirmDuplicate){
   try{
-    const out = await API.approvePending(id);
+    const out = await API.approvePending(id, confirmDuplicate);
+    closeModal();
     toast('Approved and written to Zoho');
     S.pending = await API.pending(); save(); render();
   }catch(e){
+    if(e.data && e.data.duplicate){
+      const p = (S.pending || []).find(x => x.id === id) || {};
+      openModal(`<h3>Already registered?</h3>
+        <p class="lead">${esc(e.message)}</p>
+        ${e.data.duplicate.map(d => `<div class="callout rust" style="margin:6px 0"><strong>${esc(d.name || '')}</strong>
+          ${d.where === 'zoho' ? 'In Zoho' : 'Waiting on Approvals'}${d.date ? ' · ' + esc(d.date) : ''}${d.status ? ' · ' + esc(d.status) : ''} · ${esc(d.why.join(', '))}</div>`).join('')}
+        <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
+          <button class="btn" onclick="closeModal();openRejectPending(${id},${esc(JSON.stringify(p.summary || ''))})">Send back</button>
+          <button class="btn primary" onclick="approvePending(${id}, true)">Approve anyway</button></div>`);
+      return;
+    }
     openModal(`<h3>Zoho wouldn't accept that</h3>
       <p class="lead">${esc(e.message)}</p>
       <div class="callout">The request is still waiting, so nothing has been lost. Fix the detail in Zoho
@@ -6162,15 +6257,41 @@ async function submitRejectPending(ev, id){
   }catch(e){ err.style.display='block'; err.textContent=e.message; }
 }
 
+/** What the rep or the person filled in, laid out for the office to check */
+function pendingDetails(p){
+  const d = typeof p.payload === 'string' ? (() => { try{ return JSON.parse(p.payload); }catch(e){ return {}; } })() : (p.payload || {});
+  const row = (k, v) => v ? `<div class="kv"><span class="k">${k}</span><span>${v}</span></div>` : '';
+  const ev = d.eventId ? (S.events || []).find(e => e.id === d.eventId) : null;
+  const name = d.name || [d.firstName, d.lastName].filter(Boolean).join(' ');
+  return `<div class="pend-details">
+    ${row('Event', esc(d.eventName || (ev ? ev.title : '')) + (ev ? ' · ' + fmt(ev.date) : ''))}
+    ${row('Name', esc(name || d.lastName || ''))}
+    ${row('Member?', d.contactId ? '<span class="tag ok">Yes — linked to their Zoho contact</span>' : d.registrantType ? esc(d.registrantType === 'Member' ? 'Says yes (not linked)' : 'No — new contact') : '')}
+    ${row('Business', esc(d.business || d.company || ''))}
+    ${row('Email', d.email ? `<a href="mailto:${esc(d.email)}">${esc(d.email)}</a>` : '')}
+    ${row('Phone', d.phone ? `<a href="${telHref(d.phone)}">${esc(d.phone)}</a>` : '')}
+    ${row('Town', esc([d.city, d.state].filter(Boolean).join(', ')))}
+    ${d.bringingGuest ? row('Guest', esc([[d.guestFirstName, d.guestLastName].filter(Boolean).join(' '), d.guestType, d.guestBusiness, d.guestPhone, d.guestEmail].filter(Boolean).join(' · ')) || 'Yes, details not given') : ''}
+    ${row('Notes', esc(d.notes || d.reason || ''))}
+    ${row('Came from', d.source === 'qr' ? 'QR code — they registered themselves' : d.source === 'rep' || p.rep_id !== 'public' ? 'Rep: ' + esc(p.rep_name || '') : '')}
+  </div>`;
+}
+function pendingDupes(p){
+  const d = typeof p.payload === 'string' ? (() => { try{ return JSON.parse(p.payload); }catch(e){ return {}; } })() : (p.payload || {});
+  return Array.isArray(d.duplicate) ? d.duplicate : [];
+}
 function pendingRows(list, canDecide){
   const label = { registration:'Registration', cancellation:'Cancellation', lead:'New lead' };
-  return list.map(p=>`<div class="row">
+  return list.map(p=>`<div class="row pend-row">
     <div class="row-main">
-      <div class="row-title">${esc(p.summary||label[p.kind]||p.kind)}</div>
+      <div class="row-title">${esc(p.summary||label[p.kind]||p.kind)}
+        ${pendingDupes(p).length && p.status==='pending' ? `<span class="tag overdue" title="${esc(pendingDupes(p).map(x => (x.where === 'zoho' ? 'In Zoho: ' : 'Also waiting: ') + (x.name || '') + ' (' + x.why.join(', ') + ')').join('; '))}">Possible duplicate</span>` : ''}</div>
       <div class="row-sub">${esc(label[p.kind]||p.kind)} · ${esc(p.rep_name||'')} · ${fmt(String(p.created_at).slice(0,10))}
         ${p.status==='rejected'&&p.note?` · <span style="color:var(--rust)">sent back: ${esc(p.note)}</span>`:''}
         ${p.status==='approved'&&p.zoho_id?` · <span style="color:var(--primary)">in Zoho</span>`:''}
         ${p.status==='pending'&&p.error?` · <span style="color:var(--rust)">last try failed: ${esc(p.error)}</span>`:''}</div>
+      ${p.status==='pending' && pendingDupes(p).length ? `<div class="dup-note">${pendingDupes(p).map(x => `<div>⚠ ${x.where === 'zoho' ? `Already registered in Zoho as <strong>${esc(x.name || '')}</strong>${x.date ? ' on ' + fmt(x.date) : ''}` : `Also waiting on Approvals${x.by ? ' (from ' + esc(x.by) + ')' : ''}`} — ${esc(x.why.join(', '))}</div>`).join('')}</div>` : ''}
+      <details class="pend-more" ${canDecide && p.status==='pending' ? 'open' : ''}><summary>What was filled in</summary>${pendingDetails(p)}</details>
     </div>
     <div class="row-actions">
       ${p.status==='pending'
@@ -6719,12 +6840,12 @@ function navItems(){
 
 function navGroups(){
   if(isRep()) return [
-    ['', [['today','Today'],['rings','My Rings'],['people','People'],['map','Member map'],['calendar','Calendar'],['events','Events & summits']]],
+    ['', [['today','Today'],['rings','My Rings'],['people','People'],['ar','A/R over 60 days'],['map','Member map'],['calendar','Calendar'],['events','Events & summits']]],
     ['Admin', [['timesheet','Hours & expenses'],['resources','Web Toolbox'],['callsheet','Call sheet']]],
   ];
   const office = [
     ['', [['dash','Overview'],['manager','Rep manager'],['approvals','Approvals'],['calendar','Calendar'],['summits','Summits']]],
-    ['Records', [['members','Members'],['map','Member map'],['allrings','Rings'],['visits','Visits'],['unaffiliated','No ring yet']]],
+    ['Records', [['members','Members'],['ar','A/R over 60 days'],['map','Member map'],['allrings','Rings'],['visits','Visits'],['unaffiliated','No ring yet']]],
     ['Reporting', [['reports','Reports'],['coverage','Coverage'],['insights','Retention'],['timesheet','Hours & expenses']]],
     ['Setup', [['team','Reps'],['reminders','Reminders'],['settings','Settings'],
       ...(isAdmin() ? [['checks','System check']] : []), ['access','Access & security']]],
@@ -6761,7 +6882,7 @@ function logout(){ placeByScreen = {};
   elevation = { token: null, until: 0 }; keepElevation(); accessStatus = null; accessData = null; myDevices = null; ui.twoStep = null;
   try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); localStorage.removeItem('rephub_retention'); localStorage.removeItem('rephub_map'); localStorage.removeItem('rephub_summits'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
   retentionData = null; retentionFresh = false; summitList = null; summitFresh = false; summitMine = null; summitDetail = null; mapData = null; mapFresh = false;
-  mgrData = null; myGoal = undefined; onboard = null; repMail = null; repMailP = null;
+  mgrData = null; myGoal = undefined; onboard = null; repMail = null; repMailP = null; arData = null;
   serverUsers = null; zohoReps = null; usersLoadedAt = 0;
   API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
 
@@ -8082,7 +8203,7 @@ function renderContentSafe(el){
 }
 const VIEW_TITLE = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', map:'Member map', summits:'Summits', summitDetail:'Summits', allrings:'Rings',
   visits:'Visits', unaffiliated:'No ring yet', reports:'Reports', coverage:'Coverage', insights:'Retention', team:'Reps', repAccount:'Reps',
-  reminders:'Reminders', events:'Events & summits', timesheet:'Hours and expenses', checks:'System check', settings:'Settings', access:'Access & security' };
+  reminders:'Reminders', ar:'A/R over 60 days', events:'Events & summits', timesheet:'Hours and expenses', checks:'System check', settings:'Settings', access:'Access & security' };
 function renderContentInner(el){
   const v=ui.view;
   // A screen switched off by the owner can't be reached by a stale tab or link either
@@ -8099,6 +8220,7 @@ function renderContentInner(el){
   if(v==='timesheet'){ el.innerHTML=(isOffice() && !can('accounting'))?noAccess('Hours and expenses'):vTimesheet(); return; }
   if(v==='visits'){ el.innerHTML=vVisits(); return; }
   if(v==='events'){ el.innerHTML=vEvents(); return; }
+  if(v==='ar'){ el.innerHTML=vAR(); return; }
   if(isRep()){
     if(v==='map'){ el.innerHTML=vMemberMap(); return; }
     el.innerHTML=v==='rings'?vMyRings():v==='people'?vPeople():v==='requests'?vRequests():v==='progress'?vMyProgress():vToday();

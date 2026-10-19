@@ -93,6 +93,7 @@ const fakeZoho = http.createServer((req, res) => {
         const c = { contact_id: 'V' + (booksStore.contacts.length + 1), ...JSON.parse(body) };
         booksStore.contacts.push(c); return json({ code: 0, contact: c });
       }
+      if (p === '/invoices') return json({ code: 0, invoices: booksStore.invoices || [], page_context: { has_more_page: false } });
       if (p === '/bills' && req.method === 'GET') {
         return json({ code: 0, bills: booksStore.bills.filter(b => b.bill_number === qs.get('bill_number')) });
       }
@@ -1688,6 +1689,55 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.equal(J(await invoke('GET', '/reps/onboarding', { token: office })).find(x => x.id === 'REPM').status, 'none');
     await invoke('POST', '/reps/invite', { token: office, body: { repIds: ['REPM'] } });
     assert.equal((await db.q.allUsers()).filter(x => x.zoho_owner_id === 'REPM').length, 1);
+  });
+
+  test('registering someone twice is flagged, with the details kept for the office', async () => {
+    const body = { eventId: '881', name: 'Jo Dupe', firstName: 'Jo', lastName: 'Dupe', email: 'jo.dupe@example.com', phone: '(717) 555-0199', business: 'Dupe Farms' };
+    assert.equal((await invoke('POST', '/pending/registration', { token: rep, body })).statusCode, 201);
+    const again = await invoke('POST', '/pending/registration', { token: rep, body: { ...body, email: 'JO.DUPE@example.com' } });
+    assert.equal(again.statusCode, 409, 'the same person twice is stopped');
+    const dup = J(again).duplicate[0];
+    assert.equal(dup.where, 'pending'); assert.ok(dup.why.includes('same email'));
+    const sent = await invoke('POST', '/pending/registration', { token: rep, body: { ...body, confirmDuplicate: true } });
+    assert.equal(sent.statusCode, 201, 'the rep can still send it');
+    const rows = (await db.query("SELECT payload FROM pending_writes WHERE kind = 'registration' AND status = 'pending'"))
+      .map(r => typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload).filter(p => p.email && p.email.toLowerCase() === 'jo.dupe@example.com');
+    assert.equal(rows.length, 2);
+    const flagged = rows.find(p => Array.isArray(p.duplicate));
+    assert.ok(flagged, 'the second is marked as a possible duplicate');
+    assert.equal(flagged.business, 'Dupe Farms', 'everything filled in is kept for the office');
+    assert.equal(flagged.confirmDuplicate, undefined);
+    // The same person through the QR form is flagged too
+    const pub = await invoke('POST', '/public/events/881/register', { body: { firstName: 'Jo', lastName: 'Dupe', phone: '717-555-0199' } });
+    assert.equal(pub.statusCode, 201);
+    const last = (await db.query("SELECT summary FROM pending_writes WHERE rep_id = 'public' ORDER BY id DESC"))[0];
+    assert.match(last.summary, /possible duplicate/);
+  });
+
+  test('members over 60 days in A/R come from Books, matched to their rep; reps see only theirs', async () => {
+    const day = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+    store.Growth_Ring_Groups.push({ id: 'GRR1', Name: 'Rep One Ring', Active: true, Regional_Rep: { id: 'CONTACT_REP_1', name: 'Test Rep' } });
+    store.Group_Members = (store.Group_Members || []).concat([
+      { id: 'L1', Members: { id: 'M60', name: 'Late Payer #0060' }, Growth_Ring_Groups: { id: 'GRM1', name: 'Mel 1' } },
+      { id: 'L2', Members: { id: 'M61', name: 'Slow Payer #0061' }, Growth_Ring_Groups: { id: 'GRR1', name: 'Rep One Ring' } },
+    ]);
+    booksStore.invoices = [
+      { invoice_id: 'I1', invoice_number: 'INV-1', customer_name: 'Late Payer #0060', date: day(100), due_date: day(95), total: 300, balance: 300 },
+      { invoice_id: 'I2', invoice_number: 'INV-2', customer_name: 'Slow Payer #61', date: day(70), due_date: day(65), total: 750, balance: 750 },
+      { invoice_id: 'I3', invoice_number: 'INV-3', customer_name: 'Recent Payer #0062', date: day(12), due_date: day(10), total: 750, balance: 750 },
+      { invoice_id: 'I4', invoice_number: 'INV-4', customer_name: 'Test Automation #9901', date: day(90), due_date: day(90), total: 9, balance: 9 },
+    ];
+    const cfg = require('../src/config'), books = require('../src/lib/books');
+    cfg.books.orgId = 'ORG1'; cfg.books.refreshToken = 'test-refresh'; books._resetForTests();   // Books connected
+    const all = J(await invoke('GET', '/members/ar', { token: office }));
+    assert.equal(all.connected, true, JSON.stringify(all));
+    assert.deepEqual(all.members.map(m => m.name).sort(), ['Late Payer #0060', 'Slow Payer #61'], 'only 60+ days, tests left out');
+    const late = all.members.find(m => m.name === 'Late Payer #0060');
+    assert.equal(late.repId, 'REPM'); assert.equal(late.contactId, 'M60'); assert.ok(late.days >= 95);
+    assert.equal(all.members.find(m => m.name === 'Slow Payer #61').repId, 'CONTACT_REP_1', 'matched by member number even without the leading zero');
+    const mine = J(await invoke('GET', '/members/ar', { token: rep }));
+    assert.deepEqual(mine.members.map(m => m.name), ['Slow Payer #61'], "a rep sees only their own members");
+    cfg.books.orgId = ''; cfg.books.refreshToken = ''; books._resetForTests();
   });
 
   test('the Monday email previews who it goes to and lists the warnings', async () => {

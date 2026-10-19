@@ -291,5 +291,20 @@ async function vendorNames() {
   return (await listVendors()).map(v => v.name).sort((a, b) => a.localeCompare(b));
 }
 
-module.exports = { configured, connect, disconnect, makeBills, status, billFor, vendorNames, matchVendor, DEFAULT_FALLBACK,
+/**
+ * Every unpaid invoice past its due date (Mel: members over 60 days in A/R).
+ * Books hands back 200 a page; Symbiz has a few hundred at most.
+ */
+async function overdueInvoices() {
+  const out = [];
+  for (let page = 1; page <= 15; page++) {
+    const body = await call('/invoices', { query: { filter_by: 'Status.Overdue', per_page: 200, page, sort_column: 'due_date', sort_order: 'A' } });
+    (body.invoices || []).forEach(i => out.push({ id: i.invoice_id, number: i.invoice_number, customerId: i.customer_id,
+      customer: i.customer_name, date: i.date, due: i.due_date, total: Number(i.total) || 0, balance: Number(i.balance) || 0 }));
+    if (!body.page_context || !body.page_context.has_more_page) break;
+  }
+  return out;
+}
+
+module.exports = { configured, overdueInvoices, connect, disconnect, makeBills, status, billFor, vendorNames, matchVendor, DEFAULT_FALLBACK,
   _resetForTests: () => { token = { access: null, expiresAt: 0 }; accounts = null; vendorList = null; } };
