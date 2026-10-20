@@ -1039,6 +1039,13 @@
   .toast{background:var(--ink);color:var(--bg);padding:10px 15px;border-radius:8px;font-size:13.5px;font-weight:500;box-shadow:0 6px 18px rgba(0,0,0,.2);animation:tin .16s ease-out;max-width:90vw;}
   @keyframes tin{from{opacity:0;transform:translateY(-5px);}to{opacity:1;transform:translateY(0);}}
 
+  /* Moving between screens: the new one eases in instead of the page jumping.
+     Only the screen itself moves; the sidebar, top bar and tab bar stay put.
+     Opacity and transform only, so it never shifts the layout. */
+  @keyframes vtIn{from{opacity:0;transform:translateY(5px);}}
+  .content.v-enter{animation:vtIn .18s cubic-bezier(.2,.7,.3,1);}
+  @media (prefers-reduced-motion: reduce){ .content.v-enter{animation:none;} }
+
   .srch{width:100%;font-family:inherit;font-size:14.5px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);margin-bottom:12px;}
   .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:13px;}
   .chip{border:1px solid var(--line);background:var(--surface);color:var(--ink-muted);border-radius:20px;padding:5px 12px;font-size:12.5px;font-weight:600;cursor:pointer;}
@@ -5891,6 +5898,7 @@ function prefetchView(id){
   if(id === 'map') prefetchMap();
   else if(id === 'insights' && can('reports')) loadRetention();
   else if(id === 'summits' && can('summits')) loadSummits();
+  else if(id === 'ar') loadAR();
 }
 /* Pointing at "Member map" starts loading it, so it is ready by the click */
 const mapAllowed = () => API.live && (isRep() || can('members'));
@@ -6250,12 +6258,14 @@ function sparkline(counts){
     <polyline points="${pts.join(' ')}" class="sp-line"/>
     <circle cx="${w}" cy="${pts[pts.length-1].split(',')[1]}" r="2.6" class="sp-dot"/></svg>`;
 }
-/* Numbers count up the first time a screen opens; later redraws stay still */
-var countedFor = null, reloadScroll = null;
+/* Numbers count up the first time a screen opens; later redraws, and coming
+   back to it, stay still. Only the last screen was remembered, so going
+   Overview → Members → Overview counted everything up again. */
+var countedFor = null, reloadScroll = null, countedScreens = new Set();
 function animateCounts(root){
   const key = screenKey();
-  if(countedFor === key) return;
-  countedFor = key;
+  if(countedFor === key || countedScreens.has(key)) return;
+  countedFor = key; countedScreens.add(key);
   if(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   const els = root.querySelectorAll('.cu');
   if(!els.length) return;
@@ -8088,6 +8098,7 @@ async function loadFromServer(){
   // Warm the slower screens in the background, so they open at once
   if(isOffice() && can('reports')) setTimeout(() => loadRetention(), 1500);
   if(isOffice() && can('summits')) setTimeout(() => loadSummits(), 2500);
+  setTimeout(() => loadAR(), 3500);
 }
 /* How fresh the data is, and a way to bring it up to date with Zoho now */
 function syncButton(){
@@ -8239,7 +8250,10 @@ function renderContentSafe(el){
   if(prev === 'map' && ui.view === 'map' && document.getElementById('mapSlot') && mapData && !mapData.error){
     drawMemberMap(false); return;
   }
-  try { renderContentInner(el); renderRetry = null; animateCounts(el); }
+  // Was showing the grey "loading" rows: when the real screen replaces them, ease it in
+  const wasLoading = prev === ui.view && !!el.querySelector('.skel');
+  try { renderContentInner(el); renderRetry = null; animateCounts(el);
+    if(wasLoading && !el.querySelector('.skel')){ el.classList.remove('v-enter'); void el.offsetWidth; el.classList.add('v-enter'); } }
   catch(e){
     console.error('[render]', e);
     // A hiccup while data is still arriving should not flash an error
@@ -8336,7 +8350,7 @@ function tabbarHTML(){
        ['allrings','Rings'],['reports','Reports']].filter(([id]) => canView(id)).slice(0, 4);
   const inMain = main.some(([id]) => id === ui.view);
   const tab = ([id,label]) => { const b = badgeFor(id);
-    return `<button class="${ui.view===id?'active':''}" onclick="setView('${id}')">${b?`<span class="pill">${b}</span>`:''}${icon(id,21)}<span>${label}</span></button>`; };
+    return `<button class="${ui.view===id?'active':''}" onpointerdown="prefetchView('${id}')" onclick="setView('${id}')">${b?`<span class="pill">${b}</span>`:''}${icon(id,21)}<span>${label}</span></button>`; };
   const tabs = main.map(tab);
   const more = `<button class="${inMain?'':'active'}" onclick="openMoreMenu()">${icon('more',21)}<span>More</span></button>`;
   // Reps get the + in the middle of the bar, where a thumb lands
@@ -8386,8 +8400,16 @@ function render(){
     return;
   }
   // Same person, same frame: refresh only what changed, never the sidebar itself
+  // A different screen (not a background refresh of this one) eases in.
+  // Drawn at once, never on a later frame: callers use the new screen
+  // straight after (a form's first box, the map).
+  const newScreen = scrollTopNext;
   fillShell();
   renderContent();
+  if(newScreen){
+    const el = document.getElementById('content');
+    if(el){ el.classList.remove('v-enter'); void el.offsetWidth; el.classList.add('v-enter'); }
+  }
 }
 function fillShell(){
   const nc = notifications().length;
