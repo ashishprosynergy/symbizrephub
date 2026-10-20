@@ -5356,8 +5356,21 @@ function openDigestSettings(){
       <button class="btn" onclick="previewDigest()">Preview this week's</button>
       <button class="btn" onclick="sendDigestToMe(this)">Send it to me now</button>
       <button class="btn ${on?'':'primary'}" onclick="setDigest(${!on})">${on?'Turn it off':'Turn it on'}</button></div>
-    <div class="row-sub" style="margin-top:8px">It goes out every Monday at 8am Eastern.</div>
-    <div id="digestOut"></div>`);
+    <div class="row-sub" style="margin-top:8px">It goes out every Monday at 8am Eastern.
+      ${on ? 'You are getting it.' : '<strong style="color:var(--rust)">It is turned off for you</strong> — press Turn it on to get it.'}</div>
+    <div id="digestOut"></div>
+    <div id="digestLast" class="row-sub" style="margin-top:10px">Checking when it last went out…</div>`);
+  // What last Monday's run actually did, and who it reached
+  API.call('/manager/digest/last').then(v => {
+    const el = document.getElementById('digestLast'); if(!el) return;
+    const when = d => new Date(d).toLocaleString('en-US', { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+    const sends = (v.sends || []);
+    if(!v.last && !sends.length){ el.innerHTML = 'It has not gone out yet.'; return; }
+    const res = v.last ? (v.last.results || []) : [];
+    el.innerHTML = (v.last ? `<strong>Last Monday run: ${esc(when(v.last.at))}</strong><br>${res.map(r => `${esc(r.to || '')} — ${r.skipped ? 'turned off' : r.ok ? '✓ sent' : '✗ ' + esc(r.error || 'not sent')}`).join('<br>') || esc(String(res[0] && res[0].reason || 'nobody to send to'))}`
+      : '<strong>No Monday run on record yet.</strong>')
+      + (sends.length ? `<br><span style="opacity:.8">Recent sends: ${sends.slice(0,5).map(s => `${esc(s.to || '?')} ${s.ok ? '✓' : '✗'} ${esc(when(s.at))}`).join(' · ')}</span>` : '');
+  }).catch(() => { const el = document.getElementById('digestLast'); if(el) el.textContent = ''; });
 }
 async function sendDigestToMe(btn){
   btn.disabled = true; btn.textContent = 'Sending…';
@@ -5376,8 +5389,9 @@ async function previewDigest(){
   const out = document.getElementById('digestOut'); if(out) out.innerHTML = `<div class="callout" style="margin-top:10px">Building it…</div>`;
   try{ const r = await API.call('/manager/digest/run', { method:'POST', body: JSON.stringify({ dryRun: true }) });
     const x = (r.results || [])[0] || {};
-    out.innerHTML = `<div class="callout ok" style="margin-top:10px"><strong>Goes to ${esc((x.to||[]).join(', ') || 'nobody yet')}</strong>
-      ${x.reps || 0} reps covered, ${(x.warnings||[]).length} thing${(x.warnings||[]).length===1?'':'s'} flagged.</div>`;
+    out.innerHTML = `<div class="callout ok" style="margin-top:10px"><strong>Goes to ${esc((x.to||[]).join(', ') || 'nobody — everyone has it turned off')}</strong>
+      ${x.reps || 0} reps covered, ${(x.warnings||[]).length} thing${(x.warnings||[]).length===1?'':'s'} flagged.
+      ${(x.off||[]).length ? `<div style="margin-top:6px">Turned off for ${esc(x.off.join(', '))}.</div>` : ''}</div>`;
   }catch(e){ out.innerHTML = `<div class="callout rust" style="margin-top:10px">${esc(e.message)}</div>`; }
 }
 

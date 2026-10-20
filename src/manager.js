@@ -145,7 +145,10 @@ async function runManagerDigest({ dryRun = false, onlyUserId = null } = {}) {
   if (!managers.length) return [{ sent: 0, reason: 'nobody manages reps' }];
   const snap = await teamSnapshot();
   const warnings = warningsFrom(snap);
-  if (dryRun) return [{ dryRun: true, to: managers.map(m => m.email), reps: snap.reps.length, warnings }];
+  // Only the people who will actually get it. Listing everyone who manages
+  // reps named people who had switched it off, so "it goes to me" was wrong.
+  if (dryRun) return [{ dryRun: true, to: managers.filter(m => m.digest_email).map(m => m.email),
+    off: managers.filter(m => !m.digest_email).map(m => m.email), reps: snap.reps.length, warnings }];
   const out = [];
   for (const u of managers) {
     if (!u.digest_email && !onlyUserId) { out.push({ to: u.email, skipped: 'turned off' }); continue; }
@@ -153,6 +156,8 @@ async function runManagerDigest({ dryRun = false, onlyUserId = null } = {}) {
       digestHTML(snap, u.name, cfg.appUrl + '/?view=manager'), { userId: u.id, kind: 'manager-digest' });
     out.push({ to: u.email, ok: !!r.ok, error: r.error });
   }
+  // The Monday run leaves a note of what it did, so the office can see it went
+  if (!onlyUserId) await q.setSetting('manager_digest_last', JSON.stringify({ at: new Date().toISOString(), results: out })).catch(() => {});
   return out;
 }
 

@@ -3402,6 +3402,14 @@ r.put('/manager/digest', ...mgrGuard, wrap(async (req, res) => {
   res.json({ ok: true, on: !!req.body?.on });
 }));
 
+/* What the last Monday email did: the run's own note, and the sends on record */
+r.get('/manager/digest/last', ...mgrGuard, wrap(async (req, res) => {
+  let last = null; try { last = JSON.parse(await setting('manager_digest_last', 'null')); } catch { last = null; }
+  const sends = await query(`SELECT s.created_at, s.ok, s.error, u.email FROM sent_log s LEFT JOIN users u ON u.id = s.user_id
+    WHERE s.kind = 'manager-digest' ORDER BY s.created_at DESC LIMIT 12`).catch(() => []);
+  res.json({ last, sends: sends.map(x => ({ at: x.created_at, ok: x.ok, error: x.error, to: x.email })) });
+}));
+
 r.post('/manager/digest/run', ...mgrGuard, wrap(async (req, res) => {
   const dryRun = req.body?.dryRun !== false;
   // "Send it to me now": this week's email, to the person asking only
