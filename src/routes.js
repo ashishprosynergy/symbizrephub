@@ -1393,32 +1393,109 @@ r.get('/members/map', auth.authRequired, mapGuard, wrap(async (req, res) => {
  * on what to do differently — is kept here, per summit. */
 const SUMMIT_TYPES = ['Regional Summit', 'Global Summit'];
 /* Every new summit starts from this list. Days are relative to the summit. */
+/* Mel's Regional Summit Planning Checklist (his Google Sheet, Oct 2026),
+   with each deadline turned into days before the summit (his sheet was laid
+   out for a summit on 11/4/2025). [stage, days from the summit, task] */
 const SUMMIT_CHECKLIST = [
-  ['3 months out', -90, 'Confirm the date and book the venue'],
-  ['3 months out', -84, 'Choose the theme and invite the speakers'],
-  ['2 months out', -60, 'Set the summit up in Zoho and show it on the portal'],
-  ['2 months out', -56, 'Agree the meal, room layout and AV with the venue'],
-  ['2 months out', -50, 'Open registration and send the first invitation'],
-  ['1 month out', -30, 'Ask every rep to invite the members in their rings'],
-  ['1 month out', -28, 'Confirm speakers, programme and running order'],
-  ['1 month out', -25, 'Order printing: programmes, signage, handouts'],
-  ['2 weeks out', -14, 'Send the reminder to everyone registered'],
-  ['2 weeks out', -12, 'Give the venue the meal head-count'],
-  ['2 weeks out', -10, 'Arrange volunteers: welcome desk, set-up, clear-up'],
-  ['Week of', -5, 'Print name tags and the sign-in sheet'],
-  ['Week of', -3, 'Final head-count to the venue; test the AV'],
-  ['Week of', -2, 'Pack the event box: name tags, sign-in sheet, forms, gifts'],
-  ['Day of', 0, 'Set up the room and welcome desk'],
-  ['Day of', 0, 'Sign everyone in and collect guest details'],
-  ['After', 2, 'Send thank-you emails to attendees and speakers'],
-  ['After', 5, 'Record attendance in Zoho'],
-  ['After', 7, 'Follow up new guests and leads with their rep'],
-  ['After', 14, 'Debrief: note what worked and what to change next time'],
+  ['4–6 months prior', -120, 'Schedule facility'],
+  ['4–6 months prior', -120, 'Schedule caterer'],
+  ['4–6 months prior', -120, 'Determine a theme'],
+  ['4–6 months prior', -120, 'Moderator'],
+  ['1–3 months prior', -70, 'Create invitations & tickets'],
+  ['1–3 months prior', -60, 'MINTalk #1 speaker and topic'],
+  ['1–3 months prior', -60, 'MINTalk #2 speaker and topic'],
+  ['1–3 months prior', -60, 'MINTalk #3 speaker and topic'],
+  ['1–3 months prior', -60, 'Growth Ring Experience leader'],
+  ['1–3 months prior', -60, 'Panel moderator'],
+  ['1–3 months prior', -60, 'Panel questions'],
+  ['1–3 months prior', -60, 'Send out invitations & tickets'],
+  ['1–3 months prior', -45, '3–5 panelists'],
+  ['1–3 months prior', -45, 'Marketing'],
+  ['1–3 months prior', null, 'Sponsorships'],
+  ['1–4 weeks prior', -30, 'Greeter'],
+  ['1–4 weeks prior', -15, 'Name tags (to be written on), agenda'],
+  ['1–4 weeks prior', -15, 'Sound system / recordings / projector — record MINTalk audio, compile master slide deck'],
+  ['1–4 weeks prior', -15, 'Registration complete'],
 ];
 /* The standard list every new summit starts from. Rep Hub ships with the one
    above; the office can replace it with Symbiz's own (Summits → edit the
    standard checklist), and that is what new summits then use. */
+/* ── The checklist kept in a Google Sheet (Mel's), read again every hour ──
+   The sheet must be shared "Anyone with the link can view": Rep Hub reads it
+   as a CSV export, with no Google sign-in. Laid out like Mel's: a "Date" row
+   (the summit it was planned for), then Status / Deadline / Action / Action
+   Owner / Note columns. Deadlines become days before the summit. */
+function sheetCsvUrl(url) {
+  const m = String(url || '').match(/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  if (!m) return null;
+  const gid = (String(url).match(/[#&?]gid=(\d+)/) || [])[1] || '0';
+  return `https://docs.google.com/spreadsheets/d/${m[1]}/export?format=csv&gid=${gid}`;
+}
+function parseCsv(text) {
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (c === '"') q = false; else cell += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.map(r => r.map(x => String(x).trim()));
+}
+function sheetDate(v) {
+  const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; }
+  const d = new Date(v); return isNaN(d) ? null : d.toISOString().slice(0, 10);
+}
+const stageFor = off => off == null ? 'Anytime before' : off <= -120 ? '4–6 months prior' : off <= -31 ? '1–3 months prior'
+  : off <= -8 ? '1–4 weeks prior' : off < 0 ? '1–7 days prior' : off === 0 ? 'Day of' : 'After';
+function checklistFromCsv(text) {
+  const rows = parseCsv(text);
+  const h = rows.findIndex(r => r.some(x => /^action$/i.test(x)) && r.some(x => /^deadline$/i.test(x)));
+  if (h < 0) throw new Error('The sheet needs a header row with "Deadline" and "Action" columns');
+  const col = re => rows[h].findIndex(x => re.test(x));
+  const cD = col(/^deadline$/i), cA = col(/^action$/i), cO = col(/owner/i), cN = col(/^note/i);
+  const dateRow = rows.slice(0, h).find(r => /^date$/i.test(r[0] || ''));
+  const base = dateRow ? dateRow.slice(1).map(sheetDate).find(Boolean) : null;
+  const days = (a, b) => Math.round((Date.parse(a + 'T12:00:00Z') - Date.parse(b + 'T12:00:00Z')) / 864e5);
+  const list = rows.slice(h + 1).filter(r => (r[cA] || '').trim()).map(r => {
+    const due = sheetDate(r[cD]);
+    const off = due && base ? days(due, base) : null;
+    const note = cN >= 0 ? r[cN] : '';
+    return { title: (r[cA] + (note ? ' — ' + note : '')).slice(0, 300), stage: stageFor(off), dueOffset: off,
+      owner: cO >= 0 && r[cO] ? r[cO].slice(0, 120) : undefined };
+  });
+  if (!list.length) throw new Error('No tasks found under the "Action" column');
+  return list;
+}
+async function syncChecklistSheet(url) {
+  const csv = sheetCsvUrl(url);
+  if (!csv) throw new Error('That is not a Google Sheets link');
+  const res = await fetch(csv, { redirect: 'follow', signal: AbortSignal.timeout(8000) });
+  const text = await res.text();
+  if (!res.ok || /^\s*<!doctype html/i.test(text)) throw new Error('Rep Hub cannot open the sheet. In Google Sheets press Share and set General access to "Anyone with the link" (Viewer).');
+  const list = checklistFromCsv(text);
+  await q.setSetting('summit_sheet_cache', JSON.stringify({ at: Date.now(), list, error: null }));
+  return list;
+}
 async function summitTemplate() {
+  const sheet = await setting('summit_sheet_url', '');
+  if (sheet) {
+    let cache = null; try { cache = JSON.parse(await setting('summit_sheet_cache', 'null')); } catch { cache = null; }
+    if (!cache || Date.now() - cache.at > 3600000) {
+      try { const list = await syncChecklistSheet(sheet); cache = { at: Date.now(), list, error: null }; }
+      catch (e) {
+        cache = { ...(cache || { list: [] }), at: Date.now(), error: e.message };
+        await q.setSetting('summit_sheet_cache', JSON.stringify(cache)).catch(() => {});
+      }
+    }
+    if (cache && cache.list && cache.list.length) return { list: cache.list, custom: true, source: 'sheet', sheet, syncedAt: cache.at, error: cache.error };
+    // The sheet could not be read: fall back, and say why
+    const fallback = SUMMIT_CHECKLIST.map(([stage, dueOffset, title]) => ({ stage, dueOffset, title }));
+    return { list: fallback, custom: false, source: 'sheet', sheet, error: cache && cache.error };
+  }
   const raw = await setting('summit_checklist', '');
   try {
     const list = JSON.parse(raw || 'null');
@@ -1524,7 +1601,7 @@ async function tellOwner(person, task, eventId, req) {
 r.get('/summits/template', ...summitGuard, wrap(async (req, res) => {
   const t = await summitTemplate();
   const by = t.custom ? await q.getSetting('summit_checklist_by').catch(() => null) : null;
-  res.json({ ...t, by: by ? by.value : null });
+  res.json({ ...t, by: by ? by.value : null, sheet: t.sheet || (await setting('summit_sheet_url', '')) || null });
 }));
 r.put('/summits/template', ...summitGuard, wrap(async (req, res) => {
   const list = (Array.isArray(req.body?.list) ? req.body.list : [])
@@ -1536,6 +1613,28 @@ r.put('/summits/template', ...summitGuard, wrap(async (req, res) => {
   await q.setSetting('summit_checklist_by', `${req.user.name || req.user.email}, ${today()}`);
   await audit(req.user.id, 'summit.templateSaved', { tasks: list.length }, req.ip);
   res.json({ list, custom: true });
+}));
+/* Follow a Google Sheet for the standard list (or stop following it) */
+r.put('/summits/template/sheet', ...summitGuard, wrap(async (req, res) => {
+  const url = String(req.body?.url || '').trim();
+  if (!sheetCsvUrl(url)) return res.status(400).json({ error: 'Paste the link to the Google Sheet' });
+  let list;
+  try { list = await syncChecklistSheet(url); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  await q.setSetting('summit_sheet_url', url);
+  await audit(req.user.id, 'summit.templateSheet', { url, tasks: list.length }, req.ip);
+  res.json(await summitTemplate());
+}));
+r.post('/summits/template/sheet/sync', ...summitGuard, wrap(async (req, res) => {
+  const url = await setting('summit_sheet_url', '');
+  if (!url) return res.status(400).json({ error: 'No sheet is linked' });
+  try { await syncChecklistSheet(url); } catch (e) { return res.status(400).json({ error: e.message }); }
+  res.json(await summitTemplate());
+}));
+r.delete('/summits/template/sheet', ...summitGuard, wrap(async (req, res) => {
+  await q.setSetting('summit_sheet_url', '');
+  await q.setSetting('summit_sheet_cache', '');
+  res.json(await summitTemplate());
 }));
 r.delete('/summits/template', ...summitGuard, wrap(async (req, res) => {
   await q.setSetting('summit_checklist', '');
@@ -3448,4 +3547,5 @@ r.post('/reminders/run', auth.authRequired, auth.requireOffice, access.requirePe
   res.json({ kind, dryRun, results: out });
 }));
 
+r._checklistFromCsv = checklistFromCsv;      // for the tests
 module.exports = r;

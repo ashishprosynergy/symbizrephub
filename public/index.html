@@ -203,6 +203,11 @@
   .ar-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
   .ar-group{padding:12px 15px;margin-bottom:12px}
   .ar-row{align-items:flex-start}
+  .sheet-link{margin:0 0 10px;padding:8px 12px;border:1px dashed var(--line);border-radius:10px}
+  .sheet-link summary{cursor:pointer;font-weight:600;color:var(--primary)}
+  .reg-block{border-top:1px solid var(--line-soft)}
+  .reg-block:first-child{border-top:0}
+  .reg-search{max-width:420px}
   .pend-row{align-items:flex-start}
   .pend-more{margin-top:6px}
   .pend-more summary{cursor:pointer;font-size:12.5px;color:var(--primary);font-weight:600}
@@ -4607,16 +4612,26 @@ function vEvents(){
 function openAddRegistration(eventId){
   const e = S.events.find(x=>x.id===eventId);
   if(!e) return;
+  if(API.live && !regsFresh[eventId] && !regsLoading[eventId]){
+    // Fetch who is registered, then open the form knowing it
+    loadRegs(eventId);
+    const wait = (n) => { if(regsFresh[eventId] || regsError[eventId] || n > 30) return openAddRegistration(eventId); setTimeout(() => wait(n + 1), 150); };
+    openModal(`<h3>Register someone for ${esc(e.title)}</h3><p class="lead">Checking who is already registered…</p>`);
+    return void setTimeout(() => wait(0), 150);
+  }
   openModal(`<h3>Register someone for ${esc(e.title)}</h3>
     <p class="lead">This goes to the office first. Once they approve it, it appears in Zoho.</p>
     <form onsubmit="submitRegistration(event,'${eventId}')">
       <input type="hidden" name="contactId" value="">
       ${(() => { const mm = S.members.filter(m => (isRep() ? m.repId === ui.me : true) && m.status === 'active')
           .sort((a,b) => String(a.name).localeCompare(String(b.name)));
+        // Already registered for this event: marked in the list and warned on picking
+        const regd = new Set(eventRegs(eventId).filter(r => r.attending !== 'Cancelled').map(r => regKey(r.name)));
         return mm.length ? `<div class="field"><label>One of your members?</label>
-          <select onchange="fillRegFromMember(this)"><option value="">Pick a member to fill this in…</option>
-            ${mm.map(m => `<option value="${m.id}">${esc(m.name)}${m.business && m.business !== '—' ? ' · ' + esc(m.business) : ''}</option>`).join('')}</select>
-          <div class="hint">Or type someone new below.</div></div>` : ''; })()}
+          <select onchange="fillRegFromMember(this)" data-event="${eventId}"><option value="">Pick a member to fill this in…</option>
+            ${mm.map(m => `<option value="${m.id}">${regd.has(regKey(m.name)) ? '✓ Already registered — ' : ''}${esc(m.name)}${m.business && m.business !== '—' ? ' · ' + esc(m.business) : ''}</option>`).join('')}</select>
+          <div class="hint">Or type someone new below.${regd.size ? ' Members marked ✓ are already registered for this event.' : ''}</div>
+          <div id="regAlready" class="dup-note" hidden></div></div>` : ''; })()}
 
       <h4 class="sub-h" style="margin-top:0">Who is coming</h4>
       <div class="field"><label>First name</label><input name="firstName" required></div>
@@ -4655,9 +4670,13 @@ function openAddRegistration(eventId){
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
       <button type="submit" class="btn primary">Send to the office</button></div></form>`);
 }
+const regKey = n => String(n || '').replace(/\s*#\s*\d+\s*$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
 /** Fill the registration form from one of the rep's members, linked to their Zoho contact */
 function fillRegFromMember(sel){
   const f = sel.form.elements, m = S.members.find(x => x.id === sel.value);
+  const warn = document.getElementById('regAlready');
+  const already = m && eventRegs(sel.dataset.event).find(r => r.attending !== 'Cancelled' && regKey(r.name) === regKey(m.name));
+  if(warn){ warn.hidden = !already; warn.innerHTML = already ? `⚠ <strong>${esc(m.name)}</strong> is already registered for this event${already.registered ? ' (' + fmt(String(already.registered).slice(0,10)) + ')' : ''}. There's no need to register them again.` : ''; }
   f.namedItem('contactId').value = m ? m.id : '';
   if(!m) return;
   const name = String(m.name || '').replace(/\s*#\s*\d+\s*$/, '').trim().split(/\s+/);
@@ -5742,18 +5761,46 @@ const tplRow = x => `<div class="tpl-row">
       <input class="tpl-title" value="${esc(x.title || '')}" placeholder="What needs doing" aria-label="Task">
       <button type="button" class="btn sm ghost" title="Remove" onclick="this.parentNode.remove()">✕</button></div>`;
 function drawSummitTemplate(t){
+  const fromSheet = t.source === 'sheet' && t.sheet;
+  const sheetBox = fromSheet
+    ? `<div class="callout ${t.error ? 'rust' : 'ok'}" style="margin:0 0 10px"><strong>Kept in step with a Google Sheet</strong>
+        ${t.error ? esc(t.error) : 'Rep Hub reads the sheet again every hour, so changes made there show here. Last read ' + (t.syncedAt ? new Date(t.syncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'just now') + '.'}
+        <div class="btnrow" style="margin-top:8px"><a class="btn sm" href="${esc(t.sheet)}" target="_blank" rel="noopener">Open the sheet</a>
+          <button class="btn sm" onclick="syncSummitSheet(this)">Read it now</button>
+          <button class="btn sm ghost" onclick="unlinkSummitSheet()">Stop following the sheet</button></div></div>`
+    : `<details class="sheet-link"><summary>Keep it in step with a Google Sheet</summary>
+        <p class="row-sub">Paste the link to a checklist laid out like Mel's (Deadline, Action, Action Owner, Note, with the summit's Date at the top). In Google Sheets, press Share and set General access to <strong>Anyone with the link</strong> (Viewer) so Rep Hub can read it. Changes in the sheet then show here within the hour.</p>
+        <div class="two" style="align-items:end"><div class="field" style="margin:0"><input id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/…"></div>
+          <button class="btn primary" onclick="linkSummitSheet(this)">Follow this sheet</button></div></details>`;
   openModal(`<h3>Standard summit checklist</h3>
-    <p class="lead">${t.custom
+    <p class="lead">${fromSheet ? 'This list comes from the Google Sheet below.' : t.custom
       ? `This is Symbiz's own list${t.by ? `, last changed by ${esc(t.by)}` : ''}.`
-      : `This is the starting list that came with Rep Hub: the usual steps for a one-day regional event, from booking the venue three months out to the debrief afterwards. It is not taken from a Symbiz document. Change it to match how Symbiz really runs a summit.`}
-      Each new summit is given this list the first time it is opened. Days are counted from the summit: −90 is three months before, 7 is a week after.</p>
+      : `This is Mel's Regional Summit Planning Checklist, with each deadline counted back from the summit day.`}
+      Each new summit is given this list the first time it is opened. Days are counted from the summit: −120 is four months before, −15 two weeks before.</p>
+    ${sheetBox}
     <div class="tpl-head"><span>Stage</span><span>Days</span><span>Task</span></div>
     <div id="tplRows" class="tpl-rows">${t.list.map(tplRow).join('')}</div>
-    <button type="button" class="btn sm" style="margin-top:8px" onclick="addTplRow()">+ Add a task</button>
+    ${fromSheet ? '<div class="row-sub" style="margin-top:6px">To change these, edit the Google Sheet.</div>' : '<button type="button" class="btn sm" style="margin-top:8px" onclick="addTplRow()">+ Add a task</button>'}
     <div class="m-actions">
-      ${t.custom ? `<button class="btn" onclick="resetSummitTemplate()">Go back to Rep Hub's list</button>` : ''}
-      <button class="btn" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" onclick="saveSummitTemplate(this)">Save the standard list</button></div>`);
+      ${t.custom && !fromSheet ? `<button class="btn" onclick="resetSummitTemplate()">Go back to Mel's list</button>` : ''}
+      <button class="btn" onclick="closeModal()">${fromSheet ? 'Close' : 'Cancel'}</button>
+      ${fromSheet ? '' : '<button class="btn primary" onclick="saveSummitTemplate(this)">Save the standard list</button>'}</div>`);
+  if(fromSheet) document.querySelectorAll('#tplRows input, #tplRows button').forEach(el => { el.disabled = true; });
+}
+async function linkSummitSheet(btn){
+  const url = (document.getElementById('sheetUrl') || {}).value || '';
+  btn.disabled = true; btn.textContent = 'Reading the sheet…';
+  try{ drawSummitTemplate(await API.call('/summits/template/sheet', { method:'PUT', body: JSON.stringify({ url }) })); toast('Rep Hub now follows the sheet'); }
+  catch(e){ btn.disabled = false; btn.textContent = 'Follow this sheet'; toast(e.message || 'Could not read the sheet'); }
+}
+async function syncSummitSheet(btn){
+  btn.disabled = true; btn.textContent = 'Reading…';
+  try{ drawSummitTemplate(await API.call('/summits/template/sheet/sync', { method:'POST' })); toast('Read from the sheet'); }
+  catch(e){ btn.disabled = false; btn.textContent = 'Read it now'; toast(e.message || 'Could not read the sheet'); }
+}
+async function unlinkSummitSheet(){
+  if(!confirm('Stop following the Google Sheet? The list goes back to the one kept in Rep Hub.')) return;
+  try{ drawSummitTemplate(await API.call('/summits/template/sheet', { method:'DELETE' })); }catch(e){ toast(e.message || 'Could not change it'); }
 }
 async function saveSummitTemplate(btn){
   const list = [...document.querySelectorAll('#tplRows .tpl-row')].map(r => ({ stage: r.querySelector('.tpl-stage').value,
@@ -8847,15 +8894,33 @@ function vEventDetail() {
         // Registrants and their guests on separate tabs. One long mixed list
         // made it hard to see who had signed up versus who they were bringing.
         const tab = ['all','registered','guests'].includes(ui.evTab) ? ui.evTab : 'all';
-        const registrants = coming.filter(a=>!a.guestOf);
-        const shown = tab==='registered' ? registrants : tab==='guests' ? guests : coming;
+        // A-Z by the main registrant (last name, or first), guests kept with them
+        const sortBy = ui.regSort || 'last';
+        const plain = n => String(n || '').replace(/\s*#\s*\d+\s*$/, '').trim();
+        const lastOf = n => { const w = plain(n).split(/\s+/); return (w.length > 1 ? w[w.length - 1] + ' ' + w.slice(0, -1).join(' ') : w[0] || '').toLowerCase(); };
+        const order = (a, b) => sortBy === 'first' ? plain(a.name).toLowerCase().localeCompare(plain(b.name).toLowerCase())
+          : sortBy === 'newest' ? String(b.key).localeCompare(String(a.key)) : lastOf(a.name).localeCompare(lastOf(b.name));
+        const registrants = coming.filter(a=>!a.guestOf).sort(order);
+        const guestsOf = r => guests.filter(g => String(g.key).startsWith(r.key + '_g'));
         const label = { all:'Everyone', registered:'Registered', guests:'Guests' };
         const count = { all:coming.length, registered:registrants.length, guests:guests.length };
-        const chips = coming.length ? `<div class="chips">${['all','registered','guests'].map(k =>
+        const chips = coming.length ? `<div class="chips" style="margin-bottom:8px">${['all','registered','guests'].map(k =>
           `<button class="chip ${tab===k?'on':''}" onclick="ui.evTab='${k}';renderContent()">${label[k]} · ${count[k]}</button>`).join('')}</div>` : '';
-        return `${chips}
-          ${shown.length ? `<div class="card" style="padding:4px 14px">${shown.map(person).join('')}</div>`
-            : coming.length ? `<div class="empty">${tab==='guests'?'Nobody is bringing a guest.':'No registrations.'}</div>` : ''}`;
+        const tools = coming.length ? `<div class="map-tools" style="margin-bottom:8px">
+            <input class="map-search reg-search" placeholder="Search registrations: name, business, email, phone…" value="${esc(ui.regQ||'')}" oninput="ui.regQ=this.value;filterRegs()">
+            <select class="sel" aria-label="Sort registrations" onchange="ui.regSort=this.value;renderContent()">
+              ${[['last','A–Z by last name'],['first','A–Z by first name'],['newest','Newest first']].map(([k,l]) => `<option value="${k}" ${sortBy===k?'selected':''}>${l}</option>`).join('')}</select></div>` : '';
+        // Each registrant with their guests is one block, searched as a whole
+        const blocks = tab === 'guests'
+          ? guests.slice().sort(order).map(g => [g])
+          : registrants.map(r => tab === 'registered' ? [r] : [r, ...guestsOf(r)]);
+        const text = a => [a.name, a.business, a.email, a.phone, a.guestOf].join(' ').toLowerCase();
+        const body = blocks.length ? `<div class="card reg-list" style="padding:4px 14px">${blocks.map(b =>
+            `<div class="reg-block" data-q="${esc(b.map(text).join(' '))}">${b.map(person).join('')}</div>`).join('')}
+            <div class="empty" id="regNone" hidden>Nobody matches that search.</div></div>`
+          : coming.length ? `<div class="empty">${tab==='guests'?'Nobody is bringing a guest.':'No registrations.'}</div>` : '';
+        setTimeout(filterRegs, 0);
+        return chips + tools + body;
       })()}
       ${coming.length ? ''
         : regsError[e.id]
@@ -8905,6 +8970,13 @@ function exportAttendees(eventId){
  * bringing as their own line. At the door you tick off people, not
  * registrations, so guests need to be visible in their own right.
  */
+/* Search an event's registrations in place, so the box keeps its focus */
+function filterRegs(){
+  const q = (ui.regQ || '').trim().toLowerCase();
+  let n = 0;
+  document.querySelectorAll('.reg-block').forEach(b => { const hit = !q || b.dataset.q.includes(q); b.hidden = !hit; if(hit) n++; });
+  const none = document.getElementById('regNone'); if(none) none.hidden = n > 0;
+}
 function attendeeList(eventId){
   const out = [];
   eventRegs(eventId).forEach(r => {

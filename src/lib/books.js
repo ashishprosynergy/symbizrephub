@@ -298,7 +298,8 @@ async function vendorNames() {
 async function overdueInvoices() {
   const out = [];
   for (let page = 1; page <= 15; page++) {
-    const body = await call('/invoices', { query: { filter_by: 'Status.Overdue', per_page: 200, page, sort_column: 'due_date', sort_order: 'A' } });
+    // Unpaid includes part-paid ones; the due date decides what is overdue
+    const body = await call('/invoices', { query: { filter_by: 'Status.Unpaid', per_page: 200, page, sort_column: 'due_date', sort_order: 'A' } });
     (body.invoices || []).forEach(i => out.push({ id: i.invoice_id, number: i.invoice_number, customerId: i.customer_id,
       customer: i.customer_name, date: i.date, due: i.due_date, total: Number(i.total) || 0, balance: Number(i.balance) || 0 }));
     if (!body.page_context || !body.page_context.has_more_page) break;

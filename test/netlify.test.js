@@ -1285,7 +1285,7 @@ describe("ring meetings, membership levels and the member map", () => {
 
   test('the standard checklist can be replaced with Symbiz\'s own, and a summit with nothing done can start again from it', async () => {
     const before = JSON.parse((await invoke('GET', '/summits/template', { token })).body);
-    assert.equal(before.custom, false); assert.equal(before.list.length, 20);
+    assert.equal(before.custom, false); assert.equal(before.list.length, 19, "Mel's checklist");
     assert.equal((await invoke('PUT', '/summits/template', { token, body: { list: [{ title: '  ' }] } })).statusCode, 400);
     const saved = JSON.parse((await invoke('PUT', '/summits/template', { token, body: { list: [
       { stage: 'Spring', dueOffset: '-120', title: 'Pick the venue with the board' },
@@ -1301,7 +1301,7 @@ describe("ring meetings, membership levels and the member map", () => {
     const fresh = JSON.parse((await invoke('POST', '/summits/SU3/tasks/restart', { token })).body);
     assert.equal(fresh.length, 2);
     const reset = JSON.parse((await invoke('DELETE', '/summits/template', { token })).body);
-    assert.equal(reset.custom, false); assert.equal(reset.list.length, 20);
+    assert.equal(reset.custom, false); assert.equal(reset.list.length, 19);
   });
 
   test('summit "Who": a team member is linked and sees the task as theirs; anyone else is a typed name', async () => {
@@ -1309,8 +1309,8 @@ describe("ring meetings, membership levels and the member map", () => {
       Event_Date_and_Time: '2027-05-01T18:00:00-04:00', Event_State: 'NC' });
     const d = JSON.parse((await invoke('GET', '/summits/SU2', { token })).body);
     // The standard checklist arrives whole and in order, from one write
-    assert.equal(d.tasks.length, 20);
-    assert.deepEqual(d.tasks.map(t => t.position), [...Array(20).keys()]);
+    assert.equal(d.tasks.length, 19);
+    assert.deepEqual(d.tasks.map(t => t.position), [...Array(19).keys()]);
 
     const mine = JSON.parse((await invoke('GET', '/summits/mine', { token })).body);
     assert.ok(Array.isArray(mine.team) && mine.team.some(p => p.id === 'adm1'), 'office people are on the team list');
@@ -1523,6 +1523,21 @@ describe('self-registration for summits and events', () => {
   });
 });
 
+describe('summit checklist from a Google Sheet', () => {
+  test("Mel's sheet layout becomes tasks counted back from the summit", () => {
+    const routes = require('../src/routes');
+    const csv = ['Regional Summit Planning,,,,', 'Date,11/4/2025,,,10/19/2026', ',,,,', 'Status,Deadline,Action,Action Owner,Note',
+      ',7/7/2025,Schedule facility,,', ',,Sponsorships,,', ',8/26/2025,Create Invitations & Tickets,Keturah,',
+      ',10/20/2025,Sound System,,"Record audio, compile slides"'].join(String.fromCharCode(10));
+    const list = routes._checklistFromCsv(csv);
+    assert.deepEqual(list.map(t => t.dueOffset), [-120, null, -70, -15]);
+    assert.equal(list[0].stage, '4–6 months prior');
+    assert.equal(list[2].owner, 'Keturah');
+    assert.equal(list[3].title, 'Sound System — Record audio, compile slides');
+    assert.throws(() => routes._checklistFromCsv('a,b' + String.fromCharCode(10) + 'c,d'), /Deadline/);
+  });
+});
+
 /* ═══════════ ZOHO ANSWERS SHARED BETWEEN COPIES OF THE FUNCTION ═══════════ */
 describe('zoho cache', () => {
   const zoho = require('../src/lib/zoho');
@@ -1540,12 +1555,21 @@ describe('zoho cache', () => {
       await zoho.coql(q);
       assert.equal(coqlCalls() - before, 1, 'answered from memory');
       await new Promise(r => setTimeout(r, 20));
-      const saved = await db.query('SELECT key FROM zoho_cache');
+      const saved = await db.query("SELECT key FROM zoho_cache WHERE key NOT LIKE 'lock:%'");
       assert.equal(saved.length, 1, 'kept for the other copies');
       await zoho.updateRecords('Growth_Ring_Groups', [{ id: 'GR9', Name: '99' }]);
       assert.equal((await db.query('SELECT key FROM zoho_cache')).length, 0, 'a change clears the shared copy');
       await zoho.coql(q);
       assert.equal(coqlCalls() - before, 2, 'asked again after the change');
+      // Another copy is already fetching this: wait for its answer, don't ask Zoho too
+      const q2 = "select id from Growth_Ring_Groups where Name = 'x' limit 200";
+      const k = require('crypto').createHash('sha1').update(q2).digest('hex');
+      await db.query("INSERT INTO zoho_cache (key, body, at) VALUES ($1, '', now())", ['lock:' + k]);
+      setTimeout(() => db.query('INSERT INTO zoho_cache (key, body, at) VALUES ($1, $2, now())', [k, JSON.stringify([{ id: 'from-the-other-copy' }])]), 300);
+      const callsBefore = coqlCalls();
+      const got = await zoho.coql(q2);
+      assert.equal(got[0].id, 'from-the-other-copy');
+      assert.equal(coqlCalls(), callsBefore, 'Zoho was not asked a second time');
     } finally {
       process.env.ZOHO_CACHE_SECONDS = was;
       await zoho.clearCache();

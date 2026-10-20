@@ -11,14 +11,32 @@
 const { Pool } = require('pg');
 
 let pool;
+/* Neon allows about a hundred direct connections, and every running copy of
+   the function holds its own. With a whole team opening the app at once that
+   runs out, so connect through Neon's pooler (thousands of connections),
+   whose address is the same with "-pooler" after the endpoint name. */
+function viaPooler(cs) {
+  if (!cs || process.env.PG_NO_POOLER) return cs;
+  try {
+    const u = new URL(cs);
+    if (/.neon.tech$/.test(u.hostname) && !u.hostname.split('.')[0].endsWith('-pooler')) {
+      const [first, ...rest] = u.hostname.split('.');
+      u.hostname = [first + '-pooler', ...rest].join('.');
+      return u.toString();
+    }
+  } catch { /* not a URL we know: use it as given */ }
+  return cs;
+}
+let poolerOff = false;
 function getPool() {
   if (!pool) {
-    const cs = process.env.DATABASE_URL;
+    const cs = poolerOff ? process.env.DATABASE_URL : viaPooler(process.env.DATABASE_URL);
     if (!cs) throw new Error('DATABASE_URL is not set');
     pool = new Pool({
       connectionString: cs,
-      // Serverless: keep the pool tiny, connections are precious
-      max: parseInt(process.env.PG_MAX || '3', 10),
+      // Serverless: each running copy serves one request at a time, so two
+      // connections cover its side-by-side queries; many copies run at once
+      max: parseInt(process.env.PG_MAX || '2', 10),
       // Long enough to span typing a password or a code, so the next step
       // doesn't pay for a fresh encrypted connection; Neon sleeps after 5 min.
       idleTimeoutMillis: 120_000,
@@ -37,6 +55,12 @@ async function query(text, params = []) {
   try {
     return (await getPool().query(text, params)).rows;
   } catch (e) {
+    // The pooler address didn't answer: use the direct one from now on
+    if (!poolerOff && /ENOTFOUND|ECONNREFUSED|getaddrinfo|ETIMEDOUT/i.test(`${e.code} ${e.message}`) && viaPooler(process.env.DATABASE_URL) !== process.env.DATABASE_URL) {
+      console.error('[pg] pooler unreachable, connecting directly:', e.message);
+      poolerOff = true; const old = pool; pool = null; old && old.end().catch(() => {});
+      return (await getPool().query(text, params)).rows;
+    }
     if (!DEAD_SOCKET.test(e.message || '')) throw e;
     return (await getPool().query(text, params)).rows;
   }
@@ -434,10 +458,10 @@ const q = {
   /** A whole checklist in one statement: one trip to the database, not twenty */
   addSummitTasks: (eventId, list) => {
     const vals = [], params = [];
-    list.forEach((t, i) => { const b = i * 5;
-      vals.push(`($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5})`);
-      params.push(eventId, t.title, t.stage || null, t.dueOffset ?? null, t.position || 0); });
-    return query(`INSERT INTO summit_tasks (event_id,title,stage,due_offset,position) VALUES ${vals.join(',')}`, params);
+    list.forEach((t, i) => { const b = i * 6;
+      vals.push(`($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6})`);
+      params.push(eventId, t.title, t.stage || null, t.dueOffset ?? null, t.position || 0, t.owner || null); });
+    return query(`INSERT INTO summit_tasks (event_id,title,stage,due_offset,position,owner) VALUES ${vals.join(',')}`, params);
   },
   /** Open tasks given to one person, across every summit */
   summitTasksFor: userId => query('SELECT * FROM summit_tasks WHERE owner_id = $1 AND done = FALSE ORDER BY event_id, position', [userId]),
@@ -628,4 +652,4 @@ async function settings(defaults) {
   return out;
 }
 
-module.exports = { getPool, query, one, migrate, q, audit, setting, settings, SCHEMA, _setPoolForTests: p => { pool = p; } };
+module.exports = { viaPooler, getPool, query, one, migrate, q, audit, setting, settings, SCHEMA, _setPoolForTests: p => { pool = p; } };

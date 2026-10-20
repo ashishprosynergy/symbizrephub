@@ -230,6 +230,38 @@ function clearCache() {
   if (cacheMs() <= 0) return Promise.resolve();
   try { return require('../db').query('DELETE FROM zoho_cache').catch(() => {}); } catch (_) { return Promise.resolve(); }
 }
+/* One copy asks Zoho; the others wait for its answer. When the whole team
+   opens the app together, dozens of copies start at once with nothing saved
+   yet, and all asking Zoho the same question would hit its limit on how many
+   requests it takes at a time. A short-lived row in the database says
+   "someone is fetching this"; it lapses after 15 seconds if that copy dies. */
+async function claimFetch(q) {
+  try {
+    const { query } = require('../db'), k = 'lock:' + keyOf(q);
+    // A plain insert: the row already being there (another copy holds it) is the answer "no"
+    const claim = () => query("INSERT INTO zoho_cache (key, body, at) VALUES ($1, '', now())", [k])
+      .then(() => [k], e => { if (/duplicate|unique|23505/i.test(`${e.code} ${e.message}`)) return []; throw e; });
+    if ((await claim()).length) return true;
+    const old = await query('SELECT at FROM zoho_cache WHERE key = $1', [k]);
+    if (!old.length || Date.now() - new Date(old[0].at).getTime() > 15000) {
+      await query('DELETE FROM zoho_cache WHERE key = $1', [k]);
+      return (await claim()).length > 0;
+    }
+    return false;
+  } catch (_) { return true; }      // no database: just ask Zoho
+}
+function releaseFetch(q) {
+  try { require('../db').query('DELETE FROM zoho_cache WHERE key = $1', ['lock:' + keyOf(q)]).catch(() => {}); } catch (_) {}
+}
+async function waitShared(q, ttl, ms = 8000) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    await new Promise(r => setTimeout(r, 250));
+    const got = await sharedGet(q, ttl);
+    if (got) return got;
+  }
+  return null;                       // it never came: ask Zoho ourselves
+}
 const inflight = new Map();      // the same question asked twice at once goes to Zoho once
 
 /**
@@ -269,8 +301,10 @@ async function coql(selectQuery) {
   if (hit && Date.now() - hit.at < ttl) return structuredClone(hit.rows);
   if (!inflight.has(selectQuery)) {
     inflight.set(selectQuery, (async () => {
-      const shared = await sharedGet(selectQuery, ttl);
-      const rows = shared || await coqlPaged(selectQuery);
+      let shared = await sharedGet(selectQuery, ttl);
+      // Another copy is already asking Zoho the same thing: wait for its answer
+      if (!shared && !(await claimFetch(selectQuery))) shared = await waitShared(selectQuery, ttl);
+      const rows = shared || await coqlPaged(selectQuery).finally(() => releaseFetch(selectQuery));
       if (!shared) sharedPut(selectQuery, rows);
       if (cache.size > 300) cache.delete(cache.keys().next().value);
       cache.set(selectQuery, { at: Date.now(), rows: structuredClone(rows) });
