@@ -5551,6 +5551,9 @@ function myGoalCard(){
 // The last list is kept on the device, so the screen opens at once and updates quietly
 var summitList = (() => { try{ return JSON.parse(localStorage.getItem('rephub_summits') || 'null'); }catch(e){ return null; } })();
 var summitFresh = false, summitBusy = false, summitDetail = null, summitDetailId = null;
+// Each summit opened (or fetched ahead) since the page loaded: shown at once
+// next time, then quietly brought up to date
+var summitDetails = {};
 var summitMine = null;          // { team, tasks } — the tasks given to me, and who can be given one
 function loadSummits(force){
   if(summitBusy || (summitFresh && !force) || !API.live || !can('summits')) return;
@@ -5559,7 +5562,8 @@ function loadSummits(force){
   loadSummitMine();
   API.call('/summits' + (force ? '?fresh=1' : '')).then(v => { summitList = v; summitFresh = true;
       try{ localStorage.setItem('rephub_summits', JSON.stringify(v)); }catch(e){}
-      if(force) toast('Summits are up to date with Zoho'); })
+      if(force) toast('Summits are up to date with Zoho');
+      prefetchSummits(); })
     .catch(e => { if(!summitList || force) toast(e.message || 'Could not refresh'); if(!summitList) summitList = { error: e.message }; })
     .finally(() => { summitBusy = false; if(ui.view === 'summits' || ui.view === 'dash') renderContent(); });
 }
@@ -5593,12 +5597,23 @@ function loadSummitMine(){
   API.call('/summits/mine').then(v => { summitMine = v; if(ui.view === 'summits' || ui.view === 'summitDetail') renderContent(); fillShell(); })
     .catch(() => {});
 }
+function fetchSummit(id){
+  return API.call('/summits/' + id).then(v => { summitDetails[id] = v; if(summitDetailId === id) summitDetail = v; return v; });
+}
+/* The summits coming up are the ones people open: fetch them ahead, one at a
+   time, so opening one is instant instead of waiting on the server */
+function prefetchSummits(){
+  if(!Array.isArray(summitList)) return;
+  const ids = summitList.filter(s => s.date >= TODAY_S).sort((a,b) => a.date.localeCompare(b.date))
+    .slice(0, 6).map(s => s.id).filter(id => !summitDetails[id]);
+  ids.reduce((p, id) => p.then(() => summitDetails[id] ? null : fetchSummit(id).catch(() => {})), Promise.resolve());
+}
 function openSummit(id){
   goingTo(); ui.view = 'summitDetail'; ui.summitId = id;
-  if(summitDetailId !== id){ summitDetail = null; summitDetailId = id; }
+  summitDetailId = id; summitDetail = summitDetails[id] || null;
   if(!summitMine) loadSummitMine();
   render();
-  API.call('/summits/' + id).then(v => { summitDetail = v; }).catch(e => { summitDetail = { error: e.message }; })
+  fetchSummit(id).catch(e => { if(!summitDetail) summitDetail = { error: e.message }; })
     .finally(() => { if(ui.view === 'summitDetail' && ui.summitId === id) renderContent(); });
 }
 const summitPlace = s => [s.venue, [s.city, s.state].filter(Boolean).join(', ')].filter(Boolean).join(', ');
@@ -6928,7 +6943,7 @@ function login(id){ ui.me=id; ui.view=PEOPLE.find(p=>p.id===id).role==='rep'?'to
 function logout(){ placeByScreen = {};
   elevation = { token: null, until: 0 }; keepElevation(); accessStatus = null; accessData = null; myDevices = null; ui.twoStep = null;
   try{ localStorage.removeItem('rephub_user'); localStorage.removeItem('rephub_team'); localStorage.removeItem('rephub_retention'); localStorage.removeItem('rephub_map'); localStorage.removeItem('rephub_summits'); sessionStorage.removeItem('rephub_screen'); }catch(e){}
-  retentionData = null; retentionFresh = false; summitList = null; summitFresh = false; summitMine = null; summitDetail = null; mapData = null; mapFresh = false;
+  retentionData = null; retentionFresh = false; summitList = null; summitFresh = false; summitMine = null; summitDetail = null; summitDetails = {}; mapData = null; mapFresh = false;
   mgrData = null; myGoal = undefined; onboard = null; repMail = null; repMailP = null; arData = null;
   serverUsers = null; zohoReps = null; usersLoadedAt = 0;
   API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
