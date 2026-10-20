@@ -2129,6 +2129,29 @@ r.post('/pending/lead', auth.authRequired, wrap(async (req, res) => {
   res.status(201).json({ id: out[0]?.id, status: 'pending' });
 }));
 
+/** A rep asks for a new Growth Ring. Nothing is made in Zoho until the office approves. */
+r.post('/pending/ring', auth.authRequired, wrap(async (req, res) => {
+  const b = req.body || {};
+  const clean = (v, n) => String(v || '').trim().slice(0, n || 120);
+  const name = clean(b.name);
+  if (!name) return res.status(400).json({ error: 'Give the ring a name' });
+  if (!b.facId && !clean(b.facName)) return res.status(400).json({ error: 'Pick a facilitator or enter a name' });
+  const payload = { name, facId: b.facId ? clean(b.facId, 40) : undefined, facName: clean(b.facName), facPhone: clean(b.facPhone, 40),
+    facFreq: clean(b.facFreq, 30), memFreq: clean(b.memFreq, 30), meetingRhythm: clean(b.meetingRhythm, 30),
+    capacity: Math.max(2, Math.min(20, parseInt(b.capacity, 10) || 8)) };
+  const out = await q.addWriteRequest({
+    kind: 'ring', payload, repId: req.user.id, repName: req.user.name, repZohoId: req.user.zoho_owner_id,
+    summary: `Start a new Growth Ring: ${name}${payload.facName ? ' (facilitator ' + payload.facName + ')' : ''}`,
+  });
+  await audit(req.user.id, 'pending.ring', { name }, req.ip);
+  for (const u of await q.allOffice()) {
+    reminders.sendEmail(u.email, `New Growth Ring to approve: ${name}`,
+      `<p>${req.user.name} asked to start <strong>${name}</strong>.</p><p><a href="${cfg.appUrl}/?view=approvals">Review it</a></p>`,
+      { userId: u.id, kind: 'approval' }).catch(() => {});
+  }
+  res.status(201).json({ id: out[0]?.id, status: 'pending' });
+}));
+
 /**
  * The office approves, and only now does anything reach Zoho.
  * If the Zoho write fails the item stays pending with the reason, so nothing
@@ -2160,6 +2183,15 @@ r.post('/pending/:id/approve', auth.authRequired, auth.requireOffice, access.req
 
     } else if (row.kind === 'lead') {
       const out = await zoho.insertRecords('Leads', [toZoho.lead(p)]);
+      zohoId = out[0]?.details?.id;
+
+    } else if (row.kind === 'ring') {
+      // Zoho marks a ring live with its Active tick box; the facilitator is
+      // linked when they are already a contact, and named in the description if not
+      const desc = [p.facId ? '' : p.facName && `Facilitator: ${p.facName}${p.facPhone ? ', ' + p.facPhone : ''} (not yet in Zoho)`,
+        p.meetingRhythm && `Meets: ${p.meetingRhythm}`, `Started from Rep Hub by ${row.rep_name || 'a rep'}`].filter(Boolean).join('. ');
+      const out = await zoho.insertRecords(M.RING, [{ ...toZoho.ring({ name: p.name, facId: p.facId, repZohoId: row.rep_zoho_id || undefined,
+        capacity: p.capacity, description: desc }), Active: true }]);
       zohoId = out[0]?.details?.id;
 
     } else {

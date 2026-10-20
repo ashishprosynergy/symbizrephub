@@ -1738,6 +1738,24 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.match(last.summary, /possible duplicate/);
   });
 
+  test('a rep asks for a new ring; it reaches Zoho only when the office approves', async () => {
+    assert.equal((await invoke('POST', '/pending/ring', { token: rep, body: { name: '' } })).statusCode, 400, 'a name is needed');
+    const before = store.Growth_Ring_Groups.length;
+    const made = await invoke('POST', '/pending/ring', { token: rep, body: { name: 'Harvest Table', facName: 'Amos Zook',
+      facPhone: '717-555-0100', meetingRhythm: 'Monthly', capacity: '9' } });
+    assert.equal(made.statusCode, 201, made.body);
+    assert.equal(store.Growth_Ring_Groups.length, before, 'nothing in Zoho yet');
+    const id = J(made).id;
+    assert.equal((await invoke('POST', `/pending/${id}/approve`, { token: rep })).statusCode, 403, 'a rep cannot approve it');
+    const ok = await invoke('POST', `/pending/${id}/approve`, { token: office });
+    assert.equal(ok.statusCode, 200, ok.body);
+    const ringRec = store.Growth_Ring_Groups.find(g => g.Name === 'Harvest Table');
+    assert.ok(ringRec, 'the ring is in Zoho');
+    assert.equal(ringRec.Active, true);
+    assert.equal(ringRec.Target_Group_Size, 9);
+    assert.match(ringRec.Group_Description, /Amos Zook, 717-555-0100/);
+  });
+
   test('members over 60 days in A/R come from Books, matched to their rep; reps see only theirs', async () => {
     const day = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
     store.Growth_Ring_Groups.push({ id: 'GRR1', Name: 'Rep One Ring', Active: true, Regional_Rep: { id: 'CONTACT_REP_1', name: 'Test Rep' } });
