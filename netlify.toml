@@ -46,6 +46,10 @@
 [functions."accounting-auto"]
   schedule = "0 13 * * *"
 
+# Sunday evening: a copy of hours, expenses and the rest, emailed to the owner
+[functions."weekly-backup"]
+  schedule = "0 23 * * 0"
+
 # The offline worker must always be checked for a newer version
 [[headers]]
   for = "/sw.js"

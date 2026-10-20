@@ -1045,6 +1045,17 @@
      Opacity and transform only, so it never shifts the layout. */
   @keyframes vtIn{from{opacity:0;transform:translateY(5px);}}
   .content.v-enter{animation:vtIn .18s cubic-bezier(.2,.7,.3,1);}
+  .more-menu{position:relative;}
+  .more-menu > summary{list-style:none;}
+  .more-menu > summary::-webkit-details-marker{display:none;}
+  .more-pop{position:absolute;z-index:20;top:calc(100% + 6px);left:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px;display:flex;flex-direction:column;gap:4px;min-width:200px;}
+  .more-pop .btn{justify-content:flex-start;text-align:left;width:100%;}
+  /* Small buttons side by side in a list row are easy to mis-tap on a phone */
+  @media (max-width: 640px){
+    .row-actions .btn.sm, .btnrow .btn.sm{min-height:40px;padding-left:12px;padding-right:12px;}
+    .row-actions{gap:8px;}
+  }
   @media (prefers-reduced-motion: reduce){ .content.v-enter{animation:none;} }
 
   .srch{width:100%;font-family:inherit;font-size:14.5px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);margin-bottom:12px;}
@@ -1373,8 +1384,9 @@ window.addEventListener('offline', ()=>{
 const Later = {
   KEY: 'rephub_later',
   all(){ try{ return JSON.parse(localStorage.getItem(this.KEY) || '[]'); }catch(e){ return []; } },
-  save(i){ try{ localStorage.setItem(this.KEY, JSON.stringify(i)); }catch(e){} },
-  add(path, body, label, local){ const i = this.all(); i.push({ id: uuid(), path, body, label, local: local || null, at: Date.now() }); this.save(i); },
+  save(i){ try{ localStorage.setItem(this.KEY, JSON.stringify(i)); return true; }catch(e){ return false; } },
+  // True only if it really was kept (a big receipt photo can fill the phone's storage)
+  add(path, body, label, local){ const i = this.all(); i.push({ id: uuid(), path, body, label, local: local || null, at: Date.now() }); return this.save(i); },
   count(){ return this.all().length; },
   // What is still to send, shown in the lists meanwhile (so a call made with
   // no signal doesn't reappear as overdue)
@@ -3990,6 +4002,47 @@ function vRepAccount(){
       : `<div class="empty">No rings assigned.</div>`}`;
 }
 
+/* Backup: a weekly emailed copy of hours, expenses and the rest, and a
+   download whenever wanted (with receipt files, which are too big to email) */
+var backupStatus = null, backupBusy = false;
+function backupCard(){
+  if(!backupStatus){ API.call('/admin/backup/status').then(v => { backupStatus = v; drawBackupCard(); })
+    .catch(e => { backupStatus = { error: e.message }; drawBackupCard(); }); return skeleton(2); }
+  if(backupStatus.error) return `<div class="row-sub">${esc(backupStatus.error)}</div>`;
+  const last = backupStatus.last;
+  return `<div class="row-sub" style="margin-bottom:10px">Hours, expenses, approvals, summit checklists and notes are kept in Rep Hub's own database.
+      Calls, registrations and leads are kept in Zoho. Every Sunday evening a copy of Rep Hub's own data is emailed, so there is always a second copy.</div>
+    <div class="kv"><span class="k">Emailed to</span><span>${esc((backupStatus.to || []).join(', ') || 'no one yet')}</span></div>
+    <div class="kv"><span class="k">Last copy</span><span>${last ? `${fmt(String(last.at).slice(0,10))} — ${last.ok ? 'sent' : '<span style="color:var(--rust)">not sent: ' + esc(last.error || '') + '</span>'}` : 'none yet'}</span></div>
+    <div class="field" style="margin-top:10px"><label>Also send it to</label>
+      <input id="backupExtra" value="${esc(backupStatus.extra || '')}" placeholder="name@example.com" onchange="saveBackupEmail(this.value)">
+      <div class="hint">The owner always gets it. Add anyone else here, separated by commas.</div></div>
+    <div class="btnrow">
+      <button class="btn primary sm" ${backupBusy ? 'disabled' : ''} onclick="sendBackupNow()">${backupBusy ? 'Sending…' : 'Email a copy now'}</button>
+      <button class="btn sm" onclick="downloadBackup(false)">Download a copy</button>
+      <button class="btn sm" onclick="downloadBackup(true)">Download with receipt files</button></div>`;
+}
+function drawBackupCard(){ const el = document.getElementById('backupCard'); if(el) el.innerHTML = backupCard(); }
+async function saveBackupEmail(v){
+  try{ const o = await API.call('/admin/backup/email', { method:'PUT', body: JSON.stringify({ email: v }) });
+    backupStatus = { ...backupStatus, ...o }; drawBackupCard(); toast('Saved'); }
+  catch(e){ toast(e.message); }
+}
+async function sendBackupNow(){
+  backupBusy = true; drawBackupCard();
+  try{ const o = await API.call('/admin/backup/send', { method:'POST' }); toast('Backup emailed to ' + o.to.join(', ')); backupStatus = null; }
+  catch(e){ toast(e.message); }
+  backupBusy = false; drawBackupCard();
+}
+async function downloadBackup(receipts){
+  try{
+    toast('Preparing the backup…');
+    const b = await API.call('/admin/backup' + (receipts ? '?receipts=1' : ''));
+    const url = URL.createObjectURL(new Blob([JSON.stringify(b, null, 1)], { type: 'application/json' }));
+    const a = document.createElement('a'); a.href = url; a.download = `rephub-backup-${String(b.madeAt).slice(0,10)}${receipts ? '-with-receipts' : ''}.json`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }catch(e){ toast(e.message || 'Could not make the backup'); }
+}
 function vSettings(){
   const s=S.settings;
   return `<div class="section-head"><div><h2>Settings</h2><div class="sub">Defaults for new rings and how reminders behave.</div></div>
@@ -4058,6 +4111,9 @@ function vSettings(){
 
     ${API.live ? `<h3 class="sub-h">Zoho Books</h3>
     <div class="card" id="booksCard">${booksCard()}</div>` : ''}` : ''}
+
+    ${API.live && (isOwner() || isAdmin()) ? `<h3 class="sub-h">Backup</h3>
+    <div class="card" id="backupCard">${backupCard()}</div>` : ''}
 
     <h3 class="sub-h">Zoho CRM connection</h3>
     <div class="card">
@@ -4304,7 +4360,7 @@ function vAccess(){
 function myAccessSummary(){
   const p = me().perms || {};
   const labels = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', rings:'Rings',
-    visits:'Visits', unaffiliated:'No ring yet', reports:'Reports, coverage and retention', team:'Reps screen', reminders:'Reminders', summits:'Summits',
+    visits:'Visits', unaffiliated:'Not in a Growth Ring', reports:'Reports, coverage and retention', team:'Reps screen', reminders:'Reminders', summits:'Summits',
     accounting:'Hours, expenses and accounting', books:'Zoho Books and accounting settings', users:'Rep accounts',
     settings:'App settings', system:'System check and activity log' };
   Object.keys(labels).forEach(k => { if(!(k in p)) p[k] = SCREEN_CAPS.includes(k); });
@@ -4633,21 +4689,34 @@ function vAR(){
   const list = Array.isArray(arData.members) ? arData.members : [];
   if(!list.length) return head + `<div class="empty">Nobody is more than 60 days behind. 🎉</div>`;
   const row = a => { const m = arMember(a), phone = m ? (m.phone || m.mobile) : '';
+    // Has anyone spoken to them since they went 60 days over? So the rep sees
+    // who is still to call, and the office sees who has been followed up.
+    const lc = a.contactId ? lastContact(a.contactId) : null;
+    const since = a.invoices.length ? addDays(a.invoices[0].due, 60) : null;
+    const reached = lc && since && lc.date >= since;
+    const contact = !a.contactId ? `<div class="row-sub" style="color:var(--ink-muted)">Not linked to a member record — the name in Zoho Books doesn't match a member in a ring.</div>`
+      : reached ? `<div class="row-sub"><span class="tag ok">Contacted ${fmtShort(lc.date)}</span> ${esc(lc.outcome || '')}${lc.repId && !isRep() ? ' · ' + esc(splitRepName(pname(lc.repId)).name) : ''}</div>`
+      : `<div class="row-sub"><span class="tag overdue">Not contacted yet</span>${lc ? ' last call ' + fmtShort(lc.date) + ', before it went overdue' : ''}</div>`;
     return `<div class="row ar-row"><div class="row-main">
         <div class="row-title">${esc(a.name)} ${a.days >= 120 ? `<span class="tag overdue">${a.days} days</span>` : `<span class="tag soon">${a.days} days</span>`}</div>
-        <div class="row-sub">${money(a.balance)} unpaid · ${a.invoices.length} invoice${a.invoices.length === 1 ? '' : 's'} (${a.invoices.map(i => esc(i.number) + ' due ' + fmtShort(i.due)).join(', ')})${a.rings.length ? ' · ring ' + esc(a.rings.join(', ')) : ' · not in a ring'}</div></div>
+        <div class="row-sub">${money(a.balance)} unpaid · ${a.invoices.length} invoice${a.invoices.length === 1 ? '' : 's'} (${a.invoices.map(i => esc(i.number) + ' due ' + fmtShort(i.due)).join(', ')})${a.rings.length ? ' · ring ' + esc(a.rings.join(', ')) : ' · not in a ring'}</div>
+        ${contact}</div>
       <div class="row-actions">
         ${phone ? `<a class="btn sm" href="${telHref(phone)}">Call</a>` : ''}
         ${m ? `<button class="btn sm primary" onclick='openLog(${JSON.stringify({ ringId: m.ringId, who: m.name, type: "Member Call", memberId: m.id })})'>Log a call</button>
           <button class="btn sm" onclick="openMember('${m.id}')">Open</button>` : ''}</div></div>`; };
   const total = list.reduce((s, a) => s + a.balance, 0);
+  const toCall = list.filter(a => { const lc = a.contactId ? lastContact(a.contactId) : null;
+    return !(lc && a.invoices.length && lc.date >= addDays(a.invoices[0].due, 60)); }).length;
   if(isRep()) return head + `<div class="stats"><div class="stat"><div class="n" style="color:var(--rust)">${list.length}</div><div class="l">members</div></div>
+      <div class="stat"><div class="n" style="color:var(--accent)">${toCall}</div><div class="l">still to contact</div></div>
       <div class="stat"><div class="n">${money(total)}</div><div class="l">unpaid</div></div></div>
     <div class="card" style="padding:4px 15px">${list.map(row).join('')}</div>`;
   // The office: one group per rep
   const by = new Map(); list.forEach(a => { const k = a.repId || ''; if(!by.has(k)) by.set(k, []); by.get(k).push(a); });
   const groups = [...by.entries()].sort((a, b) => b[1].length - a[1].length);
   return head + `<div class="stats"><div class="stat"><div class="n" style="color:var(--rust)">${list.length}</div><div class="l">members</div></div>
+      <div class="stat"><div class="n" style="color:var(--accent)">${toCall}</div><div class="l">not contacted yet</div></div>
       <div class="stat"><div class="n">${money(total)}</div><div class="l">unpaid</div></div>
       <div class="stat"><div class="n">${groups.filter(g => g[0]).length}</div><div class="l">reps with members to call</div></div></div>
     ${groups.map(([rid, items]) => `<div class="card ar-group"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
@@ -5945,18 +6014,26 @@ function whoFrom(text){
   return p ? { ownerId: p.id, owner: p.name } : { ownerId: null, owner: v };
 }
 async function summitTask(id, change){
+  const before = summitDetail && summitDetail.tasks.find(t => t.id === id);
+  // Giving a task to someone else emails them: ask first, so a slip of the
+  // list doesn't send the wrong person an email
+  if(change.ownerId && change.ownerId !== (me()||{}).id && (!before || before.owner_id !== change.ownerId)){
+    change.notify = confirm(`Email ${change.owner} to tell them this task is theirs?`);
+  }
   const tasks = await summitCall('/tasks/' + id, { method: 'PATCH', body: JSON.stringify(change) }, 'the task');
-  if(tasks && summitDetail){
-    const before = summitDetail.tasks.find(t => t.id === id), after = tasks.find(t => t.id === id);
+  if(!tasks){ renderContent(); return; }        // not saved: put the tick (or the name) back as it was
+  if(summitDetail){
+    const after = tasks.find(t => t.id === id);
     summitDetail.tasks = tasks; summitFresh = false; renderContent();
-    if(change.ownerId && after && after.owner_id && (!before || before.owner_id !== after.owner_id) && after.owner_id !== (me()||{}).id)
-      toast(`${after.owner} has been emailed about it`);
+    if(change.notify && after && after.owner_id) toast(`${after.owner} has been emailed about it`);
     if('ownerId' in change || 'done' in change) loadSummitMine();
   }
 }
 async function summitTaskAdd(form){
   const f = form.elements;
-  const tasks = await summitCall('/tasks', { method: 'POST', body: JSON.stringify({ title: f.title.value, dueOffset: f.dueOffset.value, ...whoFrom(f.owner.value) }) });
+  const who = whoFrom(f.owner.value);
+  const notify = who.ownerId && who.ownerId !== (me()||{}).id ? confirm(`Email ${who.owner} to tell them this task is theirs?`) : false;
+  const tasks = await summitCall('/tasks', { method: 'POST', body: JSON.stringify({ title: f.title.value, dueOffset: f.dueOffset.value, ...who, notify }) });
   if(tasks){ summitDetail.tasks = tasks; summitFresh = false; renderContent(); toast('Task added'); loadSummitMine(); }
 }
 async function summitTaskDelete(id){
@@ -6655,6 +6732,12 @@ function openModal(h){ const b=document.getElementById('modalBody'); b.innerHTML
   document.documentElement.classList.add('modal-open'); }   // the page behind stays still
 // Typing in a form marks it, so a stray tap beside the box doesn't throw the work away
 document.addEventListener('input', e => { const b = document.getElementById('modalBody'); if(b && b.contains(e.target)) b.dataset.typed = '1'; }, true);
+// A "Print or export" menu closes once something in it is picked, or on a tap elsewhere
+document.addEventListener('click', e => {
+  document.querySelectorAll('details.more-menu[open]').forEach(d => {
+    if(!d.contains(e.target) || e.target.closest('.more-pop button')) d.open = false;
+  });
+});
 function closeModalAsk(){
   const b = document.getElementById('modalBody');
   if(b && b.dataset.typed === '1' && b.querySelector('form')){
@@ -7070,7 +7153,7 @@ function navItems(){
     ['people','People','☰'],
     ['calendar','Calendar','▦'],
     ['timesheet','Hours','$'],
-    ['resources','Web Toolbox','⎘'],
+    ['resources','Forms','⎘'],
   ];
   const base = [
     ['dash','Overview','◉'],
@@ -7091,11 +7174,11 @@ function navItems(){
 function navGroups(){
   if(isRep()) return [
     ['', [['today','Today'],['rings','My Rings'],['people','People'],['ar','A/R over 60 days'],['map','Member map'],['calendar','Calendar'],['events','Events & summits']]],
-    ['Admin', [['timesheet','Hours & expenses'],['resources','Web Toolbox'],['callsheet','Call sheet']]],
+    ['Your work', [['timesheet','Hours & expenses'],['resources','Forms'],['callsheet','Call sheet']]],
   ];
   const office = [
     ['', [['dash','Overview'],['manager','Rep manager'],['approvals','Approvals'],['calendar','Calendar'],['summits','Summits']]],
-    ['Records', [['members','Members'],['ar','A/R over 60 days'],['map','Member map'],['allrings','Rings'],['visits','Visits'],['unaffiliated','No ring yet']]],
+    ['Records', [['members','Members'],['ar','A/R over 60 days'],['map','Member map'],['allrings','Rings'],['visits','Visits'],['unaffiliated','Not in a Growth Ring']]],
     ['Reporting', [['reports','Reports'],['coverage','Coverage'],['insights','Retention'],['timesheet','Hours & expenses']]],
     ['Setup', [['team','Reps'],['reminders','Reminders'],['settings','Settings'],
       ...(isAdmin() ? [['checks','System check']] : []), ['access','Access & security']]],
@@ -8467,7 +8550,7 @@ function renderContentSafe(el){
   }
 }
 const VIEW_TITLE = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', map:'Member map', summits:'Summits', summitDetail:'Summits', allrings:'Rings',
-  visits:'Visits', unaffiliated:'No ring yet', reports:'Reports', coverage:'Coverage', insights:'Retention', team:'Reps', repAccount:'Reps',
+  visits:'Visits', unaffiliated:'Not in a Growth Ring', reports:'Reports', coverage:'Coverage', insights:'Retention', team:'Reps', repAccount:'Reps',
   reminders:'Reminders', ar:'A/R over 60 days', events:'Events & summits', timesheet:'Hours and expenses', checks:'System check', settings:'Settings', access:'Access & security' };
 function renderContentInner(el){
   const v=ui.view;
@@ -8542,6 +8625,7 @@ function refreshAfterSend(){
   if(!API.live) return;
   API.activities(previewRepId || null).then(v => { S.activities = withWaiting((v||[]).map(adapt.activity)); save(); render(); }).catch(() => {});
   API.time().then(v => { S.timeEntries = (v||[]).map(adapt.timeEntry); save(); render(); }).catch(() => {});
+  API.expenses().then(v => { S.expenses = (v||[]).map(adapt.expense); save(); render(); }).catch(() => {});
 }
 function tabbarHTML(){
   // Four screens and "More". Office people used to get the first five of
@@ -9342,7 +9426,7 @@ function vResources() {
     </div></div>`;
   };
 
-  return `<div class="section-head"><div><h2>Web Toolbox</h2>
+  return `<div class="section-head"><div><h2>Forms</h2>
     <div class="sub">Everything you need to hand, in one place — forms, folders and your role.</div></div></div>
     ${(() => {
       // These carry an `id`, not a `key` — the old check counted every one as missing.
@@ -9437,13 +9521,17 @@ function vTimesheet() {
         <div class="btnrow"><button class="btn sm primary" onclick="stopTimer()">Stop and save</button>
         <button class="btn sm" onclick="cancelTimer()">Discard</button></div></div>` : ''; })()}
     <div class="btnrow" style="margin-bottom:8px">
-      ${getTimer() ? '' : `<button class="btn primary" onclick="openTimerStart()">Start timer</button>`}
+      ${getTimer() ? '' : `<button class="btn" onclick="openTimerStart()">Start timer</button>`}
       <button class="btn" onclick="openTime()">Log hours</button>
       <button class="btn primary" onclick="openExpense()">Add an expense</button>
-      <button class="btn" onclick="repPDF(timesheetPDF)">Timesheet PDF</button>
-      <button class="btn" onclick="repPDF(expenseReportPDF)">Expense claim PDF</button>
-      <button class="btn" onclick="exportAccounting()">Export CSV</button>
-      <button class="btn" onclick="exportAccountingPDF()">Export PDF</button>
+      <!-- The printing and exports, together under one button: seven in a row
+           crowded a phone, and the everyday three got lost among them -->
+      <details class="more-menu"><summary class="btn">Print or export ▾</summary>
+        <div class="more-pop">
+          <button class="btn sm" onclick="repPDF(timesheetPDF)">Timesheet PDF</button>
+          <button class="btn sm" onclick="repPDF(expenseReportPDF)">Expense claim PDF</button>
+          <button class="btn sm" onclick="exportAccounting()">Spreadsheet (CSV)</button>
+          <button class="btn sm" onclick="exportAccountingPDF()">Full list PDF</button></div></details>
     </div>
     ${isOffice() ? (() => {
       const approved = [...S.timeEntries.filter(t => t.status === 'Approved'), ...S.expenses.filter(x => x.status === 'Approved')];
@@ -9777,6 +9865,18 @@ async function submitExpense(e) {
       S.expenses = (await API.expenses()).map(adapt.expense); save(); render();
       return;
     } catch (ex) {
+      if (ex.offline) {
+        // No signal: keep it, receipt and all, and send it when there is
+        const body = { ...base, receiptName: pendingReceipt ? pendingReceipt.name : undefined,
+          receiptType: pendingReceipt ? pendingReceipt.type : undefined, receiptData: pendingReceipt ? pendingReceipt.data : undefined };
+        if (Later.add('/expenses', body, `your ${money(base.amount)} expense`)) {
+          pendingReceipt = null; closeModal(); render();
+          toast('No signal: the expense is saved on this phone and will be sent when you have signal');
+        } else {
+          toast('No signal, and the receipt is too large to keep on this phone. Please send it when you have signal.');
+        }
+        return;
+      }
       toast(ex.message || 'Could not submit the expense');
       return;
     }

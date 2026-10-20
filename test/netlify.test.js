@@ -1738,6 +1738,20 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.match(last.summary, /possible duplicate/);
   });
 
+  test('a backup holds the hours and expenses, never passwords or keys; only the owner or a director can take one', async () => {
+    await invoke('POST', '/time', { token: rep, body: { date: '2026-10-01', hours: 3, category: 'Admin', description: 'Backup check' } });
+    assert.equal((await invoke('GET', '/admin/backup', { token: rep })).statusCode, 403);
+    assert.equal((await invoke('GET', '/admin/backup', { token: office })).statusCode, 403, 'office staff cannot');
+    await db.q.setSetting('zoho_books_refresh_token', 'SECRET-123');
+    const b = await require('../src/routes')._buildBackup();
+    assert.ok(b.tables.time_entries.some(t => t.description === 'Backup check'), 'hours are in it');
+    assert.ok(Array.isArray(b.tables.expenses));
+    const text = JSON.stringify(b);
+    assert.ok(!text.includes('SECRET-123'), 'no connection keys');
+    assert.ok(!text.includes('password_hash'), 'no passwords');
+    assert.ok(!b.tables.expenses.some(x => 'receipt_data' in x), 'receipt files left out of the email copy');
+  });
+
   test('a rep asks for a new ring; it reaches Zoho only when the office approves', async () => {
     assert.equal((await invoke('POST', '/pending/ring', { token: rep, body: { name: '' } })).statusCode, 400, 'a name is needed');
     const before = store.Growth_Ring_Groups.length;

@@ -3,7 +3,7 @@ const express = require('express');
 const crypto = require('crypto');
 const zoho = require('./lib/zoho');
 const cfg = require('./config');
-const { q, audit, setting } = require('./db');
+const { q, audit, setting, query } = require('./db');
 const auth = require('./auth');
 const access = require('./access');
 const { enqueue, flushQueue } = require('./sync');
@@ -1669,7 +1669,7 @@ r.post('/summits/:id/tasks', ...summitGuard, wrap(async (req, res) => {
   const task = { eventId: req.params.id, title, stage: 'Added', dueOffset: isNaN(dueOffset) ? null : dueOffset,
     owner: who.owner, ownerId: who.ownerId, position: n + 100 };
   await q.addSummitTask(task);
-  tellOwner(who.person, task, req.params.id, req);
+  if (req.body?.notify !== false) tellOwner(who.person, task, req.params.id, req);
   res.json(await q.summitTasks(req.params.id));
 }));
 r.patch('/summits/:id/tasks/:taskId', ...summitGuard, wrap(async (req, res) => {
@@ -1684,7 +1684,8 @@ r.patch('/summits/:id/tasks/:taskId', ...summitGuard, wrap(async (req, res) => {
     dueOffset: b.dueOffset !== undefined ? (b.dueOffset === '' || b.dueOffset == null ? null : parseInt(b.dueOffset, 10)) : cur.due_offset,
     done: b.done !== undefined ? !!b.done : cur.done, doneBy: req.user.name,
   });
-  if (changingWho && who.ownerId && who.ownerId !== cur.owner_id) {
+  // The person asked whether to email them; a "no" (say, a slip of the list) sends nothing
+  if (changingWho && who.ownerId && who.ownerId !== cur.owner_id && b.notify !== false) {
     tellOwner(who.person, { title: cur.title, dueOffset: cur.due_offset }, req.params.id, req);
   }
   res.json(await q.summitTasks(req.params.id));
@@ -2645,6 +2646,87 @@ async function runAutoAccounting(now = new Date()) {
   return { period, status: out.status, ...out.body };
 }
 r.runAutoAccounting = runAutoAccounting;
+
+/* ═══════════ BACKUP ═══════════
+ * Everything people type into Rep Hub that lives only in our database (hours,
+ * expenses, approvals, summit checklists, notes) — copied out so there is
+ * always a second copy. Calls, registrations and leads already live in Zoho.
+ * Never included: passwords, sign-in codes, or connection keys. */
+const BACKUP_TABLES = ['time_entries', 'expenses', 'pending_writes', 'accounting_batches', 'summit_tasks', 'summit_links',
+  'summit_notes', 'rep_goals', 'rep_notes', 'visit_plans', 'rep_messages'];
+async function buildBackup({ receipts = false } = {}) {
+  const out = { madeAt: new Date().toISOString(), site: cfg.appUrl, tables: {} };
+  for (const t of BACKUP_TABLES) {
+    const rows = await query(`SELECT * FROM ${t} ORDER BY 1`).catch(() => null);
+    if (!rows) continue;
+    out.tables[t] = receipts ? rows : rows.map(x => {
+      if (!('receipt_data' in x)) return x;
+      const { receipt_data, ...rest } = x; return { ...rest, has_receipt: !!receipt_data };
+    });
+  }
+  out.tables.people = (await q.allUsers()).map(u => ({ id: u.id, name: u.name, email: u.email, role: u.role, region: u.region,
+    zoho_owner_id: u.zoho_owner_id, active: u.active, created_at: u.created_at }));
+  out.tables.settings = (await query('SELECT key, value FROM settings ORDER BY key').catch(() => []))
+    .filter(s => !/token|secret|password|key|cache/i.test(s.key));
+  return out;
+}
+const csvOf = (rows, cols) => [cols.join(',')].concat(rows.map(r => cols.map(c => {
+  const v = r[c] instanceof Date ? r[c].toISOString().slice(0, 10) : r[c] == null ? '' : String(r[c]);
+  return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}).join(','))).join('\n');
+async function backupTo() {
+  const extra = String(await setting('backup_email', '') || '').split(/[,;\s]+/).filter(e => /@/.test(e));
+  const oid = await access.ownerId();
+  const owner = oid ? await q.userById(oid) : null;
+  return [...new Set([owner && owner.email, ...extra].filter(Boolean))];
+}
+async function sendBackup() {
+  const to = await backupTo();
+  if (!to.length) return { skipped: 'no one to send it to' };
+  const b = await buildBackup();
+  const day = b.madeAt.slice(0, 10), T = b.tables;
+  const count = Object.fromEntries(Object.entries(T).map(([k, v]) => [k, v.length]));
+  const html = `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;font-size:15px;color:#1E2A20;max-width:560px">
+    <p>This week's copy of everything typed into Rep Hub that is not kept in Zoho: hours, expenses, approvals, summit checklists and notes.</p>
+    <p><strong>${count.time_entries || 0}</strong> hours entries · <strong>${count.expenses || 0}</strong> expenses · <strong>${count.pending_writes || 0}</strong> approval requests · <strong>${count.summit_tasks || 0}</strong> summit tasks</p>
+    <p>Keep this email. The two spreadsheets open in Excel; the .json file holds everything, and can be used to restore Rep Hub. Receipt pictures are not attached (they are too large for email) — download them any time from Settings → Backup.</p></div>`;
+  const res = await reminders.sendEmail(to.join(','), `Rep Hub backup — ${day}`, html, { kind: 'backup', attachments: [
+    { filename: `rephub-hours-${day}.csv`, content: csvOf(T.time_entries || [], ['id', 'rep_name', 'entry_date', 'hours', 'category', 'description', 'status', 'created_at', 'approved_at', 'approved_by']) },
+    { filename: `rephub-expenses-${day}.csv`, content: csvOf(T.expenses || [], ['id', 'rep_name', 'entry_date', 'amount', 'category', 'vendor', 'description', 'status', 'has_receipt', 'created_at', 'approved_at', 'approved_by']) },
+    { filename: `rephub-backup-${day}.json`, content: JSON.stringify(b) },
+  ] });
+  await q.setSetting('backup_last', JSON.stringify({ at: b.madeAt, to, ok: !!res.ok, error: res.error || null })).catch(() => {});
+  return { to, ok: !!res.ok, error: res.error || null, count };
+}
+r.sendBackup = sendBackup;
+r._buildBackup = buildBackup;
+const backupGuard = [auth.authRequired, wrap(async (req, res, next) => {
+  if (req.user.role === 'admin' || await access.isOwner(req.user)) return next();
+  res.status(403).json({ error: 'Only the owner or a director can take a backup' });
+})];
+r.get('/admin/backup', ...backupGuard, wrap(async (req, res) => {
+  const b = await buildBackup({ receipts: req.query.receipts === '1' });
+  await audit(req.user.id, 'backup.downloaded', { receipts: req.query.receipts === '1' }, req.ip);
+  res.set('Content-Disposition', `attachment; filename="rephub-backup-${b.madeAt.slice(0, 10)}.json"`);
+  res.json(b);
+}));
+r.get('/admin/backup/status', ...backupGuard, wrap(async (req, res) => {
+  let last = null; try { last = JSON.parse(await setting('backup_last', 'null')); } catch { last = null; }
+  res.json({ to: await backupTo(), extra: await setting('backup_email', ''), last });
+}));
+r.put('/admin/backup/email', ...backupGuard, wrap(async (req, res) => {
+  const list = String(req.body?.email || '').split(/[,;\s]+/).filter(Boolean);
+  if (list.some(e => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))) return res.status(400).json({ error: 'That does not look like an email address' });
+  await q.setSetting('backup_email', list.join(', '));
+  res.json({ to: await backupTo(), extra: list.join(', ') });
+}));
+r.post('/admin/backup/send', ...backupGuard, wrap(async (req, res) => {
+  const out = await sendBackup();
+  await audit(req.user.id, 'backup.sent', { to: out.to }, req.ip);
+  if (out.skipped) return res.status(400).json({ error: 'There is no email address to send it to' });
+  if (!out.ok) return res.status(502).json({ error: out.error || 'The email could not be sent' });
+  res.json(out);
+}));
 
 /* ═══════════ SYNC (offline queue) ═══════════ */
 r.post('/sync/push', auth.authRequired, writesAllowed, wrap(async (req, res) => {
