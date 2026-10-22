@@ -2494,7 +2494,7 @@ async function deliverToAccounting({ timeIds, expenseIds, actor, ip, site } = {}
         each named by its line (E1, E2…).${missing ? ` <strong>${missing} expense${missing === 1 ? ' has' : 's have'} no receipt.</strong>` : ''}</p>
      ${table}
      ${e.length ? `<h3 style="font-size:15px;margin:22px 0 10px">Expenses with receipts</h3>${expenseBlocks}` : ''}
-     ${booksOn && e.length ? `<p style="color:#555;font-size:13px">Each expense is also entered in Zoho Books as a bill numbered RH-&lt;expense number&gt;, with its receipt attached.</p>` : ''}`,
+     ${booksOn && (e.length || t.length) ? `<p style="color:#555;font-size:13px">These are also entered in Zoho Books as bills to each rep: each expense as RH-&lt;expense number&gt; with its receipt attached, and each rep's hours as one bill per week (RH-H…).</p>` : ''}`,
     { userId: actor?.id || null, kind: 'accounting',
       replyTo: approverUsers.length === 1 ? approverUsers[0].email : (actor?.email || undefined),
       attachments: [
@@ -2515,8 +2515,9 @@ async function deliverToAccounting({ timeIds, expenseIds, actor, ip, site } = {}
   // Bills in Zoho Books, as many as fit in this request; the 15-minute job
   // finishes the rest. A Books problem never undoes the email that went.
   let booksOut = null;
-  if (booksOn && (await setting('booksAuto', 'on')) !== 'off' && e.length) {
+  if (booksOn && (await setting('booksAuto', 'on')) !== 'off' && (e.length || t.length)) {
     await q.queueBills(e.map(x => x.id));
+    await q.queueTimeBills(t.map(x => x.id));     // hours: one bill per rep per week
     // On Netlify the bills are made by a background function, so pressing
     // Send doesn't wait on Zoho Books (that was most of the delay). Anywhere
     // else — tests, a local server — they are made here, as before.
@@ -3202,7 +3203,7 @@ r.get('/admin/audit', auth.authRequired, access.requirePerm('system'), wrap(asyn
 const OFFICE_SETTINGS = {
   retryDays: '4', rescheduleDays: '7', dueWindow: String(cfg.reminders.dueWindowDays), announcement: '',
   accountingEmail: 'accounting@symbiz.org', accountingDay: '1',
-  booksAuto: 'on', booksPayee: 'vendor', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
+  booksAuto: 'on', booksPayee: 'rep', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
   supportName: 'Ashish Raj', supportPhone: '540-212-9403',
 };
 
@@ -3344,16 +3345,48 @@ r.post('/admin/access/transfer', auth.authRequired, access.requireOwner, auth.re
 r.get('/admin/books-status', auth.authRequired, access.requirePerm('books'), wrap(async (req, res) => {
   const st = await books.status();
   const pending = st.configured ? (await q.billsToMake(500, true)) : [];
+  const weeks = st.configured ? books.hourWeeks(await q.timeBillsToMake(1000, true)) : [];
+  // Hours sent to accounting before hours were billed: offered to bill now
+  const unbilled = st.configured ? (await query("SELECT COUNT(*)::int AS n FROM time_entries WHERE status = 'Reimbursed' AND books_bill_id IS NULL AND books_queued = FALSE").catch(() => [{ n: 0 }]))[0].n : 0;
   res.json({ ...st,
-    waiting: pending.filter(x => !x.books_error).length,
-    failed: pending.filter(x => x.books_error).map(x => ({ id: x.id, rep: x.rep_name, amount: Number(x.amount), error: x.books_error })),
+    waiting: pending.filter(x => !x.books_error).length + weeks.filter(g => !g.rows.some(r => r.books_error)).length,
+    failed: [
+      ...pending.filter(x => x.books_error).map(x => ({ id: 'E' + x.id, rep: x.rep_name, amount: Number(x.amount), error: x.books_error })),
+      ...weeks.filter(g => g.rows.some(r => r.books_error)).map(g => ({ id: 'Hours ' + g.week.start, rep: g.rep,
+        hours: g.rows.reduce((s, r) => s + Number(r.hours), 0), error: g.rows.find(r => r.books_error).books_error })),
+    ],
+    unbilledHours: unbilled,
   });
+}));
+
+/* Each rep's hourly rate, for the hours bills */
+r.get('/admin/books/rates', auth.authRequired, access.requirePerm('books'), wrap(async (req, res) => {
+  const rates = await books.hourlyRates();
+  const reps = (await q.allUsers()).filter(u => u.role === 'rep').map(u => ({ id: u.id, name: u.name }));
+  // Office people who log hours too (Mel works as a rep as well)
+  const others = (await query('SELECT DISTINCT t.user_id AS id, u.name FROM time_entries t JOIN users u ON u.id = t.user_id').catch(() => []))
+    .filter(x => !reps.some(r => r.id === x.id));
+  res.json({ default: rates.def || null, rates: rates.map, people: [...reps, ...others].sort((a, b) => String(a.name).localeCompare(String(b.name))) });
+}));
+r.put('/admin/books/rates', auth.authRequired, access.requirePerm('books'), wrap(async (req, res) => {
+  const b = req.body || {};
+  const num = v => { const n = Math.round(Number(v) * 100) / 100; return n > 0 && n < 1000 ? n : null; };
+  const map = {};
+  Object.entries(b.rates || {}).slice(0, 300).forEach(([id, v]) => { const n = num(v); if (n) map[String(id).slice(0, 80)] = n; });
+  await q.setSetting('repHourlyRates', JSON.stringify(map));
+  if (b.default !== undefined) await q.setSetting('defaultHourlyRate', num(b.default) ? String(num(b.default)) : '');
+  await audit(req.user.id, 'books.rates', { reps: Object.keys(map).length, default: num(b.default) }, req.ip);
+  const rates = await books.hourlyRates();
+  res.json({ default: rates.def || null, rates: rates.map });
 }));
 
 /** Try again, including ones that failed — after fixing an account name, say. */
 r.post('/accounting/books-retry', auth.authRequired, access.requirePerm('books'), wrap(async (req, res) => {
   if (!(await books.configured())) return res.status(400).json({ error: 'Zoho Books is not connected yet' });
-  const out = await books.makeBills({ includeFailed: true });
+  // Hours already sent to accounting that never got a bill are billed now too
+  const backfilled = await q.queueSentTimeWithoutBill();
+  const out = await books.makeBills({ includeFailed: true, budgetMs: 8000 });
+  out.backfilledHours = backfilled.length;
   await audit(req.user.id, 'books.retry', out, req.ip);
   res.json(out);
 }));

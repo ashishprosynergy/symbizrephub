@@ -1045,6 +1045,8 @@
      Opacity and transform only, so it never shifts the layout. */
   @keyframes vtIn{from{opacity:0;transform:translateY(5px);}}
   .content.v-enter{animation:vtIn .18s cubic-bezier(.2,.7,.3,1);}
+  .rate-in{display:inline-flex;align-items:center;gap:4px;color:var(--ink-muted);font-size:14px;}
+  .rate-in input{width:96px;text-align:right;}
   .more-menu{position:relative;}
   .more-menu > summary{list-style:none;}
   .more-menu > summary::-webkit-details-marker{display:none;}
@@ -4161,20 +4163,22 @@ function booksCard(){
   const s = S.settings;
   const accts = b.expenseAccounts || [];
   return `<div class="row-sub" style="margin-bottom:10px">Connected to <strong>${esc(b.organization||'Zoho Books')}</strong>.
-      Expenses sent to accounting become bills numbered RH-&lt;expense number&gt;, with the receipt attached.</div>
-    <div class="two">
-      <div class="field"><label>Make bills automatically</label>
-        <select onchange="setSetting('booksAuto', this.value)">
-          <option value="on" ${(s.booksAuto||'on')==='on'?'selected':''}>Yes — when sent to accounting</option>
-          <option value="off" ${s.booksAuto==='off'?'selected':''}>No — email only</option></select></div>
-      <div class="field"><label>Bill is made out to</label>
-        <select onchange="setSetting('booksPayee', this.value)">
-          <option value="vendor" ${(s.booksPayee||'vendor')==='vendor'?'selected':''}>The vendor on the receipt (matched to Books)</option>
-          <option value="rep" ${s.booksPayee==='rep'?'selected':''}>The rep (they are reimbursed)</option></select></div>
-    </div>
-    <div class="field" style="margin-bottom:6px"><label>Which account each expense goes to</label></div>
+      When hours and expenses are sent to accounting, each becomes a bill <strong>to the rep who submitted it</strong>:
+      every expense as RH-&lt;number&gt; with its receipt attached (the shop is named on the line), and each rep's hours
+      as <strong>one bill per week</strong> (RH-H…), a line for each day, at their hourly rate below.</div>
+    <div class="field"><label>Make bills automatically</label>
+      <select onchange="setSetting('booksAuto', this.value)">
+        <option value="on" ${(s.booksAuto||'on')==='on'?'selected':''}>Yes — when sent to accounting</option>
+        <option value="off" ${s.booksAuto==='off'?'selected':''}>No — email only</option></select></div>
+    ${b.unbilledHours ? `<div class="callout" style="margin:0 0 12px"><strong>${b.unbilledHours} hours entr${b.unbilledHours===1?'y was':'ies were'} sent to accounting without a bill</strong>
+      Set each rep's hourly rate below, then press <strong>Make bills now</strong>: they become one bill per rep per week.
+      <div class="btnrow" style="margin-top:9px"><button class="btn sm primary" onclick="retryBooks(this)">Make bills now</button></div></div>` : ''}
+    <div class="field" style="margin-bottom:6px"><label>Hourly rates</label>
+      <div class="hint" style="margin-top:0">What each rep is paid an hour. Hours are billed at this rate; a rep with no rate uses the standard one.</div></div>
+    <div id="ratesBox">${ratesBox()}</div>
+    <div class="field" style="margin:14px 0 6px"><label>Which account each goes to</label></div>
     <div class="acct-map">
-      ${EXPENSE_CATEGORIES.map(c => `<div class="acct-row"><span class="acct-cat">${esc(c)}</span>
+      ${['Hours', ...EXPENSE_CATEGORIES].map(c => `<div class="acct-row"><span class="acct-cat">${esc(c)}</span>
           ${searchSelect({ value: (b.accountMap||{})[c] || '', options: accts, fn: 'setBooksAccount', arg: c,
             placeholder: 'Type to search ' + accts.length + ' accounts…' })}</div>`).join('')}
     </div>
@@ -4186,8 +4190,29 @@ function booksCard(){
     ${b.waiting ? `<div class="row-sub">${b.waiting} bill${b.waiting===1?' is':'s are'} queued and will be made within 15 minutes.</div>` : ''}
     ${b.failed && b.failed.length ? `<div class="callout rust" style="margin:10px 0 0">
       <strong>${b.failed.length} bill${b.failed.length===1?'':'s'} could not be made</strong>
-      ${b.failed.slice(0,5).map(f => `E${f.id} · ${esc(f.rep)} · ${money(f.amount)} — ${esc(f.error)}`).join('<br>')}
+      ${b.failed.slice(0,5).map(f => `${esc(String(f.id))} · ${esc(f.rep)} · ${f.hours != null ? f.hours + ' h' : money(f.amount)} — ${esc(f.error)}`).join('<br>')}
       <div class="btnrow" style="margin-top:9px"><button class="btn sm primary" onclick="retryBooks(this)">Try again</button></div></div>` : ''}`;
+}
+/* Each rep's hourly rate, saved as you leave each box */
+var ratesData = null;
+function ratesBox(){
+  if(!ratesData){ API.call('/admin/books/rates').then(v => { ratesData = v; const el = document.getElementById('ratesBox'); if(el) el.innerHTML = ratesBox(); })
+    .catch(e => { ratesData = { error: e.message }; const el = document.getElementById('ratesBox'); if(el) el.innerHTML = ratesBox(); }); return skeleton(2); }
+  if(ratesData.error) return `<div class="row-sub">${esc(ratesData.error)}</div>`;
+  const box = (id, v, ph) => `<span class="rate-in">$<input type="number" min="0" step="0.25" inputmode="decimal" value="${v ?? ''}" placeholder="${ph}"
+      onchange="saveRate('${esc(id)}', this.value)" aria-label="Hourly rate">/hr</span>`;
+  return `<div class="acct-map">
+    <div class="acct-row"><span class="acct-cat"><strong>Standard rate</strong></span>${box('__default', ratesData.default, '0.00')}</div>
+    ${(ratesData.people || []).map(p => `<div class="acct-row"><span class="acct-cat">${esc(splitRepName(p.name).name)}</span>
+      ${box(p.id, (ratesData.rates || {})[p.id], ratesData.default ? String(ratesData.default) : '0.00')}</div>`).join('')}</div>`;
+}
+async function saveRate(id, v){
+  const body = { rates: { ...(ratesData.rates || {}) } };
+  if(id === '__default') body.default = v;
+  else if(v === '' || !(Number(v) > 0)) delete body.rates[id];
+  else body.rates[id] = v;
+  try{ const o = await API.call('/admin/books/rates', { method:'PUT', body: JSON.stringify(body) }); ratesData = { ...ratesData, ...o }; toast('Rate saved'); }
+  catch(e){ toast(e.message || 'Could not save the rate'); }
 }
 async function connectBooks(btn){
   const code = (document.getElementById('booksCode').value || '').trim();
@@ -4501,7 +4526,8 @@ async function retryBooks(btn){
   if(btn){ btn.disabled = true; btn.textContent = 'Working…'; }
   try{
     const out = await API.booksRetry();
-    toast(`${out.made} bill${out.made===1?'':'s'} made${out.failed?`, ${out.failed} still failing`:''}${out.left?`, ${out.left} queued`:''}`);
+    toast(`${out.made} bill${out.made===1?'':'s'} made${out.hoursBills?` (${out.hoursBills} for hours)`:''}${out.failed?`, ${out.failed} could not be made — see why below`:''}${out.left?`, ${out.left} still to do`:''}`);
+    ratesData = null;
   }catch(e){ toast(e.message || 'Could not reach Zoho Books'); }
   booksInfo = null; loadBooksStatus(true);
   try{ S.expenses = (await API.expenses()).map(adapt.expense); save(); renderContent(); }catch(e){}

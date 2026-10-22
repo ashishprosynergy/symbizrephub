@@ -166,14 +166,19 @@ const ATTACHABLE = /^(image\/(jpe?g|png|gif|bmp)|application\/pdf)$/i;
  * Make (or find) the bill for one expense and attach its receipt.
  * Returns { billId, note } — note explains anything left undone.
  */
-async function billFor(x, { payee = 'vendor', fallbackAccount = '', accountMap = {}, approvedBy = '', receipt = null } = {}) {
+/* The rep is who Symbiz pays back, so the rep is the vendor on every bill.
+   Their Rep Hub name carries the member number ("Dave Mullet #0412"); the
+   Books vendor is just the name, and an existing one is used when there is. */
+const repName = n => String(n || '').replace(/\s*#\s*\d+\s*$/, '').trim();
+
+async function billFor(x, { payee = 'rep', fallbackAccount = '', accountMap = {}, approvedBy = '', receipt = null } = {}) {
   const number = `RH-${x.id}`;
   const existing = await call('/bills', { query: { bill_number: number } });
   const already = (existing.bills || []).find(b => b.bill_number === number);
   if (already) return { billId: already.bill_id, note: 'already in Zoho Books' };
 
   const merchant = String(x.vendor || '').trim();
-  const payeeName = payee === 'vendor' && merchant ? merchant : x.rep_name;
+  const payeeName = payee === 'vendor' && merchant ? merchant : (repName(x.rep_name) || merchant);
   if (!payeeName) throw new Error('No rep name or vendor to bill');
 
   const mapped = accountMap[x.category];
@@ -226,11 +231,68 @@ function receiptFrom(row, x) {
  * Serverless requests are cut off after ~10s, so stop early and leave the
  * rest for the scheduled job rather than be killed half-way through a bill.
  */
+/* ── Hours: one bill per rep per week (Monday to Sunday), a line for each
+   entry, at the rep's hourly rate set in Settings. A bill for every single
+   hour would bury the books. ── */
+const DEFAULT_HOURS_ACCOUNT = '5200 Regional Representatives';
+const day10 = d => (d instanceof Date ? d.toISOString() : String(d || '')).slice(0, 10);
+function weekOf(d) {
+  const t = new Date(day10(d) + 'T12:00:00Z');
+  const back = (t.getUTCDay() + 6) % 7;                 // days since Monday
+  const mon = new Date(t.getTime() - back * 864e5);
+  return { start: mon.toISOString().slice(0, 10), end: new Date(mon.getTime() + 6 * 864e5).toISOString().slice(0, 10) };
+}
+async function hourlyRates() {
+  const { setting } = require('../db');
+  let map = {}; try { map = JSON.parse(await setting('repHourlyRates', '{}')) || {}; } catch (_) { map = {}; }
+  const def = Number(await setting('defaultHourlyRate', '')) || 0;
+  return { map, def, rateFor: id => (Number(map[id]) > 0 ? Number(map[id]) : def) };
+}
+/** Group hours entries into rep-weeks */
+function hourWeeks(rows) {
+  const by = new Map();
+  rows.forEach(r => {
+    const w = weekOf(r.entry_date), k = `${r.user_id}|${w.start}`;
+    if (!by.has(k)) by.set(k, { userId: r.user_id, rep: r.rep_name, week: w, rows: [] });
+    by.get(k).rows.push(r);
+  });
+  return [...by.values()];
+}
+async function hoursBillFor(g, { rate, accountMap = {}, approvedBy = '' }) {
+  // Numbered by the first entry in it, so a retry finds the bill it already made
+  const ids = g.rows.map(r => Number(r.id)).sort((a, b) => a - b);
+  const number = `RH-H${ids[0]}`;
+  const existing = await call('/bills', { query: { bill_number: number } });
+  const already = (existing.bills || []).find(b => b.bill_number === number);
+  if (already) return { billId: already.bill_id };
+  const name = repName(g.rep);
+  if (!(rate > 0)) throw new Error(`No hourly rate set for ${name || 'this rep'}. Set it in Settings → Zoho Books → Hourly rates, then press Make bills now.`);
+  const wanted = accountMap.Hours || DEFAULT_HOURS_ACCOUNT;
+  const acct = (await accountId(wanted)) || (await accountId(DEFAULT_HOURS_ACCOUNT));
+  if (!acct) throw new Error(`No Zoho Books account "${wanted}" for hours. Pick one in Settings → Zoho Books.`);
+  const hours = g.rows.reduce((s, r) => s + Number(r.hours), 0);
+  const nice = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const last = g.rows.map(r => day10(r.entry_date)).sort().pop();
+  const made = await call('/bills', { method: 'POST', json: {
+    vendor_id: await vendorId(name),
+    bill_number: number,
+    reference_number: `Rep Hub hours, week of ${g.week.start}`,
+    date: last,
+    line_items: g.rows.slice().sort((a, b) => day10(a.entry_date).localeCompare(day10(b.entry_date))).map(r => ({
+      account_id: acct, rate, quantity: Number(r.hours),
+      description: `${nice(day10(r.entry_date))} · ${r.category}${r.description ? ' — ' + r.description : ''}`.slice(0, 2000) })),
+    notes: [`Rep hours from Rep Hub, week of ${nice(g.week.start)}–${nice(g.week.end)}.`, `${name}: ${hours} hours at $${rate.toFixed(2)} an hour.`,
+      approvedBy ? `Approved by ${approvedBy}.` : ''].filter(Boolean).join(' ').slice(0, 1000),
+  } });
+  return { billId: made.bill.bill_id, hours };
+}
+
 async function makeBills({ budgetMs = 7000, limit = 25, includeFailed = false } = {}) {
   if (!(await configured())) return { configured: false, made: 0, failed: 0, left: 0 };
   const { q, setting } = require('../db');
   const started = Date.now();
-  const payee = await setting('booksPayee', 'vendor');
+  // Always the rep: they are the one paid back (the shop is on the bill's line)
+  const payee = 'rep';
   const fallbackAccount = await setting('booksAccount', DEFAULT_FALLBACK);
   const accountMap = await accountMapSetting();
   const users = await q.everyUser();
@@ -250,8 +312,23 @@ async function makeBills({ budgetMs = 7000, limit = 25, includeFailed = false } 
       failed++;
     }
   }
-  const left = (await q.billsToMake(500, false)).length;
-  return { configured: true, made, failed, left };
+  // Then the hours, a rep-week at a time
+  const rates = await hourlyRates();
+  let hoursMade = 0;
+  for (const g of hourWeeks(await q.timeBillsToMake(1000, includeFailed))) {
+    if (Date.now() - started > budgetMs) break;
+    const ids = g.rows.map(r => r.id);
+    try {
+      const out = await hoursBillFor(g, { rate: rates.rateFor(g.userId), accountMap, approvedBy: nameOf(g.rows[0].approved_by) });
+      await q.setTimeBill(ids, out.billId, null);
+      made++; hoursMade++;
+    } catch (e) {
+      await q.setTimeBill(ids, null, e.message.slice(0, 500));
+      failed++;
+    }
+  }
+  const left = (await q.billsToMake(500, false)).length + hourWeeks(await q.timeBillsToMake(1000, false)).length;
+  return { configured: true, made, hoursBills: hoursMade, failed, left };
 }
 
 /** For the settings screen: is it connected, and what can it see? */
@@ -277,6 +354,7 @@ const DEFAULT_ACCOUNTS = {
   Mileage: '5300 Contractor Reimbursements - Mileage',
   Meals: DEFAULT_FALLBACK, Lodging: DEFAULT_FALLBACK, 'Event supplies': DEFAULT_FALLBACK,
   Printing: DEFAULT_FALLBACK, Other: DEFAULT_FALLBACK,
+  Hours: '5200 Regional Representatives',
 };
 async function accountMapSetting() {
   const { setting } = require('../db');
@@ -308,4 +386,5 @@ async function overdueInvoices() {
 }
 
 module.exports = { configured, overdueInvoices, connect, disconnect, makeBills, status, billFor, vendorNames, matchVendor, DEFAULT_FALLBACK,
+  DEFAULT_HOURS_ACCOUNT, hourlyRates, weekOf, hourWeeks,
   _resetForTests: () => { token = { access: null, expiresAt: 0 }; accounts = null; vendorList = null; } };

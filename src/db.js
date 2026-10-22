@@ -290,6 +290,9 @@ CREATE TABLE IF NOT EXISTS rep_notes (
 );
 
 ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS decline_note TEXT;
+ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS books_queued BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS books_bill_id TEXT;
+ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS books_error TEXT;
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS decline_note TEXT;
 CREATE TABLE IF NOT EXISTS zoho_cache (key TEXT PRIMARY KEY, body TEXT NOT NULL, at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS visit_plans (ring_id TEXT PRIMARY KEY, visit_date DATE NOT NULL, visit_time TEXT, location TEXT, notes TEXT, set_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
@@ -567,6 +570,21 @@ const q = {
   setExpenseBill: (id, billId, error) => query(
     'UPDATE expenses SET books_bill_id = COALESCE($2, books_bill_id), books_error = $3 WHERE id = $1',
     [id, billId || null, error || null]),
+  // Hours become one bill per rep per week, so each entry remembers its bill
+  queueTimeBills: ids => ids.length ? query(
+    `UPDATE time_entries SET books_queued = TRUE WHERE id IN (${ids.map((_, i) => '$' + (i + 1)).join(',')})`,
+    ids.map(Number)) : Promise.resolve([]),
+  // Hours already sent to accounting that never got a bill (before hours were billed)
+  queueSentTimeWithoutBill: () => query(
+    "UPDATE time_entries SET books_queued = TRUE WHERE status = 'Reimbursed' AND books_bill_id IS NULL AND books_queued = FALSE RETURNING id"),
+  timeBillsToMake: (limit, includeFailed) => query(
+    `SELECT id,user_id,rep_name,entry_date,hours,category,description,approved_by,books_error
+     FROM time_entries WHERE books_queued = TRUE AND books_bill_id IS NULL
+       AND ($2::boolean OR books_error IS NULL)
+     ORDER BY user_id, entry_date, id LIMIT $1`, [limit, !!includeFailed]),
+  setTimeBill: (ids, billId, error) => ids.length ? query(
+    `UPDATE time_entries SET books_bill_id = COALESCE($1, books_bill_id), books_error = $2
+     WHERE id IN (${ids.map((_, i) => '$' + (i + 3)).join(',')})`, [billId || null, error || null, ...ids.map(Number)]) : Promise.resolve([]),
   receiptFor: id => one('SELECT user_id,receipt_name,receipt_type,receipt_data FROM expenses WHERE id = $1', [id]),
   /** Sent back to the rep with a reason; they can fix it and submit again */
   declineTime: (id, by, note) => query(

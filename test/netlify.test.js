@@ -41,6 +41,7 @@ const booksStore = {
   accounts: [
     { account_id: 'A1', account_name: 'Meals', account_type: 'expense' },
     { account_id: 'A2', account_name: 'Rep Reimbursements', account_type: 'expense' },
+    { account_id: 'A3', account_name: '5200 Regional Representatives', account_type: 'expense' },
   ],
   // Sheetz is already a vendor in Books; receipts say "SHEETZ #0421"
   contacts: [{ contact_id: 'V0', contact_name: 'Sheetz', contact_type: 'vendor' }], bills: [], attachments: [],
@@ -794,11 +795,20 @@ describe('hours and expenses', () => {
       for (const x of JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body)) {
         if (x.status === 'Submitted') await invoke('POST', `/expenses/${x.id}/approve`, { token: officeToken });
       }
+      // Hours: two days in one week, one the next week
+      for (const [date, hours] of [['2026-10-05', 2], ['2026-10-07', 3], ['2026-10-13', 1.5]]) {
+        await invoke('POST', '/time', { token: repToken, body: { date, hours, category: 'Growth Ring visit', description: 'Visit ' + date } });
+      }
+      for (const t of JSON.parse((await invoke('GET', '/time', { token: officeToken })).body)) {
+        if (t.status === 'Submitted') await invoke('POST', `/time/${t.id}/approve`, { token: officeToken });
+      }
+      assert.equal((await invoke('PUT', '/admin/books/rates', { token: repToken, body: { default: 99 } })).statusCode, 403, 'reps cannot set rates');
+      const rated = await invoke('PUT', '/admin/books/rates', { token: officeToken, body: { default: 25, rates: { rep1: 30 } } });
+      assert.equal(rated.statusCode, 200, rated.body);
 
       const sent = JSON.parse((await invoke('POST', '/accounting/send', { token: adminToken })).body);
       assert.ok(sent.books, 'books result reported');
-      assert.equal(sent.books.made, 1, JSON.stringify(sent.books));     // Meals has an account
-      assert.equal(sent.books.failed, 1);                               // Mileage has none yet
+      assert.equal(sent.books.failed, 1, JSON.stringify(sent.books));   // Mileage has no account yet
 
       const meal = booksStore.bills.find(b => /sheetz/i.test(b.line_items[0].description));
       assert.ok(meal, 'meal bill made');
@@ -807,8 +817,17 @@ describe('hours and expenses', () => {
       assert.equal(meal.line_items[0].rate, 12.4);
       assert.equal(meal.date, '2026-10-05');
       const payee = booksStore.contacts.find(c => c.contact_id === meal.vendor_id);
-      assert.equal(payee.contact_id, 'V0', 'billed to the Sheetz vendor already in Books, not a new one or the rep');
+      assert.equal(payee.contact_name, 'Test Rep', 'billed to the rep who is paid back, not the shop');
       assert.ok(booksStore.attachments.some(a => a.billId === meal.bill_id && /multipart/.test(a.type)), 'receipt attached');
+
+      // One hours bill per rep per week, a line per day, at the rep's own rate
+      const wk1 = booksStore.bills.find(b => /^RH-H/.test(b.bill_number) && b.reference_number === 'Rep Hub hours, week of 2026-10-05');
+      assert.ok(wk1, 'hours bill for the week of 5 Oct: ' + JSON.stringify(booksStore.bills.map(b => b.reference_number)));
+      assert.deepEqual(wk1.line_items.map(l => l.quantity), [2, 3]);
+      assert.ok(wk1.line_items.every(l => l.rate === 30 && l.account_id === 'A3'));
+      assert.equal(booksStore.contacts.find(c => c.contact_id === wk1.vendor_id).contact_name, 'Test Rep');
+      const wk2 = booksStore.bills.find(b => b.reference_number === 'Rep Hub hours, week of 2026-10-12');
+      assert.deepEqual(wk2.line_items.map(l => l.quantity), [1.5]);
 
       // Nothing from the batch sent before Books was connected
       assert.ok(!booksStore.bills.some(b => /Lunch with facilitator/.test(b.line_items[0].description)));
@@ -817,7 +836,7 @@ describe('hours and expenses', () => {
       const put = await invoke('PUT', '/admin/settings', { token: officeToken, body: { booksAccount: 'Rep Reimbursements' } });
       assert.equal(put.statusCode, 200);
       const retry = JSON.parse((await invoke('POST', '/accounting/books-retry', { token: officeToken })).body);
-      assert.equal(retry.made, 1, JSON.stringify(retry));
+      assert.ok(retry.made >= 1, JSON.stringify(retry));
       const miles = booksStore.bills.find(b => /Lancaster/.test(b.line_items[0].description));
       assert.equal(miles.line_items[0].account_id, 'A2');
 
@@ -825,7 +844,7 @@ describe('hours and expenses', () => {
       const count = booksStore.bills.length;
       await invoke('POST', '/accounting/books-retry', { token: officeToken });
       assert.equal(booksStore.bills.length, count);
-      assert.equal(booksStore.bills.length - billsBefore, 2);
+      assert.equal(booksStore.bills.filter((b, i) => i >= billsBefore && /^RH-\d+$/.test(b.bill_number)).length, 2, 'two expense bills');
 
       // And the app shows each expense's bill
       const rows = JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body);
