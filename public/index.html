@@ -1045,6 +1045,8 @@
      Opacity and transform only, so it never shifts the layout. */
   @keyframes vtIn{from{opacity:0;transform:translateY(5px);}}
   .content.v-enter{animation:vtIn .18s cubic-bezier(.2,.7,.3,1);}
+  .signin-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
+  .signin-url{display:inline-block;margin-top:4px;font-weight:600;color:var(--primary);word-break:break-all;}
   .rate-in{display:inline-flex;align-items:center;gap:4px;color:var(--ink-muted);font-size:14px;}
   .rate-in input{width:96px;text-align:right;}
   .more-menu{position:relative;}
@@ -3920,6 +3922,7 @@ function vTeam(){
       ${can('users') && toInvite.filter(r => r.email).length ? `<button class="btn" onclick="repsInvite(${esc(JSON.stringify(toInvite.filter(r => r.email && !String(r.id).startsWith('u:')).map(r => r.id)))}, null)">Invite ${toInvite.filter(r => r.email).length} not signed in</button>` : ''}
       ${can('users') ? `<button class="btn primary" onclick="openAddUser()">Add someone</button>` : ''}
     </div></div>
+    ${signInLinkBar()}
     ${su && su.error ? `<div class="callout rust"><strong>Could not load accounts</strong>${esc(su.error)}</div>` : ''}
     ${zohoReps && zohoReps.error ? `<div class="callout info"><strong>Could not read reps from Zoho</strong>${esc(zohoReps.error)}</div>` : ''}
     ${loading && !reps.length ? skeleton(5) : `
@@ -4657,6 +4660,31 @@ function openRegQR(eventId, title){
       <button class="btn primary" onclick="printQRPoster(${esc(JSON.stringify(title))}, ${esc(JSON.stringify(link))})">Print poster</button></div>`);
   drawQRs(document.getElementById('modalBody'));
 }
+/* Mel: "what is the link to share with the reps?" — listed where the office
+   manages reps, with a copy button and a code to scan from a phone */
+function signInLink(){ return location.origin; }
+function signInLinkBar(){
+  if(!isOffice()) return '';
+  const link = signInLink();
+  return `<div class="card signin-bar"><div style="min-width:0;flex:1"><div class="trend-t" style="margin:0">Sign-in link for reps</div>
+      <div class="row-sub">Share this with reps. They sign in with their email and the password they chose from their invitation.</div>
+      <a class="signin-url" href="${esc(link)}" target="_blank" rel="noopener">${esc(link.replace(/^https?:\/\//, ''))}</a></div>
+    <div class="btnrow" style="margin:0">
+      <button class="btn sm primary" onclick="copyText(${esc(JSON.stringify(link))}, this)">Copy link</button>
+      <button class="btn sm" onclick="openSignInQR()">QR code</button></div></div>`;
+}
+function openSignInQR(){
+  const link = signInLink();
+  openModal(`<h3>Sign in to Rep Hub</h3>
+    <p class="lead">Reps scan this with their phone camera to open Rep Hub, then sign in with their email and password.
+      Once open, they can add it to their home screen so it opens like an app.</p>
+    <div class="qr-big"><div id="qrBox" data-qr="${esc(link)}" data-size="220"></div></div>
+    <div class="qr-link"><input value="${esc(link)}" readonly onclick="this.select()"></div>
+    <div class="m-actions">
+      <button class="btn" onclick="copyText(${esc(JSON.stringify(link))}, this)">Copy link</button>
+      <button class="btn primary" onclick="downloadQR('Sign in to Rep Hub')">Download image</button></div>`);
+  drawQRs(document.getElementById('modalBody'));
+}
 function qrImage(){ const box = document.getElementById('qrBox'); const c = box && box.querySelector('canvas'); const i = box && box.querySelector('img');
   return c ? c.toDataURL('image/png') : i ? i.src : ''; }
 function downloadQR(title){
@@ -5066,7 +5094,8 @@ function vManager(){
           : `<strong style="color:var(--primary)">Nobody is behind</strong> · `}${totalLogged} call${totalLogged===1?'':'s'} logged in 30 days${unvisited?` · <a href="#" class="inline-link" onclick="event.preventDefault();openNeverVisited()">${unvisited} ring${unvisited===1?'':'s'} never visited</a>`:''}</div>
         <div class="btnrow" style="margin-top:12px">
           <button class="btn sm" onclick="ui.report='rep-coverage';exportReport()">Export CSV</button>
-          <button class="btn sm" onclick="setView('coverage')">Coverage map</button></div>
+          <button class="btn sm" onclick="setView('coverage')">Coverage map</button>
+          ${myRepSelf() ? `<button class="btn sm primary" onclick="openMyRepView()">My rep view</button>` : ''}</div>
       </div>
       <div class="gauge" title="${groups.ok.length} of ${cards.length} reps are on top of it">
         <svg viewBox="0 0 120 120" width="118" height="118"><circle cx="60" cy="60" r="50" class="g-bg"/>
@@ -5077,6 +5106,7 @@ function vManager(){
 
     ${mgrAttention()}
     ${onboardPanel()}
+    ${signInLinkBar()}
 
     <div class="kpis">
       ${kpi(cards.length,'reps','user','neutral',"ui.mgrFilter='all';renderContent()")}
@@ -7289,10 +7319,30 @@ async function previewAsRep(id, name){
   // Reloading it all from Zoho was the lag, and the blank placeholder card.
   closeSheet(); closeModal(); goingTo(); render();
 }
+/* Someone in the office who is also a rep in Zoho (Mel looks after some
+   outlying groups himself): the rep in Zoho with their name, if exactly one */
+function myRepSelf(){
+  if(!isOffice() || previewRepId) return null;
+  const words = n => splitRepName(n).name.toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter(w => w.length > 1);
+  const mine = words(me().name); if(mine.length < 2) return null;
+  const first = mine[0], last = mine[mine.length - 1];
+  const hits = PEOPLE.filter(p => p.role === 'rep' && myRings(p.id).length).filter(p => {
+    const w = words(p.name); if(w.length < 2) return false;
+    const f = w[0], l = w[w.length - 1];
+    return l === last && (f.startsWith(first) || first.startsWith(f));      // Mel ↔ Melvin
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+var selfRepView = false;
+function openMyRepView(){
+  const r = myRepSelf(); if(!r) return;
+  selfRepView = true; previewAsRep(r.id, r.name);
+}
 async function endPreview(){
   previewRepId = null;
   if(officeIdBeforePreview !== null){ ui.me = officeIdBeforePreview; officeIdBeforePreview = null; }
-  ui.view = 'team';
+  ui.view = selfRepView ? 'dash' : 'team';
+  selfRepView = false;
   goingTo(); render();
   // Only if something reloaded while looking as the rep (and so narrowed the
   // data to them) fetch the office's again — quietly, behind the screen.
@@ -8643,7 +8693,9 @@ function railNavHTML(){
 }
 function bannersHTML(){
   return `${previewRepId?`<div class="banner note" style="background:var(--info-soft);color:var(--info);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <span>Viewing as <strong>${esc((PEOPLE.find(p=>p.id===previewRepId)||{}).name||'a rep')}</strong> — this is their screen, exactly as they see it.</span>
+      <span>${selfRepView
+        ? `<strong>Your rep view</strong> — your own rings and calls, as a rep sees them. Calls you log here count as yours.`
+        : `Viewing as <strong>${esc((PEOPLE.find(p=>p.id===previewRepId)||{}).name||'a rep')}</strong> — this is their screen, exactly as they see it.`}</span>
       <button class="btn sm" onclick="endPreview()">Back to my view</button></div>`:''}
     ${loadingDetail?`<div class="loading-pill">Loading members and activity…</div>`:''}
     ${loadError?`<div class="banner note" style="background:var(--rust-soft);color:var(--rust)">
@@ -8706,6 +8758,7 @@ function render(){
             <div><div class="nm">${esc(me().name)}</div><div class="rl">${me().owner?'Owner':me().role==='rep'?'Rep':me().role==='admin'?'Director':'Office'}</div></div></div>
           <div class="rail-nav" id="railNav"></div>
           <div class="rail-foot">
+            <span id="myRepLink"></span>
             <a class="rail-link" href="/help.html${isOffice() ? '#office' : ''}" target="_blank" rel="noopener"><span class="rl-l">${icon('folder',17)}<span>How to use Rep Hub</span></span></a>
             ${API.live?`<button class="rail-link" onclick="openChangePassword()"><span class="rl-l">${icon('key',17)}<span>Change password</span></span></button>`:''}
             <button class="rail-link" onclick="logout()"><span class="rl-l">${icon('logout',17)}<span>Sign out</span></span></button>
@@ -8745,6 +8798,9 @@ function fillShell(){
   setPart('railNav', railNavHTML());
   setPart('topRight', `${syncButton()}<button class="bell" onclick="openNotifs()">🔔${nc?`<span class="pill">${nc}</span>`:''}</button>`);
   setPart('banners', bannersHTML());
+  // Office people who are also a rep in Zoho get a way into their own rep screen
+  const self = myRepSelf();
+  setPart('myRepLink', self ? `<button class="rail-link" onclick="openMyRepView()"><span class="rl-l">${icon('user',17)}<span>My rep view</span></span></button>` : '');
   setPart('tabbar', tabbarHTML());
 }
 
