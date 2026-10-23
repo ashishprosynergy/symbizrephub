@@ -426,6 +426,21 @@ const q = {
   forgetDevice: (hash, userId) => query('DELETE FROM trusted_devices WHERE token_hash = $1 AND user_id = $2', [hash, userId]),
   forgetDevicesFor: userId => query('DELETE FROM trusted_devices WHERE user_id = $1', [userId]),
   setRole: (id, role) => query('UPDATE users SET role = $1 WHERE id = $2', [role, id]),
+  linkZoho: (id, contactId) => query("UPDATE users SET zoho_owner_id = $1, role = 'rep' WHERE id = $2", [contactId, id]),
+  /* One person, two accounts (they signed up with another email): everything
+     under the one being dropped moves to the one kept, then it is removed */
+  mergeUserInto: async (dropId, keepId) => {
+    for (const t of ['time_entries', 'expenses', 'trusted_devices', 'audit', 'sent_log']) {
+      await query(`UPDATE ${t} SET user_id = $1 WHERE user_id = $2`, [keepId, dropId]);
+    }
+    await query('UPDATE pending_writes SET rep_id = $1 WHERE rep_id = $2', [keepId, dropId]);
+    // Offline queue: unique per person and item, so skip any the kept one already has
+    await query(`UPDATE sync_queue SET user_id = $1 WHERE user_id = $2
+      AND client_uuid NOT IN (SELECT client_uuid FROM sync_queue WHERE user_id = $1)`, [keepId, dropId]);
+    await query('DELETE FROM sync_queue WHERE user_id = $1', [dropId]);
+    await query('DELETE FROM login_tokens WHERE user_id = $1', [dropId]);
+    await query('DELETE FROM users WHERE id = $1', [dropId]);
+  },
   /* ── managing reps ── */
   goalsFor: quarter => query('SELECT * FROM rep_goals WHERE quarter = $1', [quarter]),
   setGoal: (repId, quarter, g, by) => query(

@@ -3173,6 +3173,40 @@ r.post('/admin/users/:id/resend', auth.authRequired, access.requirePerm('users')
   res.json({ tempPassword: temp, emailed: false });
 }));
 
+/**
+ * Link an account to the rep's Zoho contact. When that rep already has an
+ * account (invited at the email Zoho holds, while they signed up with
+ * another), the two become one: keep = 'this' keeps this account's email and
+ * password, 'other' keeps the other's. Hours, expenses and requests under
+ * either stay, now under the one account.
+ */
+r.post('/admin/users/:id/link', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
+  const contactId = String(req.body?.contactId || '').trim();
+  if (!contactId) return res.status(400).json({ error: 'Pick the rep in Zoho' });
+  const everyone = await q.everyUser();
+  const target = everyone.find(u => u.id === req.params.id);
+  if (!target) return res.status(404).json({ error: 'No such account' });
+  if (target.role !== 'rep') return res.status(400).json({ error: 'Only rep accounts are linked to a Zoho rep' });
+  if (!(await guardTarget(req, res, target))) return;
+  const other = everyone.find(u => u.zoho_owner_id === contactId && u.id !== target.id);
+  if (other && other.role !== 'rep') return res.status(409).json({ error: `That Zoho contact is already linked to ${other.name}'s office account` });
+  if (other && !(await guardTarget(req, res, other))) return;
+  let keep = target, drop = other || null;
+  if (other && req.body?.keep === 'other') { keep = other; drop = target; }
+  if (drop) await q.mergeUserInto(drop.id, keep.id);
+  await q.linkZoho(keep.id, contactId);
+  // Their hours and expenses carry the rep's name as Zoho has it
+  if (req.body?.name) {
+    const nm = String(req.body.name).slice(0, 120);
+    await query('UPDATE time_entries SET rep_name = $1 WHERE user_id = $2', [nm, keep.id]);
+    await query('UPDATE expenses SET rep_name = $1 WHERE user_id = $2', [nm, keep.id]);
+  }
+  await query('UPDATE pending_writes SET rep_zoho_id = $1 WHERE rep_id = $2 AND rep_zoho_id IS NULL', [contactId, keep.id]);
+  await audit(req.user.id, 'user.linked', { kept: keep.id, keptEmail: keep.email, merged: drop ? drop.email : null, contactId }, req.ip);
+  dropSnapshot();
+  res.json({ ok: true, kept: { id: keep.id, email: keep.email }, merged: drop ? { id: drop.id, email: drop.email } : null });
+}));
+
 r.delete('/admin/users/:id', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
   if (req.params.id === req.user.id) return res.status(400).json({ error: "You can't remove your own account" });
   const everyone = await q.everyUser();

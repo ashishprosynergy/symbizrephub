@@ -1771,6 +1771,32 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.ok(!b.tables.expenses.some(x => 'receipt_data' in x), 'receipt files left out of the email copy');
   });
 
+  test('a rep who signed up with a second email is merged into one account, keeping their hours', async () => {
+    const auth = require('../src/auth');
+    await db.q.insertUser({ id: 'gm_zoho', email: 'glenden@zoho-email.test', name: 'Glenden Martin #0627', phone: null, role: 'rep',
+      region: null, password_hash: auth.hash('never-used'), zoho_owner_id: 'CONTACT_GM' });
+    await db.q.insertUser({ id: 'gm_self', email: 'glenden@personal.test', name: 'Glenden Martin', phone: null, role: 'rep',
+      region: null, password_hash: auth.hash('his-own-pass'), zoho_owner_id: null });
+    const self = J(await invoke('POST', '/auth/login', { body: { email: 'glenden@personal.test', password: 'his-own-pass' } })).token;
+    assert.ok(self, 'he can sign in with the email he used');
+    await invoke('POST', '/time', { token: self, body: { date: '2026-10-20', hours: 2, category: 'Admin', description: 'Before the merge' } });
+
+    assert.equal((await invoke('POST', '/admin/users/gm_self/link', { token: rep, body: { contactId: 'CONTACT_GM' } })).statusCode, 403, 'reps cannot');
+    const admin = J(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse' } })).token;
+    const out = await invoke('POST', '/admin/users/gm_self/link', { token: admin, body: { contactId: 'CONTACT_GM', keep: 'this', name: 'Glenden Martin #0627' } });
+    assert.equal(out.statusCode, 200, out.body);
+    assert.equal(J(out).merged.email, 'glenden@zoho-email.test');
+
+    const users = await db.q.everyUser();
+    assert.ok(!users.some(u => u.id === 'gm_zoho'), 'the second account is gone');
+    assert.equal(users.find(u => u.id === 'gm_self').zoho_owner_id, 'CONTACT_GM', 'the kept one is linked to Zoho');
+    // Same password, same hours, now with his Zoho name
+    const again = J(await invoke('POST', '/auth/login', { body: { email: 'glenden@personal.test', password: 'his-own-pass' } })).token;
+    const mine = J(await invoke('GET', '/time', { token: again }));
+    assert.ok(mine.some(t => t.description === 'Before the merge' && t.rep_name === 'Glenden Martin #0627'));
+    assert.equal((await invoke('POST', '/auth/login', { body: { email: 'glenden@zoho-email.test', password: 'never-used' } })).statusCode, 401);
+  });
+
   test('a rep asks for a new ring; it reaches Zoho only when the office approves', async () => {
     assert.equal((await invoke('POST', '/pending/ring', { token: rep, body: { name: '' } })).statusCode, 400, 'a name is needed');
     const before = store.Growth_Ring_Groups.length;

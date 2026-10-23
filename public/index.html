@@ -3949,6 +3949,61 @@ function vTeam(){
       <div class="row-sub">${pname(x.who)} · ${new Date(x.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>
     </div></div>`).join('') || `<div class="empty">No changes recorded yet in this session.</div>`}</details>`;
 }
+/* "Glenden Martin #0627" and "glenden martin" are the same person */
+function sameName(a, b){
+  const n = s => splitRepName(s).name.toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+  return !!n(a) && n(a) === n(b);
+}
+/* Link an account to the rep's Zoho record; if that rep already has an
+   account (a second email), the two are merged into one */
+function openLinkAccount(userId, contactId){
+  const acct = (serverUsers || []).find(u => u.id === userId);
+  if(!acct) return toast('That account was not found');
+  const reps = teamReps().filter(x => !x.unlinked && !String(x.id).startsWith('u:'));
+  const list = reps.slice().sort((a, b) => (sameName(b.name, acct.name) - sameName(a.name, acct.name)) || String(a.name).localeCompare(String(b.name)));
+  openModal(`<h3>Link ${esc(acct.name)} to their Zoho rep</h3>
+    <p class="lead">This account (${esc(acct.email)}) isn't linked to a rep in Zoho, so it shows no rings. Pick who they are.</p>
+    <form onsubmit="submitLinkAccount(event,'${esc(userId)}')">
+      <div class="field"><label>Rep in Zoho</label>
+        <select name="contactId" required onchange="drawLinkChoice('${esc(userId)}', this.value)">
+          <option value="">Choose…</option>
+          ${list.map(x => `<option value="${esc(x.id)}" ${x.id === contactId || (!contactId && sameName(x.name, acct.name)) ? 'selected' : ''}>${esc(x.name)}${x.account ? ' — has an account (' + esc(x.account.email) + ')' : ''}</option>`).join('')}</select></div>
+      <div id="linkChoice"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn primary">Link</button></div></form>`);
+  const sel = document.querySelector('#modalBody select[name=contactId]');
+  if(sel && sel.value) drawLinkChoice(userId, sel.value);
+}
+function drawLinkChoice(userId, contactId){
+  const el = document.getElementById('linkChoice'); if(!el) return;
+  const acct = (serverUsers || []).find(u => u.id === userId);
+  const rep = teamReps().find(x => x.id === contactId);
+  const other = rep && rep.account && rep.account.id !== userId ? rep.account : null;
+  const btn = document.querySelector('#modalBody button[type=submit]');
+  if(btn) btn.textContent = other ? 'Merge into one account' : 'Link';
+  if(!other){ el.innerHTML = ''; return; }
+  const seen = u => u.last_login_at ? 'last signed in ' + fmt(String(u.last_login_at).slice(0,10)) : 'never signed in';
+  // Keep the one they actually use: the most recent sign-in
+  const keepThis = !other.last_login_at || (acct.last_login_at && acct.last_login_at >= other.last_login_at);
+  el.innerHTML = `<div class="callout" style="margin:0 0 10px"><strong>${esc(splitRepName(rep.name).name)} already has an account</strong>
+      The two become one. Their hours, expenses and requests from both are kept. Which email should they sign in with?</div>
+    <label class="check"><input type="radio" name="keep" value="this" ${keepThis ? 'checked' : ''}><span>${esc(acct.email)} <span class="row-sub">(${seen(acct)})</span></span></label>
+    <label class="check"><input type="radio" name="keep" value="other" ${keepThis ? '' : 'checked'}><span>${esc(other.email)} <span class="row-sub">(${seen(other)})</span></span></label>
+    <div class="hint">They keep that email's password. The other email can no longer sign in.</div>`;
+}
+async function submitLinkAccount(e, userId){
+  e.preventDefault(); const f = e.target;
+  const contactId = fv(f, 'contactId'), keep = (f.querySelector('input[name=keep]:checked') || {}).value || 'this';
+  const rep = teamReps().find(x => x.id === contactId);
+  try{
+    const out = await API.call('/admin/users/' + encodeURIComponent(userId) + '/link', { method:'POST',
+      body: JSON.stringify({ contactId, keep, name: rep ? rep.name : undefined }) });
+    closeModal();
+    toast(out.merged ? `Merged: ${rep ? splitRepName(rep.name).name : 'they'} now signs in as ${out.kept.email}` : 'Linked to Zoho');
+    await loadUsers(true);
+    openRepAccount(contactId);
+  }catch(ex){ toast(ex.message || 'Could not link the account'); }
+}
 function openRepAccount(id){ goingTo(); ui.repAcct = id; ui.view = 'repAccount'; closeSheet(); render(); if(API.live) loadUsers(); }
 /** Everything about one rep, on one page */
 function vRepAccount(){
@@ -3981,7 +4036,15 @@ function vRepAccount(){
         ${r.business ? kv('Business', esc(r.business)) : ''}
         ${kv('Status', r.status === 'active' ? 'Signed in, last ' + fmt(String(acct.last_login_at).slice(0, 10))
           : r.status === 'invited' ? 'Has an account, has not signed in yet' : r.status === 'none' ? 'No account yet' : 'Cannot be invited until Zoho has their email')}
-        ${r.unlinked ? `<div class="callout rust" style="margin:8px 0 0"><strong>Not linked to a Zoho contact</strong>They will sign in and see nothing. Remove this account and invite them from Zoho instead.</div>` : ''}
+        ${r.unlinked ? `<div class="callout rust" style="margin:8px 0 0"><strong>Not linked to a Zoho rep</strong>They see no rings until this account is linked to their rep record in Zoho.
+          ${can('users') ? `<div class="btnrow" style="margin-top:9px"><button class="btn sm primary" onclick="openLinkAccount('${esc(acct.id)}')">Link to their Zoho rep</button></div>` : ''}</div>` : ''}
+        ${!r.unlinked && can('users') ? (() => {
+          // The same person with a second account under another email?
+          const twin = teamReps().find(x => x.unlinked && x.account && sameName(x.name, r.name));
+          return twin ? `<div class="callout" style="margin:8px 0 0"><strong>${esc(splitRepName(r.name).name)} may have a second account</strong>
+            Signed up as ${esc(twin.account.email)}, not linked to Zoho.
+            <div class="btnrow" style="margin-top:9px"><button class="btn sm primary" onclick="openLinkAccount('${esc(twin.account.id)}','${esc(r.id)}')">Merge into one account</button></div></div>` : '';
+        })() : ''}
         <div class="btnrow" style="margin-top:10px">
           ${(r.status === 'none' || r.status === 'invited') && zid && can('users') ? `<button class="btn sm primary" onclick="repsInvite(['${esc(zid)}'], this)">${r.status === 'none' ? 'Invite to Rep Hub' : 'Send the invitation again'}</button>` : ''}
           ${acct && can('users') && r.status === 'active' ? `<button class="btn sm" onclick="resendLogin('${acct.id}','${esc(acct.name)}')">Send a password reset link</button>` : ''}
