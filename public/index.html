@@ -1049,6 +1049,10 @@
   .ring-note:first-child{padding-top:0;}
   .ring-note-t{white-space:pre-wrap;font-size:14.5px;margin-top:3px;}
   .ring-note.handover .ring-note-t{background:var(--info-soft);border-radius:8px;padding:8px 10px;}
+  .mode-switch{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:3px;background:var(--surface);margin-right:8px;}
+  .mode-switch button{border:0;background:none;padding:6px 12px;border-radius:999px;font:600 13px var(--sans);color:var(--ink-muted);cursor:pointer;min-height:32px;}
+  .mode-switch button.on{background:var(--primary);color:var(--primary-ink);cursor:default;}
+  @media (max-width:640px){ .mode-switch button{padding:6px 9px;font-size:12px;} }
   .signin-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
   .signin-url{display:inline-block;margin-top:4px;font-weight:600;color:var(--primary);word-break:break-all;}
   .rate-in{display:inline-flex;align-items:center;gap:4px;color:var(--ink-muted);font-size:14px;}
@@ -3989,6 +3993,8 @@ function vTeam(){
         <span class="av">${initials(u.name)}</span>
         <span class="tr-main"><span class="row-title">${esc(u.name)}</span><span class="row-sub">${esc(u.email)}${u.last_login_at ? ' · signed in ' + fmtShort(String(u.last_login_at).slice(0, 10)) : ' · not signed in yet'}</span></span>
         <span class="tag ${u.role === 'admin' ? 'info' : 'ok'}">${u.role === 'admin' ? 'Director' : 'Office'}</span>
+        ${u.zoho_owner_id ? `<span class="tag later" title="Also looks after rings as a rep">+ Rep</span>` : ''}
+        ${can('users') && (isOwner() || u.role !== 'admin' || u.id === ui.me) ? `<button class="btn sm" onclick="openRepLink('${u.id}')">${u.zoho_owner_id ? 'Rep link…' : 'Also a rep…'}</button>` : ''}
         ${can('users') && u.id !== ui.me && (isOwner() || u.role !== 'admin') ? `<span class="tr-acts">
           <button class="btn sm" onclick="resendLogin('${u.id}','${esc(u.name)}')">Reset link</button>
           <button class="btn sm danger" onclick="removeAccount('${u.id}','${esc(u.name)}')">Remove</button></span>` : ''}</div>`).join('')}</div>` : ''}
@@ -4053,6 +4059,47 @@ async function submitLinkAccount(e, userId){
     openRepAccount(contactId);
   }catch(ex){ toast(ex.message || 'Could not link the account'); }
 }
+/* Office + rep in one sign-in */
+function openRepLink(userId){
+  const u = (serverUsers || []).find(x => x.id === userId); if(!u) return;
+  const reps = teamReps().filter(x => !String(x.id).startsWith('u:'))
+    .sort((a, b) => (sameName(b.name, u.name) - sameName(a.name, u.name)) || String(a.name).localeCompare(String(b.name)));
+  openModal(`<h3>${esc(u.name)} also looks after rings</h3>
+    <p class="lead">Pick their own rep record in Zoho. They keep their office access, and get a <strong>My rep view</strong> switch at the top
+      of the screen with only their rings, calls, A/R and hours.</p>
+    <form onsubmit="submitRepLink(event,'${esc(userId)}')">
+      <div class="field"><label>Their rep record in Zoho</label>
+        <select name="contactId"><option value="">Not a rep</option>
+          ${reps.map(x => `<option value="${esc(x.id)}" ${x.id === u.zoho_owner_id ? 'selected' : ''}>${esc(x.name)} · ${x.rings} ring${x.rings===1?'':'s'}${x.account && x.account.id !== userId ? ' — has a rep login (' + esc(x.account.email) + ')' : ''}</option>`).join('')}</select>
+        <div class="hint">No rings yet? Set them as the Regional Rep on their rings in Zoho first, then link here.</div></div>
+      <div id="repLinkErr" class="callout rust" style="display:none"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" type="submit">Save</button></div></form>`);
+}
+async function submitRepLink(e, userId, merge){
+  if(e) e.preventDefault();
+  const sel = document.querySelector('#modalBody select[name=contactId]'); const contactId = sel ? sel.value : '';
+  try{
+    await API.call('/admin/users/' + encodeURIComponent(userId) + '/rep-link', { method:'POST', body: JSON.stringify({ contactId, merge: !!merge }) });
+    closeModal(); toast(contactId ? 'Linked. They now have a My rep view switch' : 'No longer linked as a rep');
+    await loadUsers(true);
+    if(userId === (officeSelf() || {}).loginId || userId === ui.me){ try{ const out = await API.me(); signInAs(out.user, { keepView: true }); render(); }catch(_){} }
+  }catch(ex){
+    const el = document.getElementById('repLinkErr');
+    if(ex.data && ex.data.conflict && el){
+      el.style.display = 'block';
+      el.innerHTML = `<strong>${esc(ex.data.conflict.name)} already signs in as a rep (${esc(ex.data.conflict.email)})</strong>
+        Merge that login into this one? Their hours, expenses and requests move here, and they sign in only with ${esc(((serverUsers||[]).find(x=>x.id===userId)||{}).email||'this email')}.
+        <div class="btnrow" style="margin-top:9px"><button type="button" class="btn sm primary" onclick="submitRepLink(null,'${esc(userId)}',true)">Merge into one sign-in</button></div>`;
+    } else toast(ex.message || 'Could not save');
+  }
+}
+async function giveOfficeAccess(userId, name){
+  if(!confirm(`Give ${splitRepName(name).name} office access as well? They keep their rings and get a switch between the office and their rep view. Choose what they can do under Access & security.`)) return;
+  try{ await API.call('/admin/users/' + encodeURIComponent(userId) + '/office-access', { method:'POST', body: JSON.stringify({ on: true }) });
+    toast('Done. They will see the office side next time they open Rep Hub'); await loadUsers(true); }
+  catch(ex){ toast(ex.message || 'Could not change it'); }
+}
 function openRepAccount(id){ goingTo(); ui.repAcct = id; ui.view = 'repAccount'; closeSheet(); render(); if(API.live) loadUsers(); }
 /** Everything about one rep, on one page */
 function vRepAccount(){
@@ -4097,7 +4144,9 @@ function vRepAccount(){
         <div class="btnrow" style="margin-top:10px">
           ${(r.status === 'none' || r.status === 'invited') && zid && can('users') ? `<button class="btn sm primary" onclick="repsInvite(['${esc(zid)}'], this)">${r.status === 'none' ? 'Invite to Rep Hub' : 'Send the invitation again'}</button>` : ''}
           ${acct && can('users') && r.status === 'active' ? `<button class="btn sm" onclick="resendLogin('${acct.id}','${esc(acct.name)}')">Send a password reset link</button>` : ''}
-          ${acct && can('users') && acct.id !== ui.me ? `<button class="btn sm danger" onclick="removeAccount('${acct.id}','${esc(acct.name)}')">Remove account</button>` : ''}
+          ${acct && acct.role === 'rep' && can('users') && (isOwner() || isAdmin()) ? `<button class="btn sm" onclick="giveOfficeAccess('${acct.id}','${esc(acct.name)}')">Give office access too</button>` : ''}
+          ${acct && acct.role !== 'rep' ? `<span class="tag info">Office account — also a rep</span>` : ''}
+          ${acct && acct.role === 'rep' && can('users') && acct.id !== ui.me ? `<button class="btn sm danger" onclick="removeAccount('${acct.id}','${esc(acct.name)}')">Remove account</button>` : ''}
         </div></div>
 
       ${card ? `<div class="card"><div class="trend-t">How they are doing</div>
@@ -4830,11 +4879,17 @@ function loadAR(force){
     .finally(() => { arBusy = false; if(['ar','today','dash'].includes(ui.view)) renderContent(); });
 }
 const arMember = a => a.contactId ? member(a.contactId) : null;
+/* The list for whoever is looking: in a rep's view from an office login the
+   server sent everyone's, so keep only that rep's members */
+function arMembers(){
+  const all = arData && Array.isArray(arData.members) ? arData.members : [];
+  return previewRepId ? all.filter(a => (a.repIds || []).includes(ui.me) || a.repId === ui.me) : all;
+}
 function arCard(){
   if(!API.live || !(isRep() || can('members') || can('manager'))) return '';
   loadAR();
-  if(!arData || arData.error || arData.connected === false || !Array.isArray(arData.members) || !arData.members.length) return '';
-  const list = arData.members, total = list.reduce((s, a) => s + a.balance, 0);
+  if(!arData || arData.error || arData.connected === false || !Array.isArray(arData.members) || !arMembers().length) return '';
+  const list = arMembers(), total = list.reduce((s, a) => s + a.balance, 0);
   return `<div class="card ar-card clicky" onclick="setView('ar')">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
       <div><div class="trend-t" style="margin:0">${isRep() ? 'Your members' : 'Members'} over 60 days in A/R · ${list.length}</div>
@@ -4852,7 +4907,7 @@ function vAR(){
   if(arData.connected === false) return head + `<div class="callout info"><strong>Zoho Books isn't connected yet</strong>
     The list comes from unpaid invoices in Zoho Books. ${can('books') ? 'Connect it in Settings → Zoho Books.' : 'Ask the office to connect it in Settings.'}</div>`;
   if(arData.error) return head + `<div class="callout rust"><strong>Could not read Zoho Books</strong>${esc(arData.error)}</div>`;
-  const list = Array.isArray(arData.members) ? arData.members : [];
+  const list = arMembers();
   if(!list.length) return head + `<div class="empty">Nobody is more than 60 days behind. 🎉</div>`;
   const row = a => { const m = arMember(a), phone = m ? (m.phone || m.mobile) : '';
     // Has anyone spoken to them since they went 60 days over? So the rep sees
@@ -6299,6 +6354,8 @@ function mapRefreshButton(){
 /** The members the filters let through. `over` tries one filter at another value, for the counts on the chips */
 function mapShown(over){
   const f = { mapRep: ui.mapRep, mapTier: ui.mapTier, mapRing: ui.mapRing, ...(over || {}) };
+  // A rep's view from an office login holds every member: show only theirs
+  if(previewRepId) f.mapRep = ui.me;
   const q = (ui.mapQ || '').trim().toLowerCase();
   return (mapData.members || []).filter(m =>
     (!f.mapRep || m.repId === f.mapRep) && (!f.mapTier || m.tier === f.mapTier) &&
@@ -7415,7 +7472,8 @@ function logout(){ placeByScreen = {};
   retentionData = null; retentionFresh = false; summitList = null; summitFresh = false; summitMine = null; summitDetail = null; summitDetails = {}; mapData = null; mapFresh = false;
   mgrData = null; myGoal = undefined; onboard = null; repMail = null; repMailP = null; arData = null;
   serverUsers = null; zohoReps = null; usersLoadedAt = 0;
-  API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; render(); }
+  try{ localStorage.removeItem('rephub_mode'); }catch(e){}
+  API.setToken(null); ui.me=null; previewRepId=null; officeIdBeforePreview=null; selfRepView=false; render(); }
 
 /**
  * Office/director only: look at the app exactly as one rep sees it.
@@ -7438,29 +7496,42 @@ async function previewAsRep(id, name){
   // Reloading it all from Zoho was the lag, and the blank placeholder card.
   closeSheet(); closeModal(); goingTo(); render();
 }
-/* Someone in the office who is also a rep in Zoho (Mel looks after some
-   outlying groups himself): the rep in Zoho with their name, if exactly one */
+/* Someone with both office and rep work (Mel, Dale): their office account is
+   linked to their own rep record in Zoho (Reps → Office team → Also a rep).
+   Linked, not guessed from the name: there are two Melvin Beilers in Zoho. */
+function officeSelf(){ return officeIdBeforePreview !== null ? PEOPLE.find(p => p.id === officeIdBeforePreview) : me(); }
 function myRepSelf(){
-  if(!isOffice() || previewRepId) return null;
-  const words = n => splitRepName(n).name.toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter(w => w.length > 1);
-  const mine = words(me().name); if(mine.length < 2) return null;
-  const first = mine[0], last = mine[mine.length - 1];
-  const hits = PEOPLE.filter(p => p.role === 'rep' && myRings(p.id).length).filter(p => {
-    const w = words(p.name); if(w.length < 2) return false;
-    const f = w[0], l = w[w.length - 1];
-    return l === last && (f.startsWith(first) || first.startsWith(f));      // Mel ↔ Melvin
-  });
-  return hits.length === 1 ? hits[0] : null;
+  const who = officeSelf();
+  if(!who || who.role === 'rep' || !who.zohoId) return null;
+  const p = PEOPLE.find(x => x.id === who.zohoId && x.role === 'rep');
+  const g = S.rings.find(r => r.repId === who.zohoId);
+  return { id: who.zohoId, name: (p && p.name) || (g && g.repName) || who.name };
 }
 var selfRepView = false;
 function openMyRepView(){
   const r = myRepSelf(); if(!r) return;
-  selfRepView = true; previewAsRep(r.id, r.name);
+  selfRepView = true;
+  try{ localStorage.setItem('rephub_mode', 'rep'); }catch(e){}
+  previewAsRep(r.id, r.name);
+}
+/* Office ↔ rep, one tap, at the top of every screen */
+function modeSwitch(){
+  if(!myRepSelf()) return '';
+  const rep = previewRepId && selfRepView;
+  return `<div class="mode-switch" role="group" aria-label="Which view">
+    <button class="${rep ? '' : 'on'}" onclick="${rep ? 'endPreview()' : ''}">Office</button>
+    <button class="${rep ? 'on' : ''}" onclick="${rep ? '' : 'openMyRepView()'}">My rep view</button></div>`;
+}
+/* Opening the app again: back in the rep view if that is where they left it */
+function restoreRepView(){
+  let m = null; try{ m = localStorage.getItem('rephub_mode'); }catch(e){}
+  if(m === 'rep' && !previewRepId && myRepSelf()) openMyRepView();
 }
 async function endPreview(){
   previewRepId = null;
   if(officeIdBeforePreview !== null){ ui.me = officeIdBeforePreview; officeIdBeforePreview = null; }
   ui.view = selfRepView ? 'dash' : 'team';
+  if(selfRepView){ try{ localStorage.removeItem('rephub_mode'); }catch(e){} }
   selfRepView = false;
   goingTo(); render();
   // Only if something reloaded while looking as the rep (and so narrowed the
@@ -8426,7 +8497,8 @@ const adapt = {
       // the current viewer — hours are stored against the LOGIN id, while rep
       // scoping everywhere else uses the Zoho CONTACT id.
       id: 't_'+t.id, serverId: t.id,
-      repId: (isRep() ? ui.me : (t.rep_contact || t.user_id)), loginId: t.user_id, repName: t.rep_name,
+      // (In a rep's view from an office login the list is everyone's, so each row keeps its own rep)
+      repId: (isRep() && !previewRepId ? ui.me : (t.rep_contact || t.user_id)), loginId: t.user_id, repName: t.rep_name,
       date: String(t.entry_date).slice(0,10), hours: Number(t.hours),
       category: t.category, description: t.description || '', status: t.status, declineNote: t.decline_note || '',
     };
@@ -8435,7 +8507,7 @@ const adapt = {
   expense(x){
     return {
       id: 'x_'+x.id, serverId: x.id,
-      repId: (isRep() ? ui.me : (x.rep_contact || x.user_id)), loginId: x.user_id, repName: x.rep_name, declineNote: x.decline_note || '',
+      repId: (isRep() && !previewRepId ? ui.me : (x.rep_contact || x.user_id)), loginId: x.user_id, repName: x.rep_name, declineNote: x.decline_note || '',
       date: String(x.entry_date).slice(0,10), amount: Number(x.amount),
       category: x.category, description: x.description || '', status: x.status,
       vendor: x.vendor || '',
@@ -8821,7 +8893,7 @@ function bannersHTML(){
       <span>${selfRepView
         ? `<strong>Your rep view</strong> — your own rings and calls, as a rep sees them. Calls you log here count as yours.`
         : `Viewing as <strong>${esc((PEOPLE.find(p=>p.id===previewRepId)||{}).name||'a rep')}</strong> — this is their screen, exactly as they see it.`}</span>
-      <button class="btn sm" onclick="endPreview()">Back to my view</button></div>`:''}
+      <button class="btn sm" onclick="endPreview()">${selfRepView ? 'Back to office view' : 'Back to my view'}</button></div>`:''}
     ${loadingDetail?`<div class="loading-pill">Loading members and activity…</div>`:''}
     ${loadError?`<div class="banner note" style="background:var(--rust-soft);color:var(--rust)">
       Couldn't reach the server — showing the last data loaded.
@@ -8921,11 +8993,11 @@ function render(){
 function fillShell(){
   const nc = notifications().length;
   setPart('railNav', railNavHTML());
-  setPart('topRight', `${syncButton()}<button class="bell" onclick="openNotifs()">🔔${nc?`<span class="pill">${nc}</span>`:''}</button>`);
+  setPart('topRight', `${modeSwitch()}${syncButton()}<button class="bell" onclick="openNotifs()">🔔${nc?`<span class="pill">${nc}</span>`:''}</button>`);
   setPart('banners', bannersHTML());
   // Office people who are also a rep in Zoho get a way into their own rep screen
   const self = myRepSelf();
-  setPart('myRepLink', self ? `<button class="rail-link" onclick="openMyRepView()"><span class="rl-l">${icon('user',17)}<span>My rep view</span></span></button>` : '');
+  setPart('myRepLink', self && !previewRepId ? `<button class="rail-link" onclick="openMyRepView()"><span class="rl-l">${icon('user',17)}<span>My rep view</span></span></button>` : '');
   setPart('tabbar', tabbarHTML());
 }
 
@@ -11267,7 +11339,9 @@ function signInAs(user, { keepView } = {}){
   const isRep = user.role === 'rep';
   const id = isRep ? (user.zoho_owner_id || user.id) : user.id;
   const entry = { id, name: user.name, email: user.email, role: user.role, region: user.region || '',
-    owner: !!user.owner, perms: user.perms || null };
+    owner: !!user.owner, perms: user.perms || null,
+    // Office people who are also a rep: their own rep record in Zoho
+    zohoId: !isRep ? (user.zoho_owner_id || null) : null, loginId: user.id };
   const at = PEOPLE.findIndex(p => p.id === id);
   at >= 0 ? PEOPLE[at] = entry : PEOPLE.push(entry);
   // Remembered so a refresh opens straight into the app instead of showing
@@ -11295,6 +11369,7 @@ function signInAs(user, { keepView } = {}){
     refreshMode().then(() => renderContent());   // alongside the data, not before it
     await loadFromServer();
     render();
+    restoreRepView();                              // back in their rep view if that is where they were
     if(navigator.onLine && OutBox.count()) await OutBox.flush();
   }catch(e){
     // Only a real "you are signed out" ends the session. A dropped connection

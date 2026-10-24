@@ -444,6 +444,8 @@ const q = {
   deleteRingNote: (id, ringId) => query('DELETE FROM ring_notes WHERE id = $1 AND ring_id = $2', [id, ringId]),
   ringNoteCounts: ids => ids.length ? query(`SELECT ring_id, COUNT(*)::int AS n, MAX(created_at) AS last FROM ring_notes
     WHERE ring_id IN (${ids.map((_, i) => '$' + (i + 1)).join(',')}) GROUP BY ring_id`, ids) : Promise.resolve([]),
+  // An office account that is also a rep: linked to their rep record, role kept
+  setZohoContact: (id, contactId) => query('UPDATE users SET zoho_owner_id = $1 WHERE id = $2', [contactId || null, id]),
   linkZoho: (id, contactId) => query("UPDATE users SET zoho_owner_id = $1, role = 'rep' WHERE id = $2", [contactId, id]),
   /* One person, two accounts (they signed up with another email): everything
      under the one being dropped moves to the one kept, then it is removed */

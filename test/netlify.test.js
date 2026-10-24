@@ -1771,6 +1771,30 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.ok(!b.tables.expenses.some(x => 'receipt_data' in x), 'receipt files left out of the email copy');
   });
 
+  test('office and rep in one sign-in: an office account links to its rep record; a rep can be given office access', async () => {
+    const auth = require('../src/auth');
+    const admin = J(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse' } })).token;
+    await db.q.insertUser({ id: 'mel_off', email: 'mel@office.test', name: 'Mel Beiler', phone: null, role: 'staff', region: null, password_hash: auth.hash('mel-pass'), zoho_owner_id: null });
+    await db.q.insertUser({ id: 'mel_rep', email: 'mel@rep.test', name: 'Melvin Beiler #0700', phone: null, role: 'rep', region: null, password_hash: auth.hash('x'), zoho_owner_id: '700' });
+    // His rep login exists: asked first, then merged into the office one
+    const ask = await invoke('POST', '/admin/users/mel_off/rep-link', { token: admin, body: { contactId: '700' } });
+    assert.equal(ask.statusCode, 409); assert.equal(J(ask).conflict.email, 'mel@rep.test');
+    const ok = await invoke('POST', '/admin/users/mel_off/rep-link', { token: admin, body: { contactId: '700', merge: true } });
+    assert.equal(ok.statusCode, 200, ok.body);
+    const melTok = J(await invoke('POST', '/auth/login', { body: { email: 'mel@office.test', password: 'mel-pass' } })).token;
+    const me = J(await invoke('GET', '/auth/me', { token: melTok })).user;
+    assert.equal(me.role, 'staff', 'keeps office access'); assert.equal(me.zoho_owner_id, '700', 'and is linked to his rep record');
+    assert.ok(!(await db.q.everyUser()).some(u => u.id === 'mel_rep'), 'one sign-in, not two');
+
+    // Dale: a rep given office access keeps his rep link
+    await db.q.insertUser({ id: 'dale', email: 'dale@test.org', name: 'Dale Savage #0842', phone: null, role: 'rep', region: null, password_hash: auth.hash('d'), zoho_owner_id: '842' });
+    assert.equal((await invoke('POST', '/admin/users/dale/office-access', { token: office, body: { on: true } })).statusCode, 403, 'office staff cannot hand out office access');
+    const given = await invoke('POST', '/admin/users/dale/office-access', { token: admin, body: { on: true } });
+    assert.equal(given.statusCode, 200, given.body);
+    const dale = (await db.q.everyUser()).find(u => u.id === 'dale');
+    assert.equal(dale.role, 'staff'); assert.equal(dale.zoho_owner_id, '842');
+  });
+
   test('ring notes pass from one rep to the next, with a handover note when a ring moves', async () => {
     store.Growth_Ring_Groups.push({ id: 'GRN1', Name: 'Notes Ring', Active: true, Regional_Rep: { id: 'CONTACT_REP_1', name: 'Test Rep' } });
     require('../src/lib/zoho').clearCache();

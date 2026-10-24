@@ -3207,6 +3207,48 @@ r.post('/admin/users/:id/link', auth.authRequired, access.requirePerm('users'), 
   res.json({ ok: true, kept: { id: keep.id, email: keep.email }, merged: drop ? { id: drop.id, email: drop.email } : null });
 }));
 
+/* Both office and rep, in one sign-in (Mel, Dale). An office account is linked
+   to the person's own rep record in Zoho; it keeps its office access and gets
+   a switch to their rep view, with their own rings, calls and hours. */
+const mayGiveOffice = async u => u.role === 'admin' || await access.isOwner(u);
+r.post('/admin/users/:id/rep-link', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
+  const contactId = String(req.body?.contactId || '').replace(/[^0-9]/g, '');
+  const everyone = await q.everyUser();
+  const target = everyone.find(u => u.id === req.params.id);
+  if (!target) return res.status(404).json({ error: 'No such account' });
+  if (target.role === 'rep') return res.status(400).json({ error: 'This is already a rep account' });
+  if (!(await guardTarget(req, res, target))) return;
+  if (contactId) {
+    const other = everyone.find(u => u.zoho_owner_id === contactId && u.id !== target.id);
+    if (other && other.role !== 'rep') return res.status(409).json({ error: `That rep is already linked to ${other.name}'s office account` });
+    if (other && !req.body?.merge) {
+      return res.status(409).json({ error: `${other.name} already has a rep account (${other.email}).`, conflict: { id: other.id, email: other.email, name: other.name } });
+    }
+    // Their rep account folds into this one: one sign-in for both
+    if (other) await q.mergeUserInto(other.id, target.id);
+  }
+  await q.setZohoContact(target.id, contactId || null);
+  if (contactId) await query('UPDATE pending_writes SET rep_zoho_id = $1 WHERE rep_id = $2 AND rep_zoho_id IS NULL', [contactId, target.id]);
+  dropSnapshot();
+  await audit(req.user.id, 'user.repLink', { id: target.id, contactId: contactId || null }, req.ip);
+  res.json({ ok: true, id: target.id, contactId: contactId || null });
+}));
+/* A rep who also works in the office (Dale): office access, keeping their rings */
+r.post('/admin/users/:id/office-access', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
+  if (!(await mayGiveOffice(req.user))) return res.status(403).json({ error: 'Only the owner or a director can give office access' });
+  const target = await q.userById(req.params.id);
+  if (!target) return res.status(404).json({ error: 'No such account' });
+  if (!(await guardTarget(req, res, target))) return;
+  const on = req.body?.on !== false;
+  if (on && target.role !== 'rep') return res.status(400).json({ error: 'They already have office access' });
+  if (!on && target.role !== 'staff') return res.status(400).json({ error: 'Only office staff can be made rep-only' });
+  if (!on && !target.zoho_owner_id) return res.status(400).json({ error: 'They are not linked to a rep in Zoho' });
+  await q.setRole(target.id, on ? 'staff' : 'rep');
+  dropSnapshot();
+  await audit(req.user.id, on ? 'user.officeGranted' : 'user.officeRemoved', { id: target.id }, req.ip);
+  res.json({ ok: true, role: on ? 'staff' : 'rep' });
+}));
+
 r.delete('/admin/users/:id', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
   if (req.params.id === req.user.id) return res.status(400).json({ error: "You can't remove your own account" });
   const everyone = await q.everyUser();
