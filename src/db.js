@@ -329,6 +329,15 @@ CREATE TABLE IF NOT EXISTS zoho_mirror (
   PRIMARY KEY (module, id)
 );
 
+CREATE TABLE IF NOT EXISTS zoho_mirror_queue (
+  module  TEXT NOT NULL,
+  id      TEXT NOT NULL,
+  op      TEXT NOT NULL,
+  at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  tries   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (module, id)
+);
+
 CREATE TABLE IF NOT EXISTS geocodes (
   address_key TEXT PRIMARY KEY,
   lat         DOUBLE PRECISION,

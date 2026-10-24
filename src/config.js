@@ -28,6 +28,16 @@ module.exports = {
   },
 
   /**
+   * Google Drive, where the nightly backup is kept (a Symbiz Google account
+   * connects it from Settings → Backup). Needs an OAuth client from Google
+   * Cloud with the Drive API switched on; see BACKUP-DRIVE.md.
+   */
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID || '',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+  },
+
+  /**
    * Zoho Books, for turning approved expenses into bills. Switched on by
    * setting ZOHO_BOOKS_ORG_ID. It can share the CRM's Zoho client; give it
    * its own refresh token (with ZohoBooks scopes) so the CRM one is untouched.

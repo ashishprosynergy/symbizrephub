@@ -2691,6 +2691,28 @@ async function zohoCopy() {
   });
   return out;
 }
+/** The whole backup as one compressed file, Zoho copy included */
+async function backupFile() {
+  const b = await buildBackup();
+  b.zoho = await zohoCopy();
+  const day = b.madeAt.slice(0, 10);
+  const count = Object.fromEntries(Object.entries(b.tables).map(([k, v]) => [k, v.length]));
+  const zCount = Object.fromEntries(Object.entries(b.zoho).map(([k, v]) => [k, v.length]));
+  const zTotal = Object.values(zCount).reduce((s, n) => s + n, 0);
+  const zip = require('zlib').gzipSync(Buffer.from(JSON.stringify(b)));
+  return { b, zip, day, count, zCount, zTotal };
+}
+/** Into the Symbiz Google Drive folder, every night (whatever the email setting) */
+async function driveBackup() {
+  const drive = require('./lib/gdrive');
+  if (!(await drive.status()).connected) return { skipped: 'Google Drive not connected' };
+  try {
+    const { zip, b } = await backupFile();
+    const stamp = b.madeAt.slice(0, 16).replace('T', ' ').replace(':', '-');
+    return await drive.upload(`Rep Hub backup ${stamp} UTC.json.gz`, zip);
+  } catch (e) { await drive.noteFailure(e.message); return { error: e.message }; }
+}
+r.driveBackup = driveBackup;
 async function sendBackup({ scheduled = false } = {}) {
   // Daily or weekly (Sundays, US Eastern), as chosen in Settings → Backup
   if (scheduled && (await setting('backup_frequency', 'weekly')) !== 'daily') {
@@ -2699,13 +2721,8 @@ async function sendBackup({ scheduled = false } = {}) {
   }
   const to = await backupTo();
   if (!to.length) return { skipped: 'no one to send it to' };
-  const b = await buildBackup();
-  b.zoho = await zohoCopy();
-  const day = b.madeAt.slice(0, 10), T = b.tables;
-  const count = Object.fromEntries(Object.entries(T).map(([k, v]) => [k, v.length]));
-  const zCount = Object.fromEntries(Object.entries(b.zoho).map(([k, v]) => [k, v.length]));
-  const zTotal = Object.values(zCount).reduce((s, n) => s + n, 0);
-  const zip = require('zlib').gzipSync(Buffer.from(JSON.stringify(b)));
+  const { b, zip, day, count, zCount, zTotal } = await backupFile();
+  const T = b.tables;
   const html = `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;font-size:15px;color:#1E2A20;max-width:560px">
     <p>A complete copy of Rep Hub's data, made ${esc(day)}.</p>
     <p><strong>Kept in Rep Hub:</strong> ${count.time_entries || 0} hours entries · ${count.expenses || 0} expenses · ${count.pending_writes || 0} approval requests · ${count.summit_tasks || 0} summit tasks · ${count.ring_notes || 0} ring notes</p>
@@ -2723,10 +2740,16 @@ async function sendBackup({ scheduled = false } = {}) {
 r.sendBackup = sendBackup;
 /* Nightly: copy Zoho, then send the backup if it's due. Runs as a background
    function (up to 15 minutes); `sendNow` is the Email a copy now button. */
-async function nightly({ sendNow = false, budgetMs } = {}) {
-  const mirrorOut = await require('./mirror').runMirror({ budgetMs }).catch(e => ({ error: e.message }));
+async function nightly({ sendNow = false, driveNow = false, budgetMs } = {}) {
+  const mirror = require('./mirror');
+  if (driveNow) return { drive: await driveBackup() };          // "Save to Drive now": just the upload
+  const mirrorOut = await mirror.runMirror({ budgetMs }).catch(e => ({ error: e.message }));
+  const queueOut = await mirror.processQueue({ budgetMs: 60000, limit: 1000 }).catch(e => ({ error: e.message }));
+  // Keep Zoho's change notifications switched on (each lasts a day)
+  const watchOut = process.env.URL ? await mirror.ensureWatch(process.env.URL, { force: true }).catch(e => ({ error: e.message })) : null;
+  const driveOut = sendNow ? null : await driveBackup();
   const backupOut = await sendBackup({ scheduled: !sendNow }).catch(e => ({ error: e.message }));
-  return { mirror: mirrorOut, backup: backupOut };
+  return { mirror: mirrorOut, queue: queueOut, watch: watchOut, drive: driveOut, backup: backupOut };
 }
 r.nightly = nightly;
 r._buildBackup = buildBackup;
@@ -2743,7 +2766,8 @@ r.get('/admin/backup', ...backupGuard, wrap(async (req, res) => {
 r.get('/admin/backup/status', ...backupGuard, wrap(async (req, res) => {
   let last = null; try { last = JSON.parse(await setting('backup_last', 'null')); } catch { last = null; }
   res.json({ to: await backupTo(), extra: await setting('backup_email', ''), last,
-    frequency: await setting('backup_frequency', 'weekly'), mirror: await require('./mirror').mirrorStatus() });
+    frequency: await setting('backup_frequency', 'weekly'), mirror: await require('./mirror').mirrorStatus(),
+    drive: await require('./lib/gdrive').status() });
 }));
 r.put('/admin/backup/frequency', ...backupGuard, wrap(async (req, res) => {
   const f = req.body?.frequency === 'daily' ? 'daily' : 'weekly';
@@ -2761,6 +2785,61 @@ r.get('/admin/backup/zoho', ...backupGuard, wrap(async (req, res) => {
     return r.missing_since ? { ...d, _missing_from_zoho_since: r.missing_since } : d;
   }), more: rows.length === 1000 });
 }));
+/* Google Drive for the nightly backup: a Symbiz Google account connects once */
+const driveRedirect = req => `${(netlifySite(req) || siteUrl(req)).replace(/\/$/, '')}/api/google/callback`;
+r.get('/admin/backup/google/start', ...backupGuard, wrap(async (req, res) => {
+  const drive = require('./lib/gdrive');
+  if (!drive.configured()) return res.status(400).json({ error: 'Google Drive is not set up on the server yet (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET).' });
+  const state = require('jsonwebtoken').sign({ sub: req.user.id, purpose: 'gdrive' }, cfg.jwtSecret, { expiresIn: '15m' });
+  res.json({ url: drive.authUrl(driveRedirect(req), state) });
+}));
+r.get('/google/callback', wrap(async (req, res) => {
+  const back = msg => res.redirect(302, `/?view=settings&drive=${encodeURIComponent(msg)}`);
+  let claims; try { claims = require('jsonwebtoken').verify(String(req.query.state || ''), cfg.jwtSecret); } catch { return back('expired'); }
+  if (claims.purpose !== 'gdrive') return back('expired');
+  if (req.query.error || !req.query.code) return back('cancelled');
+  try {
+    const out = await require('./lib/gdrive').exchange(String(req.query.code), driveRedirect(req));
+    await audit(claims.sub, 'backup.driveConnected', { email: out.email }, clientIp(req));
+    // The first copy straight away, so the folder is there to see
+    const site = netlifySite(req);
+    if (site) await kickBackground(site, 'nightly-background?drive=1'); else await driveBackup();
+    return back('connected');
+  } catch (e) { return back('failed: ' + e.message.slice(0, 120)); }
+}));
+r.post('/admin/backup/google/upload', ...backupGuard, wrap(async (req, res) => {
+  const site = netlifySite(req);
+  if (site && await kickBackground(site, 'nightly-background?drive=1')) return res.json({ started: true });
+  res.json(await driveBackup());
+}));
+r.delete('/admin/backup/google', ...backupGuard, wrap(async (req, res) => {
+  await require('./lib/gdrive').disconnect();
+  await audit(req.user.id, 'backup.driveDisconnected', null, req.ip);
+  res.json({ ok: true });
+}));
+
+/* Zoho tells us a record changed (no sign-in: checked by the secret token
+   Rep Hub gave Zoho). Queued, then copied with every field. */
+r.post('/zoho/notify', wrap(async (req, res) => {
+  const mirror = require('./mirror');
+  const out = await mirror.onNotify(req.body || {});
+  if (!out.ok) return res.status(403).json({ ok: false });
+  await mirror.processQueue({ budgetMs: 5000, limit: 50 }).catch(() => {});
+  res.json({ ok: true });
+}));
+/* Live updates: an admin pastes a Self Client code with ZohoCRM.notifications.ALL */
+r.post('/admin/backup/live', ...backupGuard, wrap(async (req, res) => {
+  const mirror = require('./mirror');
+  const code = String(req.body?.code || '').trim();
+  if (!/^1000\.[\w.]+$/.test(code)) return res.status(400).json({ error: 'That does not look like a Zoho grant code (it starts with 1000.)' });
+  try { await mirror.connectNotify(code); } catch (e) { return res.status(400).json({ error: e.message }); }
+  const site = netlifySite(req) || siteUrl(req);
+  try { await mirror.ensureWatch(site, { force: true }); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  await audit(req.user.id, 'backup.liveConnected', null, req.ip);
+  res.json((await mirror.mirrorStatus()).live);
+}));
+
 /* Copy Zoho now (in the background on the live site) */
 r.post('/admin/backup/mirror', ...backupGuard, wrap(async (req, res) => {
   const site = netlifySite(req);

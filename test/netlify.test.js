@@ -1812,6 +1812,51 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     if (!sunday) assert.equal(sched.skipped, 'not the day');
   });
 
+  test('live copy: what Rep Hub writes and what Zoho reports are copied straight away; deletes are kept', async () => {
+    const zoho = require('../src/lib/zoho'), mirror = require('../src/mirror');
+    const made = await zoho.insertRecords('Growth_Ring_Groups', [{ Name: 'Live Ring', Group_Description: 'Made just now' }]);
+    const id = made[0].details.id;
+    assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM zoho_mirror_queue WHERE id = $1", [id]))[0].n, 1, 'queued as it was written');
+    await mirror.processQueue({ budgetMs: 5000 });
+    const row = (await db.query("SELECT data FROM zoho_mirror WHERE module = 'Growth_Ring_Groups' AND id = $1", [id]))[0];
+    assert.ok(row, 'in our copy within the same minute');
+
+    // Zoho's own notification, with the secret Rep Hub gave it
+    await db.q.setSetting('zoho_watch', JSON.stringify({ channel: '1', secret: 'shh', until: new Date(Date.now() + 864e5).toISOString() }));
+    assert.equal((await invoke('POST', '/zoho/notify', { body: { module: 'Growth_Ring_Groups', ids: [id], operation: 'delete', token: 'wrong' } })).statusCode, 403);
+    const ok = await invoke('POST', '/zoho/notify', { body: { module: 'Growth_Ring_Groups', ids: [id], operation: 'delete', token: 'shh' } });
+    assert.equal(ok.statusCode, 200, ok.body);
+    const gone = (await db.query("SELECT missing_since FROM zoho_mirror WHERE module = 'Growth_Ring_Groups' AND id = $1", [id]))[0];
+    assert.ok(gone.missing_since, 'deleted in Zoho: kept here and marked');
+  });
+
+  test('the nightly backup goes to the Symbiz Google Drive folder, and files past 90 days are removed', async () => {
+    const cfg = require('../src/config'), realFetch = global.fetch, calls = [];
+    cfg.google.clientId = 'gid'; cfg.google.clientSecret = 'gsecret';
+    await db.q.setSetting('gdrive', JSON.stringify({ refresh: 'r1', email: 'backups@symbiz.org', folderId: null, last: null }));
+    global.fetch = async (url, opts = {}) => {
+      const u = String(url);
+      if (!/google/.test(u)) return realFetch(url, opts);
+      calls.push({ u, method: opts.method || 'GET', body: opts.body });
+      const j = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { 'Content-Type': 'application/json' } });
+      if (u.includes('oauth2.googleapis.com/token')) return j({ access_token: 'at', expires_in: 3600 });
+      if (u.includes('/upload/drive/v3/files')) return j({ id: 'file1', name: 'x' });
+      if (u.includes('/drive/v3/files?fields=id') && opts.method === 'POST') return j({ id: 'folder1' });
+      if (u.includes('/drive/v3/files?q=')) return j({ files: [{ id: 'old1' }] });
+      if (opts.method === 'DELETE') return new Response(null, { status: 204 });
+      return j({});
+    };
+    try {
+      const out = await require('../src/routes').driveBackup();
+      assert.equal(out.id, 'file1', JSON.stringify(out));
+      const up = calls.find(c => c.u.includes('/upload/'));
+      assert.ok(up && Buffer.isBuffer(up.body) && up.body.includes(Buffer.from('"parents":["folder1"]')), 'saved into the Rep Hub folder');
+      assert.ok(calls.some(c => c.method === 'DELETE' && c.u.endsWith('/old1')), 'old files cleared out');
+      const st = await require('../src/lib/gdrive').status();
+      assert.equal(st.connected, true); assert.ok(st.last.ok); assert.match(st.folderUrl, /folder1/);
+    } finally { global.fetch = realFetch; cfg.google.clientId = ''; cfg.google.clientSecret = ''; }
+  });
+
   test('office and rep in one sign-in: an office account links to its rep record; a rep can be given office access', async () => {
     const auth = require('../src/auth');
     const admin = J(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse' } })).token;

@@ -4185,6 +4185,8 @@ function backupCard(){
     <div class="kv"><span class="k">Copy of Zoho</span><span>${zTotal ? `${zTotal.toLocaleString()} records · ${mods.map(m => `${m.n.toLocaleString()} ${esc(m.module.replace(/_/g,' '))}`).join(' · ')}` : 'not made yet'}</span></div>
     ${mLast ? `<div class="kv"><span class="k">Last copied</span><span>${new Date(mLast.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}${mErr.length ? ` · <span style="color:var(--rust)">${mErr.length} part${mErr.length===1?'':'s'} not copied: ${esc(mErr.map(r => r.module).join(', '))}</span>` : ''}</span></div>` : ''}
     ${zMissing ? `<div class="kv"><span class="k">Kept after deletion</span><span>${zMissing} record${zMissing===1?'':'s'} no longer in Zoho, still in the copy</span></div>` : ''}
+    ${liveBox(mir.live || {})}
+    ${driveBox(backupStatus.drive || {})}
     <div class="kv"><span class="k">Emailed to</span><span>${esc((backupStatus.to || []).join(', ') || 'no one yet')}</span></div>
     <div class="kv"><span class="k">How often</span><span><select onchange="saveBackupFrequency(this.value)" style="width:auto">
       <option value="weekly" ${backupStatus.frequency !== 'daily' ? 'selected' : ''}>Weekly (Sundays)</option>
@@ -4198,6 +4200,54 @@ function backupCard(){
       <button class="btn sm" onclick="copyZohoNow(this)">Copy Zoho now</button>
       <button class="btn sm" onclick="downloadBackup(false)">Download everything</button>
       <button class="btn sm" onclick="downloadBackup(true)">Download with receipt files</button></div>`;
+}
+const whenShort = d => d ? new Date(d).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }) : '';
+/* Live copy: Zoho tells Rep Hub the moment a record changes */
+function liveBox(l){
+  if(l.connected) return `<div class="kv"><span class="k">Live copy</span><span>${l.until && !l.error ? '<span class="tag ok">On</span> changes in Zoho are copied within seconds' : `<span class="tag overdue">Needs attention</span> ${esc(l.error || 'Zoho has stopped sending changes')}`}
+      ${l.lastNotice ? `<br><span class="row-sub">Last change from Zoho ${whenShort(l.lastNotice)}</span>` : ''}${l.queued ? `<br><span class="row-sub">${l.queued} change${l.queued===1?'':'s'} waiting to be copied</span>` : ''}</span></div>`;
+  return `<div class="callout" style="margin:8px 0"><strong>Turn on the live copy</strong>
+    Changes made in Rep Hub are already copied as they happen. To also copy changes made directly in Zoho within seconds (not just overnight),
+    Zoho needs to be allowed to send them. In <a href="https://api-console.zoho.com" target="_blank" rel="noopener">api-console.zoho.com</a>,
+    open the <strong>Self Client</strong> Rep Hub uses, and on <strong>Generate Code</strong> paste this scope:
+    <div class="copyline"><code>ZohoCRM.notifications.ALL</code> <button class="btn sm" type="button" onclick="copyText('ZohoCRM.notifications.ALL',this)">Copy</button></div>
+    Pick 10 minutes, create it, and paste the code here:
+    <div class="btnrow" style="margin-top:6px;align-items:stretch"><input id="liveCode" placeholder="1000.xxxxxxxx…" style="flex:1;min-width:200px" autocomplete="off" spellcheck="false">
+      <button class="btn sm primary" onclick="connectLive(this)">Turn on</button></div></div>`;
+}
+async function connectLive(btn){
+  const code = (document.getElementById('liveCode').value || '').trim(); if(!code) return toast('Paste the code first');
+  btn.disabled = true; btn.textContent = 'Connecting…';
+  try{ await API.call('/admin/backup/live', { method:'POST', body: JSON.stringify({ code }) }); toast('Live copy is on'); backupStatus = null; drawBackupCard(); }
+  catch(e){ toast(e.message); btn.disabled = false; btn.textContent = 'Turn on'; }
+}
+/* Google Drive: the nightly backup file, in a Symbiz Drive folder */
+function driveBox(d){
+  if(!d.configured) return `<div class="kv"><span class="k">Google Drive</span><span class="row-sub">Not set up on the server yet. Ask your developer (it needs a Google sign-in key; see BACKUP-DRIVE.md).</span></div>`;
+  if(!d.connected) return `<div class="callout" style="margin:8px 0"><strong>Save the backup to Google Drive every night</strong>
+    Sign in with the Symbiz Google account that should hold the backups. Rep Hub keeps a "Rep Hub backups" folder there, adds a file every night,
+    and removes files older than ${d.keepDays || 90} days. It can only see the files it puts there, nothing else in the Drive.
+    <div class="btnrow" style="margin-top:8px"><button class="btn sm primary" onclick="connectDrive(this)">Connect Google Drive</button></div></div>`;
+  const l = d.last;
+  return `<div class="kv"><span class="k">Google Drive</span><span><span class="tag ok">Connected</span> ${esc(d.email || '')}
+      ${d.folderUrl ? ` · <a href="${esc(d.folderUrl)}" target="_blank" rel="noopener" class="inline-link">Open the folder</a>` : ''}
+      <br><span class="row-sub">${l ? (l.ok ? `Last saved ${whenShort(l.at)} (${Math.round((l.size||0)/1024).toLocaleString()} KB)` : `<span style="color:var(--rust)">Last try failed ${whenShort(l.at)}: ${esc(l.error||'')}</span>`) : 'First copy on its way'} · every night, kept ${d.keepDays || 90} days</span>
+      <br><a href="#" class="inline-link" onclick="event.preventDefault();driveNow()">Save to Drive now</a> · <a href="#" class="inline-link" onclick="event.preventDefault();disconnectDrive()">Disconnect</a></span></div>`;
+}
+async function connectDrive(btn){
+  btn.disabled = true;
+  try{ const o = await API.call('/admin/backup/google/start'); location.href = o.url; }
+  catch(e){ toast(e.message); btn.disabled = false; }
+}
+async function driveNow(){
+  try{ const o = await API.call('/admin/backup/google/upload', { method:'POST' }); toast(o.started ? 'Saving to Google Drive now. It takes a minute.' : o.error ? o.error : 'Saved to Google Drive'); }
+  catch(e){ toast(e.message); }
+  setTimeout(() => { backupStatus = null; drawBackupCard(); }, 1500);
+}
+async function disconnectDrive(){
+  if(!confirm('Stop saving backups to Google Drive? The files already there stay.')) return;
+  try{ await API.call('/admin/backup/google', { method:'DELETE' }); backupStatus = null; drawBackupCard(); toast('Google Drive disconnected'); }
+  catch(e){ toast(e.message); }
 }
 async function saveBackupFrequency(v){
   try{ await API.call('/admin/backup/frequency', { method:'PUT', body: JSON.stringify({ frequency: v }) }); backupStatus.frequency = v; toast(v === 'daily' ? 'The backup will be emailed every day' : 'The backup will be emailed on Sundays'); }
@@ -9042,6 +9092,11 @@ function fillShell(){
 (function readGoto(){
   try{
     const p = new URLSearchParams(location.search), view = p.get('view'), summit = p.get('summit');
+    // Back from connecting Google Drive: say how it went once the app is up
+    const drive = p.get('drive');
+    if(drive){ setTimeout(() => toast(drive === 'connected' ? 'Google Drive connected. The first backup is being saved there now.'
+      : drive === 'cancelled' ? 'Google Drive was not connected' : drive === 'expired' ? 'That took too long. Press Connect Google Drive again.'
+      : 'Google Drive could not be connected: ' + drive.replace(/^failed: /, '')), 1200); }
     if(!view && !summit) return;
     sessionStorage.setItem('rephub_goto', JSON.stringify({ view: view ? view.replace(/[^a-zA-Z]/g, '') : null, summit: summit ? summit.replace(/[^0-9]/g, '') : null }));
     history.replaceState({}, '', location.pathname);

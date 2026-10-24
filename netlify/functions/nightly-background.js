@@ -16,8 +16,8 @@ exports.handler = async (event) => {
   if (got.length !== want.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) return { statusCode: 403 };
   try {
     await migrate();
-    const sendNow = (event.queryStringParameters || {}).send === '1';
-    const out = await routes.nightly({ sendNow, budgetMs: 11 * 60 * 1000 });
+    const qs = event.queryStringParameters || {};
+    const out = await routes.nightly({ sendNow: qs.send === '1', driveNow: qs.drive === '1', budgetMs: 10 * 60 * 1000 });
     console.log('[nightly-background]', JSON.stringify({ ...out, mirror: out.mirror && out.mirror.results ? out.mirror.results.map(r => [r.module, r.records, r.error].filter(x => x != null).join(':')) : out.mirror }));
   } catch (e) {
     console.error('[nightly-background] failed:', e.message);

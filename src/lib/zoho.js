@@ -321,12 +321,20 @@ function chunk(arr, size) {
   return out;
 }
 
+/* Every record Rep Hub writes to Zoho is also copied into our own database
+   (the live copy): queued here, read back with every field shortly after */
+function copyLive(module, ids, op) {
+  try { return require('../mirror').queueChange(module, ids, op).catch(() => {}); } catch (_) { return Promise.resolve(); }
+}
+const idsOf = results => results.map(r => r && r.details && r.details.id).filter(Boolean);
+
 async function insertRecords(module, records, { trigger = [] } = {}) {
   const results = [];
   for (const group of chunk(records, 100)) {
     const out = await request(`/${module}`, { method: 'POST', body: { data: group, trigger } });
     results.push(...(out?.data || []));
   }
+  await copyLive(module, idsOf(results));
   return results;
 }
 
@@ -336,6 +344,7 @@ async function updateRecords(module, records, { trigger = [] } = {}) {
     const out = await request(`/${module}`, { method: 'PUT', body: { data: group, trigger } });
     results.push(...(out?.data || []));
   }
+  await copyLive(module, idsOf(results).length ? idsOf(results) : records.map(r => r.id));
   return results;
 }
 
@@ -348,11 +357,14 @@ async function upsertRecords(module, records, duplicateCheckFields) {
     });
     results.push(...(out?.data || []));
   }
+  await copyLive(module, idsOf(results));
   return results;
 }
 
 async function deleteRecord(module, id) {
-  return request(`/${module}/${id}`, { method: 'DELETE' });
+  const out = await request(`/${module}/${id}`, { method: 'DELETE' });
+  await copyLive(module, [id], 'delete');
+  return out;
 }
 
 /**
