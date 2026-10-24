@@ -937,7 +937,7 @@
   .banner{font-size:13px;padding:9px 24px;border-bottom:1px solid var(--line);display:flex;gap:9px;align-items:center;}
   .banner.sync{background:var(--info-soft);color:var(--info);}
   .banner.note{background:var(--accent-soft);color:var(--accent);}
-  .content{padding:22px 24px 100px;max-width:790px;}
+  .content{padding:22px 24px 100px;max-width:1040px;}
 
   .tabbar{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--line);padding:4px 2px calc(4px + env(safe-area-inset-bottom));justify-content:space-around;z-index:20;}
   .tabbar button{background:none;border:none;color:var(--ink-muted);display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10px;padding:6px 4px;border-radius:8px;cursor:pointer;position:relative;flex:1;}
@@ -1053,6 +1053,34 @@
   .mode-switch button{border:0;background:none;padding:6px 12px;border-radius:999px;font:600 13px var(--sans);color:var(--ink-muted);cursor:pointer;min-height:32px;}
   .mode-switch button.on{background:var(--primary);color:var(--primary-ink);cursor:default;}
   @media (max-width:640px){ .mode-switch button{padding:6px 9px;font-size:12px;} }
+  /* ── Compact layout ── */
+  .show-more{display:block;width:100%;margin:6px 0 4px;padding:9px;border:1px dashed var(--line);border-radius:9px;background:none;
+    color:var(--primary);font:600 13.5px var(--sans);cursor:pointer;}
+  .show-more:hover{background:var(--surface);}
+  /* Numbers at a glance: one tidy row, not big tiles that wrap */
+  .stats.mini{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+  .stats.mini .stat{flex:1 1 0;min-width:88px;padding:9px 11px;display:flex;flex-direction:column;gap:1px;}
+  @media (max-width:520px){ .stats.mini{gap:6px;} .stats.mini .stat{min-width:0;padding:8px 8px;} .stats.mini .stat .n{font-size:20px;} .stats.mini .stat .l{font-size:10.5px;} .stats.mini .stat .l br, .stats.mini .stat .l span{display:none;} }
+  .mgr-card .more-pop{right:auto;}
+  .stats.mini .stat .n{font-size:22px;}
+  .stats.mini .stat .l{font-size:11.5px;line-height:1.25;}
+  /* Call as a round phone button: the name and due date get the room */
+  .btn.icon{width:38px;height:38px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;}
+  .row.tight{padding:10px 0;align-items:center;}
+  .row.tight .row-title{font-size:14.5px;}
+  /* One-line event rows */
+  .ev-line{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line-soft);cursor:pointer;}
+  .ev-line:last-child{border-bottom:0;}
+  .ev-line .ev-d{flex:0 0 46px;text-align:center;border-radius:8px;background:var(--info-soft);color:var(--info);padding:4px 0;line-height:1.1;}
+  .ev-line .ev-d b{display:block;font-size:17px;font-family:var(--serif);font-weight:500;}
+  .ev-line .ev-d small{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;}
+  /* Wide screens: two lists side by side instead of one long column */
+  .two-col{display:grid;grid-template-columns:1fr;gap:0 24px;}
+  @media (min-width:1100px){ .two-col{grid-template-columns:1fr 1fr;} }
+  details.fold > summary{list-style:none;cursor:pointer;}
+  details.fold > summary::-webkit-details-marker{display:none;}
+  details.fold > summary::after{content:' ▾';color:var(--ink-muted);font-size:12px;}
+  details.fold[open] > summary::after{content:' ▴';}
   .signin-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
   .signin-url{display:inline-block;margin-top:4px;font-weight:600;color:var(--primary);word-break:break-all;}
   .rate-in{display:inline-flex;align-items:center;gap:4px;color:var(--ink-muted);font-size:14px;}
@@ -2445,6 +2473,16 @@ function downloadCSV(name, rows){
 
 /* ══════════════════ REP VIEWS ══════════════════ */
 
+/* Long lists show their first few rows and a "Show all" button, so a screen
+   opens on what matters instead of a wall of rows. The choice is remembered
+   for the session, per list. */
+function capped(key, rows, n, what){
+  n = n || 5; ui.open = ui.open || {};
+  if(rows.length <= n + 1) return rows.join('');
+  if(ui.open[key]) return rows.join('') + `<button class="show-more" onclick="toggleOpen('${key}')">Show fewer</button>`;
+  return rows.slice(0, n).join('') + `<button class="show-more" onclick="toggleOpen('${key}')">Show all ${rows.length}${what ? ' ' + what : ''} <span aria-hidden="true">▾</span></button>`;
+}
+function toggleOpen(k){ ui.open = ui.open || {}; ui.open[k] = !ui.open[k]; renderContent(); }
 function contactLine(a){
   const g=ring(a.ringId), m=a.memberId?member(a.memberId):null;
   // A facilitator call: the ring's facilitator, with their phone, even if it was saved before names were filled in
@@ -2454,14 +2492,14 @@ function contactLine(a){
   else if(facId && !a.facId) a = { ...a, facId };
   const phone = m?(m.phone||m.mobile) : f?f.phone : '';
   const target = m?`openMember('${a.memberId}')` : f?`openFac('${a.facId}')` : '';
-  return `<div class="row">
+  // One compact line: who, then what and when underneath; a round phone button and Log
+  return `<div class="row tight">
     <div class="row-main ${target?'clicky':''}" ${target?`onclick="${target}"`:''}>
       <div class="row-title">${esc(a.who)}</div>
-      <div class="row-sub">${a.type} · ${g?esc(g.name):''}${a.outcome&&a.outcome!=='Connected'?' · last try: '+a.outcome.toLowerCase():''}</div>
+      <div class="row-sub">${tag(a.nextDue)} ${a.type.replace(/ Call$/, ' call')}${g && !String(a.who).includes('Ring ' + g.name) ? ' · Ring ' + esc(g.name) : ''}${a.outcome&&a.outcome!=='Connected'?' · last try: '+a.outcome.toLowerCase():''}</div>
     </div>
     <div class="row-actions">
-      ${tag(a.nextDue)}
-      ${phone?`<a class="btn sm" href="tel:${esc(phone)}">Call</a>`:''}
+      ${phone?`<a class="btn sm icon" href="tel:${esc(phone)}" aria-label="Call ${esc(a.who)}" title="Call">${icon('phone',17)}</a>`:''}
       <button class="btn sm primary" onclick='openLog(${JSON.stringify({ringId:a.ringId,who:a.who,type:a.type,memberId:a.memberId||"",facId:a.facId||""})})'>Log</button>
     </div></div>`;
 }
@@ -2481,12 +2519,13 @@ function vToday(){
   const renewals=S.members.filter(m=>m.repId===ui.me&&m.status==='active'&&m.renews&&days(m.renews)<=45&&days(m.renews)>=0);
 
   let body='';
-  if(overdue.length) body+=`<h3 class="sub-h" style="color:var(--rust)">Overdue · ${overdue.length}</h3>`+overdue.map(contactLine).join('');
-  if(soon.length) body+=`<h3 class="sub-h">Due in the next ${S.settings.dueWindow} days · ${soon.length}</h3>`+soon.map(contactLine).join('');
+  // The first few of each; the rest one tap away
+  if(overdue.length) body+=`<h3 class="sub-h" style="color:var(--rust)">Overdue · ${overdue.length}</h3>`+capped('today-od', overdue.map(contactLine), 5, 'overdue');
+  if(soon.length) body+=`<h3 class="sub-h">Due in the next ${S.settings.dueWindow} days · ${soon.length}</h3>`+capped('today-soon', soon.map(contactLine), 4, 'due soon');
   if(!overdue.length&&!soon.length) body += (S.activities.length || !loading)
     ? `<div class="empty">You're all caught up. Nothing is due in the next ${S.settings.dueWindow} days.</div>`
     : emptyState('your calls');
-  if(later.length) body+=`<h3 class="sub-h" style="color:var(--ink-muted)">Coming up</h3>`+later.slice(0,4).map(contactLine).join('');
+  if(later.length) body+=`<details class="fold"><summary class="sub-h" style="display:block;margin:20px 0 6px;font-family:var(--serif);font-size:15px;color:var(--ink-muted)">Coming up later · ${later.length}</summary>${later.slice(0,8).map(contactLine).join('')}</details>`;
 
   const dueThisWeek = soon.length + overdue.length;
   let welcomed = true;
@@ -2501,11 +2540,8 @@ function vToday(){
       <div class="btnrow" style="margin-top:9px">
         <button class="btn sm primary" onclick="dismissWelcome()">Got it</button>
       </div></div>`}
-    <p class="row-sub" style="font-size:15px;color:var(--ink);margin:0 0 14px;line-height:1.5">
-      ${dueThisWeek
-        ? `<strong>${dueThisWeek} ${dueThisWeek===1?'person needs':'people need'} a call</strong>${overdue.length?` — ${overdue.length} already overdue`:''}.`
-        : (S.activities.length ? `Nothing due right now. Your next call is scheduled.` : `Nothing scheduled yet.`)}
-    </p>
+    ${dueThisWeek ? '' : `<p class="row-sub" style="font-size:15px;color:var(--ink);margin:0 0 14px;line-height:1.5">
+      ${S.activities.length ? `Nothing due right now. Your next call is scheduled.` : `Nothing scheduled yet.`}</p>`}
     ${(() => {
       // Only this rep's own requests, sent back in the last 30 days
       const sentBack = myRequests().filter(p=>p.status==='rejected' && (!p.decided_at || days(String(p.decided_at).slice(0,10)) >= -30));
@@ -2513,7 +2549,7 @@ function vToday(){
       return `<div class="callout rust"><strong>${sentBack.length} request${sentBack.length===1?'':'s'} sent back</strong>
         ${sentBack.slice(0,3).map(p=>`${esc(p.summary||'')} — ${esc(p.note||'')}`).join('<br>')}</div>`;
     })()}
-    <div class="stats">
+    <div class="stats mini">
       <div class="stat click" onclick="toWhoToContact()"><div class="n" style="color:var(--rust)">${overdue.length}</div><div class="l">Overdue</div></div>
       <div class="stat click" onclick="toWhoToContact()"><div class="n" style="color:var(--accent)">${soon.length}</div><div class="l">Due soon</div></div>
       ${API.live
@@ -2523,34 +2559,27 @@ function vToday(){
         : `<div class="stat click" onclick="setView('requests')"><div class="n">${reqs}</div><div class="l">Open requests</div></div>
            <div class="stat click" onclick="setView('unaffiliated')"><div class="n">${(S.membersNoRing||[]).filter(m=>m.status==='active').length}</div><div class="l">Members with no ring<br><span style="font-size:10px;opacity:.7">network-wide</span></div></div>`}
     </div>
-    ${(() => {
-      // The chart only once there is something to chart. Eight empty bars
-      // told a rep nothing and arrived last, after the calls had loaded.
-      const weeks = weeklyCounts(S.activities.filter(a => a.repId === ui.me && a.outcome));
-      if(weeks.some(n => n)) return trendCard('Your calls and meetings', weeks);
-      return `<div class="card nudge">${icon('phone',18)}<div style="flex:1"><strong>No calls logged in the last 8 weeks</strong>
-        <div class="row-sub">Each call you log shows here, week by week.</div></div>
-        <button class="btn sm primary" onclick="openLog({})">Log a call</button></div>`;
-    })()}
     ${(()=>{ const t=getTimer();
       return t?`<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
         <div><strong>Timer running — ${timerLabel(t)}</strong>${esc(t.category)}${t.note?' · '+esc(t.note):''}</div>
         <div class="btnrow"><button class="btn sm primary" onclick="stopTimer()">Stop and save</button>
         <button class="btn sm" onclick="cancelTimer()">Discard</button></div></div>`:''; })()}
-    ${renewals.length?`<div class="callout"><strong>${renewals.length} membership${renewals.length===1?'':'s'} renewing soon</strong>${renewals.map(m=>esc(m.name)+' ('+fmtShort(m.renews)+')').join(', ')} — worth a call first.</div>`:''}
-    ${(()=>{ const next=calendarItems(ui.me).filter(i=>days(i.date)>=0&&days(i.date)<=21).slice(0,3);
-      return next.length?`<h3 class="sub-h">On your calendar</h3>`+next.map(i=>`<div class="row ${i.kind==='event'?'clicky':''}" ${i.kind==='event'?`onclick="openEvent('${i.id}')"`:''}>
-        <div class="row-main"><div class="row-title">${esc(i.title)}</div>
-        <div class="row-sub">${fmt(i.date)}${i.time?' at '+esc(i.time):''}${i.sub?' · '+esc(i.sub):''}${i.where?' · '+mapLink(i.where):''}</div></div>
-        <span class="tag ${i.kind==='event'?'info':i.kind==='visit'?'ok':'later'}">${whenWords(i.date)}</span></div>`).join(''):''; })()}
-    <div class="section-head" id="whoToContact"><div><h2>Who to contact</h2><div class="sub">Facilitators and members, soonest first.</div></div></div>
+    ${renewals.length?`<details class="callout fold"><summary><strong>${renewals.length} membership${renewals.length===1?'':'s'} renewing soon</strong> — worth a call first</summary>
+      <div style="margin-top:6px">${renewals.map(m=>`<a href="#" class="inline-link" onclick="event.preventDefault();openMember('${m.id}')">${esc(splitRepName(m.name).name)}</a> (${fmtShort(m.renews)})`).join(', ')}</div></details>`:''}
+    <div class="section-head" id="whoToContact" style="margin-top:4px"><div><h2>Who to contact</h2></div>
+      <div class="btnrow" style="margin:0">${getTimer()?'':`<button class="btn sm" onclick="openTimerStart()">Start timer</button>`}
+        <button class="btn sm primary" onclick="openLog({})">Log a call</button></div></div>
     ${body}
-    <div class="btnrow" style="margin-top:20px;">
-      <button class="btn primary" onclick="openLog({})">Log a call or meeting</button>
-      ${getTimer()?`<button class="btn" onclick="stopTimer()">Stop timer</button>`:`<button class="btn" onclick="openTimerStart()">Start timer</button>`}
-      <button class="btn" onclick="setView('calendar')">Calendar</button>
-      <button class="btn" onclick="setView('resources')">Forms</button>
-    </div>`;
+    ${(()=>{ const next=calendarItems(ui.me).filter(i=>days(i.date)>=0&&days(i.date)<=21).slice(0,3);
+      return next.length?`<h3 class="sub-h">On your calendar</h3>`+next.map(i=>`<div class="row tight ${i.kind==='event'?'clicky':''}" ${i.kind==='event'?`onclick="openEvent('${i.id}')"`:''}>
+        <div class="row-main"><div class="row-title">${esc(i.title)}</div>
+        <div class="row-sub">${fmt(i.date)}${i.time?' at '+esc(i.time):''}${i.sub?' · '+esc(i.sub):''}</div></div>
+        <span class="tag ${i.kind==='event'?'info':i.kind==='visit'?'ok':'later'}">${whenWords(i.date)}</span></div>`).join(''):''; })()}
+    ${(() => {
+      // How their calls are going, once there is something to show
+      const weeks = weeklyCounts(S.activities.filter(a => a.repId === ui.me && a.outcome));
+      return weeks.some(n => n) ? `<div style="margin-top:18px">${trendCard('Your calls and meetings', weeks)}</div>` : '';
+    })()}`;
 }
 
 function toWhoToContact(){
@@ -2600,15 +2629,15 @@ function vRingDetail(){
     <div class="card">${LAUNCH_STEPS.map((s,i)=>`<label class="check ${r.launchSteps.includes(i)?'done':''}">
       <input type="checkbox" ${r.launchSteps.includes(i)?'checked':''} ${mine?'':'disabled'} onchange="toggleLaunch('${r.id}',${i})"><span>${s}</span></label>`).join('')}</div>`:'';
 
-  const memRows=mem.map(m=>{
+  const memRows=capped('ring-mem-'+r.id, mem.map(m=>{
     const lc=lastContact(m.id);
-    return `<div class="row">
+    return `<div class="row tight">
       <div class="row-main clicky" onclick="openMember('${m.id}')">
         <div class="row-title">${esc(m.name)}</div>
-        <div class="row-sub">${esc(m.business)} · last spoke ${lc?fmt(lc.date):'never'}</div></div>
-      <div class="row-actions"><a class="btn sm" href="tel:${esc(m.phone)}">Call</a>
+        <div class="row-sub">${esc(m.business)} · last spoke ${lc?fmtShort(lc.date):'never'}</div></div>
+      <div class="row-actions">${m.phone?`<a class="btn sm icon" href="tel:${esc(m.phone)}" aria-label="Call ${esc(m.name)}" title="Call">${icon('phone',17)}</a>`:''}
         ${mine?`<button class="btn sm primary" onclick='openLog(${JSON.stringify({ringId:r.id,who:m.name,type:"Member Call",memberId:m.id})})'>Log</button>`:''}</div></div>`;
-  }).join('')||`<div class="row-sub" style="padding:9px 0">No members placed yet.</div>`;
+  }), 8, 'members')||`<div class="row-sub" style="padding:9px 0">No members placed yet.</div>`;
 
   return `<button class="back" onclick="goBack(isRep()?'rings':'allrings')">← Back</button>
     <div class="section-head">
@@ -2628,15 +2657,15 @@ function vRingDetail(){
     <h3 class="sub-h">Members · ${mem.length} of ${r.capacity}</h3>
     ${memRows}
     <h3 class="sub-h">Group meetings</h3>
-    ${mts.map(t=>`<div class="row"><div class="row-main">
+    ${capped('ring-mt-'+r.id, mts.map(t=>`<div class="row tight"><div class="row-main">
       <div class="row-title">${fmt(t.date)}</div>
       <div class="row-sub">${listOf(t.attended).length ? listOf(t.attended).length+' attended' : 'Attendance not recorded'}${listOf(t.absent).length?', '+listOf(t.absent).length+' absent':''}${t.notes?' · '+esc(t.notes):''}</div>
-    </div>${listOf(t.attended).length+listOf(t.absent).length ? `<span class="tag ${listOf(t.absent).length>listOf(t.attended).length?'overdue':'ok'}">${Math.round(listOf(t.attended).length/Math.max(1,listOf(t.attended).length+listOf(t.absent).length)*100)}%</span>` : ''}</div>`).join('')||`<div class="empty">No meetings recorded yet.</div>`}
+    </div>${listOf(t.attended).length+listOf(t.absent).length ? `<span class="tag ${listOf(t.absent).length>listOf(t.attended).length?'overdue':'ok'}">${Math.round(listOf(t.attended).length/Math.max(1,listOf(t.attended).length+listOf(t.absent).length)*100)}%</span>` : ''}</div>`), 3, 'meetings')||`<div class="empty">No meetings recorded yet.</div>`}
     <h3 class="sub-h">Activity history</h3>
-    ${acts.map(a=>`<div class="row"><div class="row-main">
-      <div class="row-title">${a.type} — ${esc(a.who)}</div>
-      <div class="row-sub">${fmt(a.date)} · ${pname(a.repId)}${a.outcome&&a.outcome!=='Connected'?' · '+a.outcome:''}${a.notes?' · '+esc(a.notes):''}</div>
-    </div></div>`).join('')||`<div class="empty">Nothing logged yet.</div>`}`;
+    ${capped('ring-act-'+r.id, acts.map(a=>`<div class="row tight"><div class="row-main">
+      <div class="row-title">${esc(a.who)}</div>
+      <div class="row-sub">${esc(a.type)} · ${fmtShort(a.date)} · ${esc(splitRepName(pname(a.repId)).name)}${a.outcome&&a.outcome!=='Connected'?' · '+a.outcome:''}${a.notes?' · '+esc(a.notes):''}</div>
+    </div></div>`), 5, 'entries')||`<div class="empty">Nothing logged yet.</div>`}`;
 }
 
 /* Notes for whoever looks after the ring — what one rep knows, passed to the
@@ -2985,11 +3014,11 @@ function vOfficeDash(){
   // of inventing a year figure.
   const yr = String(new Date().getFullYear());
   const newM = st && st.year === yr ? st.joinedThisYear : S.members.filter(m => m.status==='active' && m.joined && m.joined >= yr+'-01-01').length;
-  const inactive = st ? st.inactiveMembers : S.members.filter(m => m.status !== 'active').length;
+  const inactive = st && st.inactiveMembers != null ? st.inactiveMembers : S.members.filter(m => m.status !== 'active').length;
 
   return `${announceBanner()}
     <div class="hello"><h2>${greeting()}</h2><div class="sub">${todayLong()} · where things stand across every rep and ring</div></div>
-    <div class="stats">
+    <div class="stats mini">
       <div class="stat click" onclick="setView('approvals')"><div class="n" style="color:var(--accent)">${pend}</div><div class="l">Awaiting approval</div></div>
       <div class="stat click" onclick="setView('coverage')"><div class="n" style="color:var(--rust)">${od}</div><div class="l">Overdue contacts</div></div>
       <div class="stat click" onclick="setView('members')"><div class="n">${act}</div><div class="l">Active members</div></div>
@@ -3044,12 +3073,9 @@ function vOfficeDash(){
       }
 
       if(unrated){
-        out += `<div class="callout"><strong>${unrated} ring${unrated===1?'':'s'} cannot be rated yet</strong>
-          They have no meeting rhythm, visit dates or attendance recorded in Zoho, so there is nothing to score.
-          Filling those in is what turns this into a useful signal.
-          <div class="btnrow" style="margin-top:9px">
-            <button class="btn sm" onclick="ui.report='missing-detail';setView('reports')">See what's missing</button>
-          </div></div>`;
+        out += `<div class="callout" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <span><strong>${unrated} ring${unrated===1?'':'s'} cannot be rated yet</strong> — no meetings, visits or attendance in Zoho</span>
+          <button class="btn sm" onclick="ui.report='missing-detail';setView('reports')">See what's missing</button></div>`;
       }
       return out;
     })()}
@@ -3072,31 +3098,38 @@ function vOfficeDash(){
       const soon = (S.events||[]).filter(e => e.date && days(e.date) >= 0 && days(e.date) <= 21)
         .sort((a,b) => a.date.localeCompare(b.date)).slice(0, 3);
       if(!soon.length) return '';
+      // One line each: the date, the event, how many are coming. Open it for the list.
+      const md = d => { const x = new Date(d + 'T12:00:00'); return `<b>${x.getDate()}</b><small>${x.toLocaleDateString('en-US',{month:'short'})}</small>`; };
       return `<h3 class="sub-h">Upcoming events</h3>
-        ${soon.map(e => `<div class="card" style="margin-bottom:10px;padding:13px 15px">
-          <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
-            <div style="flex:1;min-width:180px">
-              <div class="row-title clicky" onclick="openEvent('${e.id}')">${esc(e.title)}</div>
-              <div class="row-sub">${fmt(e.date)}${e.time?' · '+esc(e.time):''}${e.location?' · '+mapLink(e.location):''}</div>
-            </div>
-            <span class="tag info">${days(e.date)===0?'today':days(e.date)===1?'tomorrow':'in '+days(e.date)+' days'}</span>
-          </div>
-          ${attendeeBlock(e.id, e.registrationCount)}
-        </div>`).join('')}`;
+        <div class="card" style="padding:4px 14px">${soon.map(e => { const n = e.registrationCount || eventRegs(e.id).length;
+          return `<div class="ev-line" onclick="openEvent('${e.id}')">
+            <span class="ev-d">${md(e.date)}</span>
+            <div style="flex:1;min-width:0"><div class="row-title">${esc(e.title)}</div>
+              <div class="row-sub">${e.time ? esc(e.time) + ' · ' : ''}${n ? n + ' registered' : 'No registrations yet'}</div></div>
+            <span class="tag info">${days(e.date)===0?'today':days(e.date)===1?'tomorrow':'in '+days(e.date)+' days'}</span></div>`; }).join('')}</div>`;
     })()}
 
-    <h3 class="sub-h">Needs your attention</h3>
-    ${S.rings.filter(r=>r.status==='pending').map(r=>`<div class="row clicky" onclick="setView('approvals')">
-      <div class="row-main"><div class="row-title">${esc(r.name)}</div><div class="row-sub">${pname(r.repId)} · submitted ${fmt(r.createdAt)}</div></div>
-      <span class="tag soon">approve</span></div>`).join('')}
-    ${dueItems(null).filter(a=>days(a.nextDue)<-14).slice(0,5).map(a=>`<div class="row">
-      <div class="row-main"><div class="row-title">${esc(a.who)}</div><div class="row-sub">${a.type} · ${pname(a.repId)} · ${ring(a.ringId)?esc(ring(a.ringId).name):''}</div></div>
-      ${tag(a.nextDue)}</div>`).join('')}
-    <h3 class="sub-h">Recent activity across the network</h3>
-    ${(S.activities.some(a=>a.outcome) ? '' : `<div class="empty">No calls logged yet. Booked calls show above as they fall due.</div>`)}
-    ${S.activities.filter(a=>a.outcome).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,6).map(a=>`<div class="row">
-      <div class="row-main"><div class="row-title">${a.type} — ${esc(a.who)}</div>
-      <div class="row-sub">${pname(a.repId)} · ${fmt(a.date)}${a.notes?' · '+esc(a.notes):''}</div></div></div>`).join('')}`;
+    <div class="two-col">
+      <div>
+        <h3 class="sub-h">Needs your attention</h3>
+        ${(() => {
+          const late = dueItems(null).filter(a=>days(a.nextDue)<-14);
+          const rows = [...S.rings.filter(r=>r.status==='pending').map(r=>`<div class="row tight clicky" onclick="setView('approvals')">
+              <div class="row-main"><div class="row-title">${esc(r.name)}</div><div class="row-sub">${esc(splitRepName(pname(r.repId)).name)} · submitted ${fmt(r.createdAt)}</div></div>
+              <span class="tag soon">approve</span></div>`),
+            ...late.map(a=>`<div class="row tight">
+              <div class="row-main"><div class="row-title">${esc(a.who)}</div><div class="row-sub">${tag(a.nextDue)} ${esc(splitRepName(pname(a.repId)).name)}${ring(a.ringId)?' · Ring '+esc(ring(a.ringId).name):''}</div></div></div>`)];
+          return rows.length ? capped('dash-attn', rows, 5, 'more than two weeks overdue') : `<div class="empty">Nothing more than two weeks overdue.</div>`;
+        })()}
+      </div>
+      <div>
+        <h3 class="sub-h">Recent activity</h3>
+        ${S.activities.some(a=>a.outcome) ? capped('dash-recent', S.activities.filter(a=>a.outcome).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,30).map(a=>`<div class="row tight">
+          <div class="row-main"><div class="row-title">${esc(a.who)}</div>
+          <div class="row-sub">${esc(a.type)} · ${esc(splitRepName(pname(a.repId)).name)} · ${fmtShort(a.date)}${a.notes?' · '+esc(String(a.notes).slice(0,80)):''}</div></div></div>`), 5, 'recent')
+          : `<div class="empty">No calls logged yet.</div>`}
+      </div>
+    </div>`;
 }
 
 function vApprovals(){
@@ -3402,13 +3435,14 @@ function vMembersAll(){
     <div class="chips">${['all','active','renewing','discontinued'].map(f=>
       `<button class="chip ${ui.filter===f?'on':''}" onclick="ui.filter='${f}';resetPaging();renderContent()">${f[0].toUpperCase()+f.slice(1)}</button>`).join('')}</div>
 
-    <h3 class="sub-h">Facilitators · ${facs.length}</h3>
-    ${facShown.map(f=>`<div class="row clicky" onclick="openFac('${f.id}')">
+    <!-- Facilitators folded away (open while searching), so the members come first -->
+    <details class="fold" ${q ? 'open' : ''}><summary class="sub-h" style="display:block;margin:18px 0 6px;font-family:var(--serif);font-size:15px">Facilitators · ${facs.length}</summary>
+    ${facShown.map(f=>`<div class="row tight clicky" onclick="openFac('${f.id}')">
       <div class="av" style="background:var(--primary-soft);color:var(--primary)">${initials(f.name)}</div>
       <div class="row-main"><div class="row-title">${esc(f.name)}</div>
       <div class="row-sub">${esc(f.business||'—')}</div></div></div>`).join('')
       || emptyState('facilitators')}
-    ${moreButton('facs', facShown.length, facs.length)}
+    ${moreButton('facs', facShown.length, facs.length)}</details>
 
     <h3 class="sub-h">Members · ${list.length}</h3>
     ${shown.map(m=>{const lc=lastContact(m.id);return `<div class="row clicky" onclick="openMember('${m.id}')">
@@ -5348,6 +5382,7 @@ function vManager(){
         <div class="btnrow" style="margin-top:12px">
           <button class="btn sm" onclick="ui.report='rep-coverage';exportReport()">Export CSV</button>
           <button class="btn sm" onclick="setView('coverage')">Coverage map</button>
+          <button class="btn sm" onclick="openSignInQR()">Sign-in link for reps</button>
           ${myRepSelf() ? `<button class="btn sm primary" onclick="openMyRepView()">My rep view</button>` : ''}</div>
       </div>
       <div class="gauge" title="${groups.ok.length} of ${cards.length} reps are on top of it">
@@ -5359,7 +5394,6 @@ function vManager(){
 
     ${mgrAttention()}
     ${onboardPanel()}
-    ${signInLinkBar()}
 
     <div class="kpis">
       ${kpi(cards.length,'reps','user','neutral',"ui.mgrFilter='all';renderContent()")}
@@ -5370,6 +5404,8 @@ function vManager(){
       ${kpi(unvisited,'never visited','pin',unvisited?'amber':'neutral','openNeverVisited()')}
     </div>
 
+    ${!teamWeeks.some(n => n) ? `<div class="card nudge">${icon('phone',18)}<div style="flex:1"><strong>No calls logged by the team in the last 8 weeks</strong>
+        <div class="row-sub">The weekly chart and who is most active appear here as reps log calls.</div></div></div>` : `
     <div class="dash-pair">${trendCard('Calls and meetings logged · whole team', teamWeeks)}
       <div class="card leader"><div class="trend-t">Most active · last 30 days</div>
         ${top.length ? top.map(c => `<div class="leader-row clicky" onclick="previewAsRep('${esc(c.id)}','${esc(c.name)}')">
@@ -5378,14 +5414,12 @@ function vManager(){
             <div class="bar"><span style="width:${Math.round(c.logged/most*100)}%"></span></div></div>
           <strong class="leader-n">${c.logged}</strong></div>`).join('')
         : `<div class="row-sub" style="margin-top:10px">Nobody has logged a call in 30 days yet.</div>`}</div>
-    </div>
+    </div>`}
 
     ${heavy.length?`<div class="callout rust"><strong>${heavy.length===1?'One rep is':`${heavy.length} reps are`} carrying well above average</strong>
       ${heavy.map(c=>`${esc(c.name)} has ${c.rings} against an average of ${Math.round(avg)}`).join('; ')}.
       <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="setView('coverage')">Look at coverage</button>
         ${API.live ? heavy.slice(0,3).map(c => `<button class="btn sm" onclick="openMoveRings('${esc(c.id)}')">Move some of ${esc(splitRepName(c.name).name.split(' ')[0])}'s rings</button>`).join('') : ''}</div></div>`:''}
-    ${silent.length===cards.length?`<div class="callout"><strong>Nobody has logged anything yet</strong>
-      That is expected before the reps start using the app. It becomes a worry after the first fortnight.</div>`:''}
 
     <div class="mgr-tools">
       <div class="segs" style="margin:0">
@@ -5414,7 +5448,7 @@ function vManager(){
           <div style="flex:1;min-width:0">
             <div class="row-title" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
               ${esc(splitRepName(c.name).name)}${splitRepName(c.name).num?`<span class="rp-num">#${esc(splitRepName(c.name).num)}</span>`:''}</div>
-            <div class="row-sub">${c.rings} ring${c.rings===1?'':'s'} · ${c.members} member${c.members===1?'':'s'}</div>
+            <div class="row-sub">${c.rings} ring${c.rings===1?'':'s'} · ${c.members} member${c.members===1?'':'s'}${c.rings>avg*1.5?' · <span style="color:var(--rust)">heavy load</span>':''}</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
             <span class="pill pill-${st.tone}">${st.label}</span>
@@ -5422,9 +5456,7 @@ function vManager(){
         </div>
         <div class="mgr-spark" title="Calls logged, last 8 weeks: ${c.weeks.join(', ')}">
           ${sparkline(c.weeks)}<span>${c.weeks.reduce((s,x)=>s+x,0)} in 8 wks</span></div>
-        <div class="load"><span style="width:${pct}%;background:${c.rings>avg*1.5?'var(--rust)':'var(--primary)'}"></span></div>
-        <div class="row-sub" style="margin:3px 0 10px">${c.rings>avg*1.5?'Above':c.rings<avg*0.6?'Below':'About'} average load</div>
-        <div class="mgr-nums">
+        <div class="mgr-nums" style="margin-top:8px">
           ${[['overdue',c.overdue,'overdue',c.overdue?'rust':'mute'],
              ['soon',c.soon,'due soon','ink'],
              ['logged',c.logged,'logged 30d',c.logged?'green':'rust'],
@@ -5447,12 +5479,14 @@ function vManager(){
           return goalBars({ calls: m.callsQuarter, visits: m.visitsQuarter, newMembers: newMembersFor(c.id) }, m.goal) + ci + inv; })()}
         <div class="btnrow" style="margin-top:10px">
           <button class="btn sm" onclick="previewAsRep('${esc(c.id)}','${esc(c.name)}')">See their screen</button>
-          <button class="btn sm" onclick="ui.calRep='${esc(c.id)}';setView('calendar')">Their calendar</button>
-          ${API.live ? `<button class="btn sm" onclick="openGoals('${esc(c.id)}')">Goals</button>
-          <button class="btn sm" onclick="openRepNotes('${esc(c.id)}')">Check-ins</button>
-          <button class="btn sm" onclick="openMoveRings('${esc(c.id)}')">Move rings</button>
-          <button class="btn sm" onclick="openMessageReps(['${esc(c.id)}'])">Email</button>` : ''}
-          ${c.noRhythm?`<button class="btn sm" onclick="setView('allrings')">${c.noRhythm} with no rhythm</button>`:''}
+          <!-- Everything else under one button, so each card stays short -->
+          <details class="more-menu"><summary class="btn sm">More ▾</summary><div class="more-pop">
+            <button class="btn sm" onclick="ui.calRep='${esc(c.id)}';setView('calendar')">Their calendar</button>
+            ${API.live ? `<button class="btn sm" onclick="openMessageReps(['${esc(c.id)}'])">Email them</button>
+            <button class="btn sm" onclick="openGoals('${esc(c.id)}')">Goals</button>
+            <button class="btn sm" onclick="openRepNotes('${esc(c.id)}')">Check-ins</button>
+            <button class="btn sm" onclick="openMoveRings('${esc(c.id)}')">Move rings</button>` : ''}
+            ${c.noRhythm?`<button class="btn sm" onclick="setView('allrings')">${c.noRhythm} rings with no rhythm</button>`:''}</div></details>
         </div>
       </div>`;
     }).join('')}
