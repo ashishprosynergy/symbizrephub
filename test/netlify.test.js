@@ -1771,6 +1771,22 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.ok(!b.tables.expenses.some(x => 'receipt_data' in x), 'receipt files left out of the email copy');
   });
 
+  test('ring notes pass from one rep to the next, with a handover note when a ring moves', async () => {
+    store.Growth_Ring_Groups.push({ id: 'GRN1', Name: 'Notes Ring', Active: true, Regional_Rep: { id: 'CONTACT_REP_1', name: 'Test Rep' } });
+    require('../src/lib/zoho').clearCache();
+    await db.query("DELETE FROM zoho_cache");
+    const add = await invoke('POST', '/rings/GRN1/notes', { token: rep, body: { note: 'Meets in the back room; Eli prefers evenings' } });
+    assert.equal(add.statusCode, 201, add.body);
+    assert.equal((await invoke('POST', '/rings/NOT_MINE/notes', { token: rep, body: { note: 'x' } })).statusCode, 403, 'not their ring');
+    const admin = J(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse' } })).token;
+    const moved = await invoke('POST', '/rings/GRN1/reassign', { token: admin, body: { repZohoId: '999000', note: 'Promised them a speaker in March' } });
+    assert.equal(moved.statusCode, 200, moved.body);
+    const notes = J(await invoke('GET', '/rings/GRN1/notes', { token: office }));
+    assert.equal(notes.length, 2);
+    assert.ok(notes.some(n => n.handover && /speaker in March/.test(n.note)), 'the handover note is kept with the ring');
+    assert.ok(notes.some(n => /back room/.test(n.note)), 'and the earlier rep\'s note is still there for the next one');
+  });
+
   test('a rep who signed up with a second email is merged into one account, keeping their hours', async () => {
     const auth = require('../src/auth');
     await db.q.insertUser({ id: 'gm_zoho', email: 'glenden@zoho-email.test', name: 'Glenden Martin #0627', phone: null, role: 'rep',

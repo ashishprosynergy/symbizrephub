@@ -1045,6 +1045,10 @@
      Opacity and transform only, so it never shifts the layout. */
   @keyframes vtIn{from{opacity:0;transform:translateY(5px);}}
   .content.v-enter{animation:vtIn .18s cubic-bezier(.2,.7,.3,1);}
+  .ring-note{padding:9px 0;border-bottom:1px solid var(--line-soft);}
+  .ring-note:first-child{padding-top:0;}
+  .ring-note-t{white-space:pre-wrap;font-size:14.5px;margin-top:3px;}
+  .ring-note.handover .ring-note-t{background:var(--info-soft);border-radius:8px;padding:8px 10px;}
   .signin-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
   .signin-url{display:inline-block;margin-top:4px;font-weight:600;color:var(--primary);word-break:break-all;}
   .rate-in{display:inline-flex;align-items:center;gap:4px;color:var(--ink-muted);font-size:14px;}
@@ -2438,8 +2442,13 @@ function downloadCSV(name, rows){
 /* ══════════════════ REP VIEWS ══════════════════ */
 
 function contactLine(a){
-  const g=ring(a.ringId), m=a.memberId?member(a.memberId):null, f=a.facId?fac(a.facId):null;
-  const phone = m?m.phone : f?f.phone : '';
+  const g=ring(a.ringId), m=a.memberId?member(a.memberId):null;
+  // A facilitator call: the ring's facilitator, with their phone, even if it was saved before names were filled in
+  const facId = a.facId || (!m && /facilitator/i.test(a.type||'') && g ? g.facId : null);
+  const f = facId ? fac(facId) : null;
+  if(f && !a.memberId && (!a.who || (g && a.who === g.name))) a = { ...a, who: `${f.name} · Ring ${g.name}`, facId };
+  else if(facId && !a.facId) a = { ...a, facId };
+  const phone = m?(m.phone||m.mobile) : f?f.phone : '';
   const target = m?`openMember('${a.memberId}')` : f?`openFac('${a.facId}')` : '';
   return `<div class="row">
     <div class="row-main ${target?'clicky':''}" ${target?`onclick="${target}"`:''}>
@@ -2611,6 +2620,7 @@ function vRingDetail(){
       <button class="btn" onclick="openMeeting('${r.id}')">Record group meeting</button>`:''}
     </div>`:''}
     ${launch}
+    ${API.live && (mine || isOffice()) ? ringNotesHTML(r) : ''}
     <h3 class="sub-h">Members · ${mem.length} of ${r.capacity}</h3>
     ${memRows}
     <h3 class="sub-h">Group meetings</h3>
@@ -2625,6 +2635,45 @@ function vRingDetail(){
     </div></div>`).join('')||`<div class="empty">Nothing logged yet.</div>`}`;
 }
 
+/* Notes for whoever looks after the ring — what one rep knows, passed to the
+   next: how the group runs, who to watch for, what was promised. Kept with
+   the ring, so they move when the ring moves. */
+var ringNotesBy = {}, ringNotesLoading = {};
+function loadRingNotes(id, force){
+  if(ringNotesLoading[id] || (ringNotesBy[id] && !force)) return;
+  ringNotesLoading[id] = true;
+  API.call('/rings/' + id + '/notes').then(v => { ringNotesBy[id] = v; })
+    .catch(e => { ringNotesBy[id] = { error: e.message }; })
+    .finally(() => { ringNotesLoading[id] = false; if(ui.view === 'ringDetail' && ui.ringId === id) renderContent(); });
+}
+function ringNotesHTML(r){
+  loadRingNotes(r.id);
+  const list = ringNotesBy[r.id];
+  const when = d => new Date(d).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+  const body = !list ? `<div class="row-sub">Loading…</div>`
+    : list.error ? `<div class="row-sub">${esc(list.error)}</div>`
+    : list.length ? list.map(n => `<div class="ring-note ${n.handover ? 'handover' : ''}">
+        <div class="row-sub">${n.handover ? '<span class="tag info">Handover</span> ' : ''}${esc(splitRepName(n.author_name || '').name || 'Someone')} · ${when(n.created_at)}
+          ${(n.author_id === (me()||{}).loginId || n.author_id === ui.me || isOffice()) ? ` · <a href="#" class="inline-link" onclick="event.preventDefault();deleteRingNote('${esc(r.id)}',${Number(n.id)})">remove</a>` : ''}</div>
+        <div class="ring-note-t">${esc(n.note)}</div></div>`).join('')
+    : `<div class="row-sub">Nothing yet. Anything the next person looking after this ring should know goes here.</div>`;
+  return `<h3 class="sub-h">Notes for whoever looks after this ring</h3>
+    <div class="card">${body}
+      <form onsubmit="addRingNote(event,'${esc(r.id)}')" style="margin-top:10px">
+        <textarea name="note" rows="2" placeholder="e.g. Meets in the back room at Zook's; Eli prefers a call after 6pm; promised them a speaker in March" required></textarea>
+        <div class="btnrow" style="margin-top:6px"><button class="btn sm primary" type="submit">Add note</button></div></form></div>`;
+}
+async function addRingNote(e, id){
+  e.preventDefault(); const f = e.target;
+  try{ ringNotesBy[id] = await API.call('/rings/' + id + '/notes', { method:'POST', body: JSON.stringify({ note: fv(f,'note') }) });
+    toast('Note added'); renderContent(); }
+  catch(ex){ toast(ex.message || 'Could not add the note'); }
+}
+async function deleteRingNote(id, noteId){
+  if(!confirm('Remove this note?')) return;
+  try{ ringNotesBy[id] = await API.call('/rings/' + id + '/notes/' + noteId, { method:'DELETE' }); renderContent(); }
+  catch(ex){ toast(ex.message || 'Could not remove it'); }
+}
 function vPeople(){
   const q=ui.q.toLowerCase();
   // Only people in this rep's own rings. Unaffiliated members live elsewhere.
@@ -5588,6 +5637,9 @@ function openMoveRings(repId){
       <div class="field"><label>Rings to move</label>
         <div class="pick-list">${rings.map(r => `<label class="pick"><input type="checkbox" name="ring" value="${r.id}">
           <span>${esc(r.name)}<span class="row-sub"> · ${r.serverMemberCount||ringMembers(r.id).length} members</span></span></label>`).join('')}</div></div>
+      <div class="field"><label>Handover note for the new rep <span style="font-weight:400;color:var(--ink-muted)">(optional)</span></label>
+        <textarea name="note" rows="3" placeholder="What they should know: how the group is doing, anything promised, who needs a call first"></textarea>
+        <div class="hint">Kept with each ring under "Notes for whoever looks after this ring", and emailed to the new rep.</div></div>
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
         <button class="btn primary" type="submit">Move</button></div></form>`);
 }
@@ -5600,7 +5652,8 @@ async function moveRings(e, fromId){
   const btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Moving…';
   let ok = 0, failed = [];
   for(const id of ids){
-    try{ await API.call('/rings/' + id + '/reassign', { method:'POST', body: JSON.stringify({ repZohoId: to }) });
+    try{ await API.call('/rings/' + id + '/reassign', { method:'POST', body: JSON.stringify({ repZohoId: to, note: fv(f,'note') }) });
+      delete ringNotesBy[id];
       const r = ring(id); if(r){ r.repId = to; r.repName = toCard ? toCard.name : r.repName; }
       S.members.filter(m => m.ringId === id).forEach(m => { m.repId = to; });
       ok++; }
@@ -7149,6 +7202,9 @@ function openReassign(ringId){
     <form onsubmit="submitReassign(event,'${ringId}')">
       <div class="field"><label>Rep</label><select name="repId">${PEOPLE.filter(p=>p.role==='rep').map(p=>
         `<option value="${p.id}" ${p.id===r.repId?'selected':''}>${esc(p.name)} — ${esc(p.region||'')}</option>`).join('')}</select></div>
+      ${API.live ? `<div class="field"><label>Handover note for the new rep <span style="font-weight:400;color:var(--ink-muted)">(optional)</span></label>
+        <textarea name="note" rows="3" placeholder="What they should know about this ring"></textarea>
+        <div class="hint">Kept with the ring and emailed to the new rep.</div></div>` : ''}
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
       <button type="submit" class="btn primary">Reassign</button></div></form>`);
 }
@@ -7156,7 +7212,7 @@ async function submitReassign(e,ringId){
   e.preventDefault(); const r=ring(ringId), to=fv(e.target,'repId');
   if(API.live){
     if(to === r.repId){ closeModal(); return; }
-    try{ await API.call('/rings/' + ringId + '/reassign', { method:'POST', body: JSON.stringify({ repZohoId: to }) }); }
+    try{ await API.call('/rings/' + ringId + '/reassign', { method:'POST', body: JSON.stringify({ repZohoId: to, note: fv(e.target,'note') }) }); delete ringNotesBy[ringId]; }
     catch(ex){ toast(ex.message || 'Could not move the ring'); return; }
     r.repName = pname(to); mgrData = null;
   }
@@ -8391,13 +8447,19 @@ const adapt = {
   },
 
   activity(a){
+    // A facilitator call is filed against the ring, not a person, so it only
+    // knew the group number. Mel: "it only shows the group number, not who I
+    // am calling" — name the ring's facilitator instead.
+    const g = !a.memberId && /facilitator/i.test(a.type || '') ? (S.rings || []).find(r => r.id === a.ringId) : null;
+    const facName = g && g.facName ? g.facName : '';
     return {
       id: a.id,
       ringId: a.ringId || null,
       repId: a.repZohoId || null,
       memberId: a.memberId || null,
+      facId: g && g.facId ? g.facId : undefined,
       type: a.type || 'Visit',
-      who: a.memberName || a.ringName || a.type || '',
+      who: a.memberName || (facName ? `${facName} · Ring ${a.ringName || g.name}` : '') || a.ringName || a.type || '',
       date: a.date || '',
       nextDue: a.nextDue || null,
       // No outcome = a call that is booked but not made yet (the call cycle

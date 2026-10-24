@@ -307,6 +307,18 @@ CREATE TABLE IF NOT EXISTS rep_messages (
 
 CREATE INDEX IF NOT EXISTS idx_rep_notes ON rep_notes (rep_id, created_at);
 
+CREATE TABLE IF NOT EXISTS ring_notes (
+  id           SERIAL PRIMARY KEY,
+  ring_id      TEXT NOT NULL,
+  author_id    TEXT,
+  author_name  TEXT,
+  note         TEXT NOT NULL,
+  handover     BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ring_notes ON ring_notes (ring_id, created_at);
+
 CREATE TABLE IF NOT EXISTS geocodes (
   address_key TEXT PRIMARY KEY,
   lat         DOUBLE PRECISION,
@@ -426,6 +438,12 @@ const q = {
   forgetDevice: (hash, userId) => query('DELETE FROM trusted_devices WHERE token_hash = $1 AND user_id = $2', [hash, userId]),
   forgetDevicesFor: userId => query('DELETE FROM trusted_devices WHERE user_id = $1', [userId]),
   setRole: (id, role) => query('UPDATE users SET role = $1 WHERE id = $2', [role, id]),
+  ringNotes: ringId => query('SELECT id, ring_id, author_id, author_name, note, handover, created_at FROM ring_notes WHERE ring_id = $1 ORDER BY created_at DESC, id DESC LIMIT 200', [ringId]),
+  addRingNote: n => query('INSERT INTO ring_notes (ring_id, author_id, author_name, note, handover) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+    [n.ringId, n.authorId || null, n.authorName || null, n.note, !!n.handover]),
+  deleteRingNote: (id, ringId) => query('DELETE FROM ring_notes WHERE id = $1 AND ring_id = $2', [id, ringId]),
+  ringNoteCounts: ids => ids.length ? query(`SELECT ring_id, COUNT(*)::int AS n, MAX(created_at) AS last FROM ring_notes
+    WHERE ring_id IN (${ids.map((_, i) => '$' + (i + 1)).join(',')}) GROUP BY ring_id`, ids) : Promise.resolve([]),
   linkZoho: (id, contactId) => query("UPDATE users SET zoho_owner_id = $1, role = 'rep' WHERE id = $2", [contactId, id]),
   /* One person, two accounts (they signed up with another email): everything
      under the one being dropped moves to the one kept, then it is removed */

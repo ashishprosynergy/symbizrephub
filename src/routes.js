@@ -2654,7 +2654,7 @@ r.runAutoAccounting = runAutoAccounting;
  * always a second copy. Calls, registrations and leads already live in Zoho.
  * Never included: passwords, sign-in codes, or connection keys. */
 const BACKUP_TABLES = ['time_entries', 'expenses', 'pending_writes', 'accounting_batches', 'summit_tasks', 'summit_links',
-  'summit_notes', 'rep_goals', 'rep_notes', 'visit_plans', 'rep_messages'];
+  'summit_notes', 'rep_goals', 'rep_notes', 'ring_notes', 'visit_plans', 'rep_messages'];
 async function buildBackup({ receipts = false } = {}) {
   const out = { madeAt: new Date().toISOString(), site: cfg.appUrl, tables: {} };
   for (const t of BACKUP_TABLES) {
@@ -3549,8 +3549,54 @@ r.post('/rings/:id/reassign', ...mgrGuard, writesAllowed, wrap(async (req, res) 
   await zoho.updateRecords(M.RING, [{ id: req.params.id, Regional_Rep: { id: repZohoId } }]);
   zoho.clearCache();
   dropSnapshot();
-  await audit(req.user.id, 'ring.reassigned', { id: req.params.id, ring: from.name, from: from.repZohoId, to: repZohoId }, req.ip);
+  // A handover note travels with the ring, and goes to the new rep by email
+  const note = String(req.body?.note || '').trim().slice(0, 4000);
+  if (note) {
+    await q.addRingNote({ ringId: req.params.id, authorId: req.user.id, authorName: req.user.name, note, handover: true });
+    const rep = (await q.allUsers()).find(u => u.zoho_owner_id === repZohoId);
+    if (rep && rep.email) {
+      const e = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      reminders.sendEmail(rep.email, `Ring ${from.name} is now yours`,
+        `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;font-size:15px;color:#1E2A20;max-width:540px">
+          <p>${e((rep.name || '').split(' ')[0] || 'Hello')},</p>
+          <p>Ring <strong>${e(from.name)}</strong> has been moved to you${from.repName ? ' from ' + e(String(from.repName).replace(/\s*#\s*\d+$/, '')) : ''}. ${e(req.user.name)} left this for you:</p>
+          <p style="white-space:pre-wrap;background:#F2F5EC;border-radius:8px;padding:12px 14px">${e(note)}</p>
+          <p>It is also under <strong>Notes for whoever looks after this ring</strong> on the ring in Rep Hub, with any earlier notes.</p>
+          <p><a href="${cfg.appUrl}" style="background:#2E5132;color:#fff;padding:9px 15px;border-radius:7px;text-decoration:none">Open Rep Hub</a></p></div>`,
+        { userId: rep.id, kind: 'ring-handover', replyTo: req.user.email }).catch(() => {});
+    }
+  }
+  await audit(req.user.id, 'ring.reassigned', { id: req.params.id, ring: from.name, from: from.repZohoId, to: repZohoId, note: !!note }, req.ip);
   res.json({ ok: true, ringId: req.params.id, from: from.repZohoId, to: repZohoId });
+}));
+
+/* Notes for whoever looks after a ring: passed from one rep to the next.
+   The rep who has the ring now and the office can read and add to them. */
+async function mayUseRing(user, ringId) {
+  if (user.role !== 'rep') return true;
+  const { ringIds } = await scopeRings(user);
+  return ringIds.includes(String(ringId));
+}
+r.get('/rings/:id/notes', auth.authRequired, wrap(async (req, res) => {
+  if (!(await mayUseRing(req.user, req.params.id))) return res.status(403).json({ error: 'Not your ring' });
+  res.json(await q.ringNotes(req.params.id));
+}));
+r.post('/rings/:id/notes', auth.authRequired, wrap(async (req, res) => {
+  if (!(await mayUseRing(req.user, req.params.id))) return res.status(403).json({ error: 'Not your ring' });
+  const note = String(req.body?.note || '').trim().slice(0, 4000);
+  if (!note) return res.status(400).json({ error: 'Write the note first' });
+  await q.addRingNote({ ringId: req.params.id, authorId: req.user.id, authorName: req.user.name, note });
+  await audit(req.user.id, 'ring.note', { ringId: req.params.id }, req.ip);
+  res.status(201).json(await q.ringNotes(req.params.id));
+}));
+r.delete('/rings/:id/notes/:noteId', auth.authRequired, wrap(async (req, res) => {
+  const notes = await q.ringNotes(req.params.id);
+  const n = notes.find(x => String(x.id) === String(req.params.noteId));
+  if (!n) return res.status(404).json({ error: 'No such note' });
+  // Your own note, or the office
+  if (n.author_id !== req.user.id && req.user.role === 'rep') return res.status(403).json({ error: 'Only the person who wrote it can remove it' });
+  await q.deleteRingNote(n.id, req.params.id);
+  res.json(await q.ringNotes(req.params.id));
 }));
 
 /* Getting the reps signed in: who has started, and one-click invitations.
