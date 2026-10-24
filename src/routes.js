@@ -2681,25 +2681,54 @@ async function backupTo() {
   const owner = oid ? await q.userById(oid) : null;
   return [...new Set([owner && owner.email, ...extra].filter(Boolean))];
 }
-async function sendBackup() {
+/** The nightly copy of Zoho, module by module, as kept in our database */
+async function zohoCopy() {
+  const rows = await query('SELECT module, data, missing_since FROM zoho_mirror ORDER BY module, id').catch(() => []);
+  const out = {};
+  rows.forEach(r => {
+    const d = typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
+    (out[r.module] = out[r.module] || []).push(r.missing_since ? { ...d, _missing_from_zoho_since: r.missing_since } : d);
+  });
+  return out;
+}
+async function sendBackup({ scheduled = false } = {}) {
+  // Daily or weekly (Sundays, US Eastern), as chosen in Settings → Backup
+  if (scheduled && (await setting('backup_frequency', 'weekly')) !== 'daily') {
+    const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(new Date());
+    if (wd !== 'Sun') return { skipped: 'not the day' };
+  }
   const to = await backupTo();
   if (!to.length) return { skipped: 'no one to send it to' };
   const b = await buildBackup();
+  b.zoho = await zohoCopy();
   const day = b.madeAt.slice(0, 10), T = b.tables;
   const count = Object.fromEntries(Object.entries(T).map(([k, v]) => [k, v.length]));
+  const zCount = Object.fromEntries(Object.entries(b.zoho).map(([k, v]) => [k, v.length]));
+  const zTotal = Object.values(zCount).reduce((s, n) => s + n, 0);
+  const zip = require('zlib').gzipSync(Buffer.from(JSON.stringify(b)));
   const html = `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;font-size:15px;color:#1E2A20;max-width:560px">
-    <p>This week's copy of everything typed into Rep Hub that is not kept in Zoho: hours, expenses, approvals, summit checklists and notes.</p>
-    <p><strong>${count.time_entries || 0}</strong> hours entries · <strong>${count.expenses || 0}</strong> expenses · <strong>${count.pending_writes || 0}</strong> approval requests · <strong>${count.summit_tasks || 0}</strong> summit tasks</p>
-    <p>Keep this email. The two spreadsheets open in Excel; the .json file holds everything, and can be used to restore Rep Hub. Receipt pictures are not attached (they are too large for email) — download them any time from Settings → Backup.</p></div>`;
+    <p>A complete copy of Rep Hub's data, made ${esc(day)}.</p>
+    <p><strong>Kept in Rep Hub:</strong> ${count.time_entries || 0} hours entries · ${count.expenses || 0} expenses · ${count.pending_writes || 0} approval requests · ${count.summit_tasks || 0} summit tasks · ${count.ring_notes || 0} ring notes</p>
+    <p><strong>Copy of Zoho CRM:</strong> ${zTotal ? Object.entries(zCount).map(([k, n]) => `${n} ${esc(k.replace(/_/g, ' '))}`).join(' · ') : 'not made yet'}</p>
+    <p>Keep this email. The spreadsheets open in Excel. The .json.gz file holds everything, Zoho records included with every field, and is what Rep Hub (or another developer) can be rebuilt from.
+      Receipt pictures are too large for email; download them any time from Settings → Backup.</p></div>`;
   const res = await reminders.sendEmail(to.join(','), `Rep Hub backup — ${day}`, html, { kind: 'backup', attachments: [
     { filename: `rephub-hours-${day}.csv`, content: csvOf(T.time_entries || [], ['id', 'rep_name', 'entry_date', 'hours', 'category', 'description', 'status', 'created_at', 'approved_at', 'approved_by']) },
     { filename: `rephub-expenses-${day}.csv`, content: csvOf(T.expenses || [], ['id', 'rep_name', 'entry_date', 'amount', 'category', 'vendor', 'description', 'status', 'has_receipt', 'created_at', 'approved_at', 'approved_by']) },
-    { filename: `rephub-backup-${day}.json`, content: JSON.stringify(b) },
+    { filename: `rephub-backup-${day}.json.gz`, content: zip, contentType: 'application/gzip' },
   ] });
-  await q.setSetting('backup_last', JSON.stringify({ at: b.madeAt, to, ok: !!res.ok, error: res.error || null })).catch(() => {});
-  return { to, ok: !!res.ok, error: res.error || null, count };
+  await q.setSetting('backup_last', JSON.stringify({ at: b.madeAt, to, ok: !!res.ok, error: res.error || null, zoho: zTotal, sizeKb: Math.round(zip.length / 1024) })).catch(() => {});
+  return { to, ok: !!res.ok, error: res.error || null, count, zoho: zCount };
 }
 r.sendBackup = sendBackup;
+/* Nightly: copy Zoho, then send the backup if it's due. Runs as a background
+   function (up to 15 minutes); `sendNow` is the Email a copy now button. */
+async function nightly({ sendNow = false, budgetMs } = {}) {
+  const mirrorOut = await require('./mirror').runMirror({ budgetMs }).catch(e => ({ error: e.message }));
+  const backupOut = await sendBackup({ scheduled: !sendNow }).catch(e => ({ error: e.message }));
+  return { mirror: mirrorOut, backup: backupOut };
+}
+r.nightly = nightly;
 r._buildBackup = buildBackup;
 const backupGuard = [auth.authRequired, wrap(async (req, res, next) => {
   if (req.user.role === 'admin' || await access.isOwner(req.user)) return next();
@@ -2713,7 +2742,31 @@ r.get('/admin/backup', ...backupGuard, wrap(async (req, res) => {
 }));
 r.get('/admin/backup/status', ...backupGuard, wrap(async (req, res) => {
   let last = null; try { last = JSON.parse(await setting('backup_last', 'null')); } catch { last = null; }
-  res.json({ to: await backupTo(), extra: await setting('backup_email', ''), last });
+  res.json({ to: await backupTo(), extra: await setting('backup_email', ''), last,
+    frequency: await setting('backup_frequency', 'weekly'), mirror: await require('./mirror').mirrorStatus() });
+}));
+r.put('/admin/backup/frequency', ...backupGuard, wrap(async (req, res) => {
+  const f = req.body?.frequency === 'daily' ? 'daily' : 'weekly';
+  await q.setSetting('backup_frequency', f);
+  res.json({ frequency: f });
+}));
+/* The Zoho copy, a module and a slice at a time (one response can't carry it all) */
+r.get('/admin/backup/zoho', ...backupGuard, wrap(async (req, res) => {
+  const mod = String(req.query.module || '');
+  const offset = Math.max(0, parseInt(req.query.offset || '0', 10) || 0);
+  if (!mod) return res.json({ modules: (await require('./mirror').mirrorStatus()).modules });
+  const rows = await query('SELECT data, missing_since FROM zoho_mirror WHERE module = $1 ORDER BY id LIMIT 1000 OFFSET $2', [mod, offset]);
+  res.json({ module: mod, offset, records: rows.map(r => {
+    const d = typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
+    return r.missing_since ? { ...d, _missing_from_zoho_since: r.missing_since } : d;
+  }), more: rows.length === 1000 });
+}));
+/* Copy Zoho now (in the background on the live site) */
+r.post('/admin/backup/mirror', ...backupGuard, wrap(async (req, res) => {
+  const site = netlifySite(req);
+  if (site && await kickBackground(site, 'nightly-background')) return res.json({ started: true });
+  const out = await require('./mirror').runMirror({ budgetMs: 8000 });
+  res.json({ started: false, ...out });
 }));
 r.put('/admin/backup/email', ...backupGuard, wrap(async (req, res) => {
   const list = String(req.body?.email || '').split(/[,;\s]+/).filter(Boolean);
@@ -2722,6 +2775,12 @@ r.put('/admin/backup/email', ...backupGuard, wrap(async (req, res) => {
   res.json({ to: await backupTo(), extra: list.join(', ') });
 }));
 r.post('/admin/backup/send', ...backupGuard, wrap(async (req, res) => {
+  // On the live site it's made in the background: the Zoho copy makes it too big to build in the time a button gets
+  const site = netlifySite(req);
+  if (site && await kickBackground(site, 'nightly-background?send=1')) {
+    await audit(req.user.id, 'backup.sent', { to: await backupTo(), background: true }, req.ip);
+    return res.json({ started: true, to: await backupTo() });
+  }
   const out = await sendBackup();
   await audit(req.user.id, 'backup.sent', { to: out.to }, req.ip);
   if (out.skipped) return res.status(400).json({ error: 'There is no email address to send it to' });

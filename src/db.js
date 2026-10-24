@@ -319,6 +319,16 @@ CREATE TABLE IF NOT EXISTS ring_notes (
 
 CREATE INDEX IF NOT EXISTS idx_ring_notes ON ring_notes (ring_id, created_at);
 
+CREATE TABLE IF NOT EXISTS zoho_mirror (
+  module        TEXT NOT NULL,
+  id            TEXT NOT NULL,
+  data          JSONB NOT NULL,
+  modified      TEXT,
+  seen_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  missing_since TIMESTAMPTZ,
+  PRIMARY KEY (module, id)
+);
+
 CREATE TABLE IF NOT EXISTS geocodes (
   address_key TEXT PRIMARY KEY,
   lat         DOUBLE PRECISION,

@@ -46,9 +46,9 @@
 [functions."accounting-auto"]
   schedule = "0 13 * * *"
 
-# Sunday evening: a copy of hours, expenses and the rest, emailed to the owner
+# Every night: copy Zoho into our database, then email the backup when due
 [functions."weekly-backup"]
-  schedule = "0 23 * * 0"
+  schedule = "0 7 * * *"
 
 # The offline worker must always be checked for a newer version
 [[headers]]

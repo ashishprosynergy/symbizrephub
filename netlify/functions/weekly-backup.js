@@ -1,23 +1,25 @@
 'use strict';
 /**
- * Scheduled: Sundays, 23:00 UTC (7 pm US Eastern in summer, 6 pm in winter).
+ * Scheduled: every night, 07:00 UTC (3 am US Eastern in summer, 2 am in winter).
  *
- * Emails the owner (and anyone added in Settings → Backup) a copy of
- * everything typed into Rep Hub that is not kept in Zoho: hours, expenses,
- * approval requests, summit checklists and notes. A second copy, every week.
+ * Starts the background job that copies Zoho into Rep Hub's own database and
+ * then emails the backup when it is due (Sundays, or daily if chosen in
+ * Settings → Backup). A scheduled function only gets 30 seconds; the copy
+ * needs longer, so it runs as a background function.
  */
+const crypto = require('crypto');
 const { schedule } = require('@netlify/functions');
-const { migrate } = require('../../src/db');
-const routes = require('../../src/routes');
+const cfg = require('../../src/config');
 
-module.exports.handler = schedule('0 23 * * 0', async () => {
+module.exports.handler = schedule('0 7 * * *', async () => {
   try {
-    await migrate();
-    const out = await routes.sendBackup();
-    console.log('[weekly-backup]', JSON.stringify(out));
+    const site = process.env.URL || cfg.appUrl;
+    const key = crypto.createHmac('sha256', cfg.jwtSecret).update('books-background').digest('hex');
+    const res = await fetch(`${site}/.netlify/functions/nightly-background`, { method: 'POST', headers: { 'x-rephub-key': key } });
+    console.log('[weekly-backup] started the nightly job:', res.status);
     return { statusCode: 200 };
   } catch (e) {
-    console.error('[weekly-backup] failed:', e.message);
+    console.error('[weekly-backup] could not start the nightly job:', e.message);
     return { statusCode: 500 };
   }
 });

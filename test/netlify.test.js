@@ -108,6 +108,12 @@ const fakeZoho = http.createServer((req, res) => {
       res.writeHead(404); return res.end('{}');
     }
     if (url.pathname === '/crm/v8/org') return json({ org: [{ company_name: 'Symbiz Network (test)' }] });
+    if (url.pathname === '/crm/v8/settings/fields') {
+      // Every field any record of the module has, like Zoho's field list
+      const rows = store[url.searchParams.get('module')] || [];
+      const names = [...new Set(rows.flatMap(r => Object.keys(r)))];
+      return json({ fields: names.map(n => ({ api_name: n, data_type: 'text' })) });
+    }
     if (url.pathname === '/crm/v8/coql') {
       const sq = JSON.parse(body || '{}').select_query || '';
       const mod = Object.keys(store).find(m => sq.includes(`from ${m}`)) || 'Rep_Activities';
@@ -1769,6 +1775,41 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.ok(!text.includes('SECRET-123'), 'no connection keys');
     assert.ok(!text.includes('password_hash'), 'no passwords');
     assert.ok(!b.tables.expenses.some(x => 'receipt_data' in x), 'receipt files left out of the email copy');
+  });
+
+  test('every night Zoho is copied into our database, deletions are kept, and the backup carries it all', async () => {
+    const mirror = require('../src/mirror');
+    store.Growth_Ring_Groups.push({ id: 'MIR1', Name: 'Mirror Ring', Active: true, Target_Group_Size: 9, Group_Description: 'Meets Tuesdays' });
+    const first = await mirror.runMirror({ budgetMs: 20000 });
+    const ringsRun = first.results.find(r => r.module === 'Growth_Ring_Groups');
+    assert.ok(ringsRun && ringsRun.records > 0, JSON.stringify(first.results));
+    const row = (await db.query("SELECT data FROM zoho_mirror WHERE module = 'Growth_Ring_Groups' AND id = 'MIR1'"))[0];
+    const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+    assert.equal(data.Group_Description, 'Meets Tuesdays', 'every field is kept');
+
+    // Deleted in Zoho: still in our copy, marked
+    store.Growth_Ring_Groups = store.Growth_Ring_Groups.filter(g => g.id !== 'MIR1');
+    await mirror.runMirror({ budgetMs: 20000 });
+    const kept = (await db.query("SELECT missing_since FROM zoho_mirror WHERE module = 'Growth_Ring_Groups' AND id = 'MIR1'"))[0];
+    assert.ok(kept && kept.missing_since, 'kept, and marked as gone from Zoho');
+
+    // The backup email carries the Zoho copy, compressed
+    const reminders = require('../src/reminders'), realSend = reminders.sendEmail;
+    let mail = null;
+    reminders.sendEmail = async (to, subject, html, opts) => { mail = { to, opts }; return { ok: true }; };
+    try {
+      await db.q.setSetting('backup_email', 'backup@test.org');
+      const out = await require('../src/routes').sendBackup();
+      assert.ok(out.ok, JSON.stringify(out));
+      const gz = mail.opts.attachments.find(a => /\.json\.gz$/.test(a.filename));
+      const file = JSON.parse(require('zlib').gunzipSync(gz.content).toString());
+      assert.ok(file.zoho.Growth_Ring_Groups.some(g => g.id === 'MIR1' && g._missing_from_zoho_since), 'deleted ring is in the backup');
+      assert.ok(Array.isArray(file.tables.time_entries));
+    } finally { reminders.sendEmail = realSend; }
+    // Weekly by default: the nightly run skips other days
+    const sched = await require('../src/routes').sendBackup({ scheduled: true });
+    const sunday = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(new Date()) === 'Sun';
+    if (!sunday) assert.equal(sched.skipped, 'not the day');
   });
 
   test('office and rep in one sign-in: an office account links to its rep record; a rep can be given office access', async () => {

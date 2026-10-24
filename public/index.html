@@ -4175,18 +4175,42 @@ function backupCard(){
   if(!backupStatus){ API.call('/admin/backup/status').then(v => { backupStatus = v; drawBackupCard(); })
     .catch(e => { backupStatus = { error: e.message }; drawBackupCard(); }); return skeleton(2); }
   if(backupStatus.error) return `<div class="row-sub">${esc(backupStatus.error)}</div>`;
-  const last = backupStatus.last;
-  return `<div class="row-sub" style="margin-bottom:10px">Hours, expenses, approvals, summit checklists and notes are kept in Rep Hub's own database.
-      Calls, registrations and leads are kept in Zoho. Every Sunday evening a copy of Rep Hub's own data is emailed, so there is always a second copy.</div>
+  const last = backupStatus.last, mir = backupStatus.mirror || {}, mods = mir.modules || [];
+  const zTotal = mods.reduce((s, m) => s + m.n, 0), zMissing = mods.reduce((s, m) => s + m.missing, 0);
+  const mLast = mir.last, mErr = mLast ? (mLast.results || []).filter(r => r.error) : [];
+  return `<div class="row-sub" style="margin-bottom:10px">Three copies of everything, so nothing can be lost:
+      <strong>1.</strong> Zoho CRM itself (members, rings, calls, events, registrations).
+      <strong>2.</strong> Every night, a full copy of those Zoho records, every field, is saved in Rep Hub's own database, next to the hours, expenses, approvals and notes kept there. A record deleted in Zoho stays in this copy.
+      <strong>3.</strong> All of it is emailed as a backup file, so a copy also lives outside both.</div>
+    <div class="kv"><span class="k">Copy of Zoho</span><span>${zTotal ? `${zTotal.toLocaleString()} records · ${mods.map(m => `${m.n.toLocaleString()} ${esc(m.module.replace(/_/g,' '))}`).join(' · ')}` : 'not made yet'}</span></div>
+    ${mLast ? `<div class="kv"><span class="k">Last copied</span><span>${new Date(mLast.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}${mErr.length ? ` · <span style="color:var(--rust)">${mErr.length} part${mErr.length===1?'':'s'} not copied: ${esc(mErr.map(r => r.module).join(', '))}</span>` : ''}</span></div>` : ''}
+    ${zMissing ? `<div class="kv"><span class="k">Kept after deletion</span><span>${zMissing} record${zMissing===1?'':'s'} no longer in Zoho, still in the copy</span></div>` : ''}
     <div class="kv"><span class="k">Emailed to</span><span>${esc((backupStatus.to || []).join(', ') || 'no one yet')}</span></div>
-    <div class="kv"><span class="k">Last copy</span><span>${last ? `${fmt(String(last.at).slice(0,10))} — ${last.ok ? 'sent' : '<span style="color:var(--rust)">not sent: ' + esc(last.error || '') + '</span>'}` : 'none yet'}</span></div>
+    <div class="kv"><span class="k">How often</span><span><select onchange="saveBackupFrequency(this.value)" style="width:auto">
+      <option value="weekly" ${backupStatus.frequency !== 'daily' ? 'selected' : ''}>Weekly (Sundays)</option>
+      <option value="daily" ${backupStatus.frequency === 'daily' ? 'selected' : ''}>Every day</option></select></span></div>
+    <div class="kv"><span class="k">Last emailed</span><span>${last ? `${fmt(String(last.at).slice(0,10))} — ${last.ok ? 'sent' + (last.sizeKb ? ' (' + last.sizeKb.toLocaleString() + ' KB)' : '') : '<span style="color:var(--rust)">not sent: ' + esc(last.error || '') + '</span>'}` : 'none yet'}</span></div>
     <div class="field" style="margin-top:10px"><label>Also send it to</label>
       <input id="backupExtra" value="${esc(backupStatus.extra || '')}" placeholder="name@example.com" onchange="saveBackupEmail(this.value)">
       <div class="hint">The owner always gets it. Add anyone else here, separated by commas.</div></div>
     <div class="btnrow">
       <button class="btn primary sm" ${backupBusy ? 'disabled' : ''} onclick="sendBackupNow()">${backupBusy ? 'Sending…' : 'Email a copy now'}</button>
-      <button class="btn sm" onclick="downloadBackup(false)">Download a copy</button>
+      <button class="btn sm" onclick="copyZohoNow(this)">Copy Zoho now</button>
+      <button class="btn sm" onclick="downloadBackup(false)">Download everything</button>
       <button class="btn sm" onclick="downloadBackup(true)">Download with receipt files</button></div>`;
+}
+async function saveBackupFrequency(v){
+  try{ await API.call('/admin/backup/frequency', { method:'PUT', body: JSON.stringify({ frequency: v }) }); backupStatus.frequency = v; toast(v === 'daily' ? 'The backup will be emailed every day' : 'The backup will be emailed on Sundays'); }
+  catch(e){ toast(e.message); }
+}
+async function copyZohoNow(btn){
+  btn.disabled = true; btn.textContent = 'Copying…';
+  try{ const o = await API.call('/admin/backup/mirror', { method:'POST' });
+    toast(o.started ? 'Copying Zoho now. It takes a few minutes; this page shows the counts when you open it again.' : 'Zoho copied'); }
+  catch(e){ toast(e.message); }
+  btn.disabled = false; btn.textContent = 'Copy Zoho now';
+  if(!backupStatus || !backupStatus.mirror) return;
+  setTimeout(() => { backupStatus = null; drawBackupCard(); }, 1500);
 }
 function drawBackupCard(){ const el = document.getElementById('backupCard'); if(el) el.innerHTML = backupCard(); }
 async function saveBackupEmail(v){
@@ -4196,7 +4220,8 @@ async function saveBackupEmail(v){
 }
 async function sendBackupNow(){
   backupBusy = true; drawBackupCard();
-  try{ const o = await API.call('/admin/backup/send', { method:'POST' }); toast('Backup emailed to ' + o.to.join(', ')); backupStatus = null; }
+  try{ const o = await API.call('/admin/backup/send', { method:'POST' });
+    toast(o.started ? 'Making the backup now (Zoho copy included). It arrives at ' + o.to.join(', ') + ' in a few minutes.' : 'Backup emailed to ' + o.to.join(', ')); backupStatus = null; }
   catch(e){ toast(e.message); }
   backupBusy = false; drawBackupCard();
 }
@@ -4204,6 +4229,17 @@ async function downloadBackup(receipts){
   try{
     toast('Preparing the backup…');
     const b = await API.call('/admin/backup' + (receipts ? '?receipts=1' : ''));
+    // The Zoho copy, a slice at a time, into the same file
+    b.zoho = {};
+    const list = (await API.call('/admin/backup/zoho')).modules || [];
+    for(const m of list){
+      b.zoho[m.module] = [];
+      for(let off = 0; ; off += 1000){
+        const part = await API.call('/admin/backup/zoho?module=' + encodeURIComponent(m.module) + '&offset=' + off);
+        b.zoho[m.module].push(...part.records);
+        if(!part.more) break;
+      }
+    }
     const url = URL.createObjectURL(new Blob([JSON.stringify(b, null, 1)], { type: 'application/json' }));
     const a = document.createElement('a'); a.href = url; a.download = `rephub-backup-${String(b.madeAt).slice(0,10)}${receipts ? '-with-receipts' : ''}.json`; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);

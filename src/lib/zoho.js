@@ -397,6 +397,7 @@ module.exports = {
   getAllRecords,
   getRecord,
   coql,
+  coqlPaged,          // straight to Zoho, no shared cache: for whole-module copies
   insertRecords,
   updateRecords,
   upsertRecords,
