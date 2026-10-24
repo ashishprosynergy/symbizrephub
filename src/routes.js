@@ -1511,20 +1511,33 @@ function toEastern(iso) {
   return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute} ${p.dayPeriod}` };
 }
 let summitCache = null;
+/* The summits from Zoho. They change a few times a year, so the list is kept
+   in the database for every copy of the server to share, for 15 minutes. When
+   it is older, Zoho is asked, but a busy Zoho (the Overview fires a dozen
+   requests at once) is not waited on for more than a few seconds: the saved
+   list is shown instead, and the fresh one is saved as soon as it arrives. */
 async function summitEvents(fresh) {
   if (!fresh && summitCache && Date.now() - summitCache.at < 300000) return summitCache.rows;
-  const rows = await zoho.coql(`select id, Name, Event_Type, Event_Date_and_Time, Event_City, Event_State, Event_Venue,
+  let saved = null;
+  try { saved = JSON.parse(await setting('summit_events_cache', 'null')); } catch { saved = null; }
+  if (!fresh && saved && Array.isArray(saved.rows) && Date.now() - saved.at < 15 * 60000) { summitCache = saved; return saved.rows; }
+  const live = zoho.coql(`select id, Name, Event_Type, Event_Date_and_Time, Event_City, Event_State, Event_Venue,
       Registration_Count, Total_Registered_People, Attendance_Count, Event_Status
-    from ${M.EVENT} where Event_Type in (${SUMMIT_TYPES.map(t => `'${t}'`).join(',')}) limit 200`);
-  const out = rows.filter(e => !/\btest\b/i.test(e.Name || '')).map(e => {
-    const when = toEastern(e.Event_Date_and_Time);
-    return { id: e.id, name: e.Name, type: e.Event_Type, date: when.date, time: when.time,
-      city: String(e.Event_City || '').replace(/,\s*$/, ''), state: e.Event_State || '', venue: e.Event_Venue || '',
-      registered: e.Total_Registered_People ?? e.Registration_Count ?? null, attended: e.Attendance_Count ?? null,
-      status: e.Event_Status || '' };
-  }).sort((a, b) => b.date.localeCompare(a.date));
-  summitCache = { at: Date.now(), rows: out };
-  return out;
+    from ${M.EVENT} where Event_Type in (${SUMMIT_TYPES.map(t => `'${t}'`).join(',')}) limit 200`).then(rows => {
+    const out = rows.filter(e => !/\btest\b/i.test(e.Name || '')).map(e => {
+      const when = toEastern(e.Event_Date_and_Time);
+      return { id: e.id, name: e.Name, type: e.Event_Type, date: when.date, time: when.time,
+        city: String(e.Event_City || '').replace(/,\s*$/, ''), state: e.Event_State || '', venue: e.Event_Venue || '',
+        registered: e.Total_Registered_People ?? e.Registration_Count ?? null, attended: e.Attendance_Count ?? null,
+        status: e.Event_Status || '' };
+    }).sort((a, b) => b.date.localeCompare(a.date));
+    summitCache = { at: Date.now(), rows: out };
+    q.setSetting('summit_events_cache', JSON.stringify(summitCache)).catch(() => {});
+    return out;
+  });
+  if (fresh || !saved || !Array.isArray(saved.rows)) return live;
+  live.catch(() => {});
+  return Promise.race([live.catch(() => saved.rows), new Promise(r => setTimeout(() => r(saved.rows), 3000))]);
 }
 const summitGuard = [auth.authRequired, auth.requireOffice, access.requirePerm('summits')];
 

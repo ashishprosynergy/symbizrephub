@@ -6103,7 +6103,8 @@ function summitProgressCard(){
   if(!API.live || !isOffice() || !can('summits')) return '';
   loadSummits();
   // Its place is kept while the summits load, so the page below doesn't jump
-  if(!Array.isArray(summitList)) return summitList && summitList.error ? '' : `<div class="card summit-prog sp-wait"><div class="trend-t">Summit planning</div>${skeleton(4)}</div>`;
+  // While it loads: one quiet line, not a big grey block
+  if(!Array.isArray(summitList)) return summitList && summitList.error ? '' : `<div class="card summit-prog sp-wait" style="padding:12px 15px"><div class="trend-t" style="margin:0">Summit planning <span class="row-sub" style="font-weight:400">· loading…</span></div></div>`;
   const ahead = summitList.filter(s => s.date >= TODAY_S).sort((a,b) => a.date.localeCompare(b.date)).slice(0, 4);
   if(!ahead.length) return '';
   return `<div class="card summit-prog"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -6135,7 +6136,9 @@ function fetchSummit(id){
    time, so opening one is instant instead of waiting on the server */
 function prefetchSummits(){
   if(!Array.isArray(summitList)) return;
-  const ids = summitList.filter(s => s.date >= TODAY_S).sort((a,b) => a.date.localeCompare(b.date))
+  // Only summits whose checklist is already started: opening one for the first
+  // time creates its checklist, which should happen when a person opens it
+  const ids = summitList.filter(s => s.date >= TODAY_S && s.tasksTotal).sort((a,b) => a.date.localeCompare(b.date))
     .slice(0, 6).map(s => s.id).filter(id => !summitDetails[id]);
   ids.reduce((p, id) => p.then(() => summitDetails[id] ? null : fetchSummit(id).catch(() => {})), Promise.resolve());
 }
