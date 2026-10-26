@@ -101,6 +101,10 @@ async function callScript(url, body) {
   const text = await res.text();
   let out = null; try { out = JSON.parse(text); } catch { out = null; }
   if (!out) {
+    // Google's own "Access denied" page: the web app is not open to Rep Hub
+    if (res.status === 403 || /Access denied/i.test(text)) {
+      throw new Error('Google said "Access denied". In the script: Deploy → Manage deployments → Edit (pencil) → Who has access: Anyone → Version: New version → Deploy. If "Anyone" is not offered, the Google Workspace admin has turned it off.');
+    }
     throw new Error(/accounts\.google\.com|ServiceLogin|Sign in/i.test(text)
       ? 'Google asked for a sign-in. In the deployment, set "Who has access" to "Anyone", then copy the new web app URL.'
       : `The script did not answer as expected (${res.status}). Check it was deployed as a Web app.`);
