@@ -2825,6 +2825,27 @@ r.post('/admin/backup/google/upload', ...backupGuard, wrap(async (req, res) => {
   if (site && await kickBackground(site, 'nightly-background?drive=1')) return res.json({ started: true });
   res.json(await driveBackup());
 }));
+/* Apps Script: no Google Cloud project needed. Rep Hub hands out the script
+   (with its secret key in it); the person pastes back the web app address. */
+r.get('/admin/backup/google/script', ...backupGuard, wrap(async (req, res) => {
+  res.json({ source: await require('./lib/gdrive').scriptSource() });
+}));
+r.post('/admin/backup/google/script', ...backupGuard, wrap(async (req, res) => {
+  const drive = require('./lib/gdrive');
+  let out;
+  try { out = await drive.connectScript(req.body?.url); } catch (e) { return res.status(400).json({ error: e.message }); }
+  await audit(req.user.id, 'backup.driveConnected', { email: out.email, via: 'script' }, req.ip);
+  // The first copy straight away
+  const site = netlifySite(req);
+  if (site) await kickBackground(site, 'nightly-background?drive=1'); else await driveBackup();
+  res.json({ ok: true, ...out });
+}));
+/* Keep for years on a schedule (default), or keep every file */
+r.put('/admin/backup/keep', ...backupGuard, wrap(async (req, res) => {
+  const keep = req.body?.keep === 'all' ? 'all' : 'smart';
+  await q.setSetting('backup_keep', keep);
+  res.json({ keep });
+}));
 r.delete('/admin/backup/google', ...backupGuard, wrap(async (req, res) => {
   await require('./lib/gdrive').disconnect();
   await audit(req.user.id, 'backup.driveDisconnected', null, req.ip);

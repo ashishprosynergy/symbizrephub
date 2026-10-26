@@ -1842,7 +1842,12 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
       if (u.includes('oauth2.googleapis.com/token')) return j({ access_token: 'at', expires_in: 3600 });
       if (u.includes('/upload/drive/v3/files')) return j({ id: 'file1', name: 'x' });
       if (u.includes('/drive/v3/files?fields=id') && opts.method === 'POST') return j({ id: 'folder1' });
-      if (u.includes('/drive/v3/files?q=')) return j({ files: [{ id: 'old1' }] });
+      if (u.includes('/drive/v3/files?q=')) {
+        // Two files from the same week a year ago (the second goes), and today's
+        const yearAgo = Date.now() - 365 * 864e5;
+        return j({ files: [{ id: 'keep1', createdTime: new Date(yearAgo).toISOString() }, { id: 'old1', createdTime: new Date(yearAgo + 3600e3).toISOString() },
+          { id: 'new1', createdTime: new Date().toISOString() }] });
+      }
       if (opts.method === 'DELETE') return new Response(null, { status: 204 });
       return j({});
     };
@@ -1851,10 +1856,55 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
       assert.equal(out.id, 'file1', JSON.stringify(out));
       const up = calls.find(c => c.u.includes('/upload/'));
       assert.ok(up && Buffer.isBuffer(up.body) && up.body.includes(Buffer.from('"parents":["folder1"]')), 'saved into the Rep Hub folder');
-      assert.ok(calls.some(c => c.method === 'DELETE' && c.u.endsWith('/old1')), 'old files cleared out');
+      assert.ok(calls.some(c => c.method === 'DELETE' && c.u.endsWith('/old1')), 'a second file from the same old week is cleared out');
+      assert.ok(!calls.some(c => c.method === 'DELETE' && /\/(keep1|new1)$/.test(c.u)), 'one per week, and every recent one, are kept');
       const st = await require('../src/lib/gdrive').status();
       assert.equal(st.connected, true); assert.ok(st.last.ok); assert.match(st.folderUrl, /folder1/);
     } finally { global.fetch = realFetch; cfg.google.clientId = ''; cfg.google.clientSecret = ''; }
+  });
+
+  test('backups are kept for years: every one for 90 days, weekly for two years, monthly after that', async () => {
+    const { toDelete } = require('../src/lib/gdrive');
+    const day = 864e5, now = Date.UTC(2030, 0, 15);
+    const files = [];
+    for (let d = 0; d < 365 * 5; d++) files.push({ id: 'f' + d, t: now - d * day });      // five years of nightly files
+    const gone = new Set(toDelete(files, now).map(f => f.id));
+    const kept = files.filter(f => !gone.has(f.id));
+    const age = f => (now - f.t) / day;
+    assert.equal(kept.filter(f => age(f) <= 90).length, 91, 'every file from the last 90 days');
+    const weekly = kept.filter(f => age(f) > 90 && age(f) <= 730).length;
+    assert.ok(weekly >= 90 && weekly <= 92, 'about one a week for two years: ' + weekly);
+    const monthly = kept.filter(f => age(f) > 730).length;
+    assert.ok(monthly >= 35 && monthly <= 38, 'one a month after that: ' + monthly);
+    assert.ok(kept.length < 230, 'five years kept in about 220 files, not 1,825');
+  });
+
+  test('Google Drive through an Apps Script: no Google Cloud project, the key checked, the file saved', async () => {
+    const drive = require('../src/lib/gdrive'), realFetch = global.fetch, posts = [];
+    const src = await drive.scriptSource();
+    const key = src.match(/const KEY = '([0-9a-f]+)'/)[1];
+    global.fetch = async (url, opts = {}) => {
+      if (!/script\.google\.com/.test(String(url))) return realFetch(url, opts);
+      const b = JSON.parse(opts.body); posts.push(b);
+      const out = b.key !== key ? { ok: false, error: 'Wrong key' }
+        : b.action === 'ping' ? { ok: true, email: 'backups@symbiz.org', folderUrl: 'https://drive.google.com/drive/folders/F' }
+        : { ok: true, id: 'file9', folderUrl: 'https://drive.google.com/drive/folders/F', removed: 0 };
+      return new Response(JSON.stringify(out), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    try {
+      await assert.rejects(drive.connectScript('https://example.com/not-a-script'), /script\.google\.com/);
+      const url = 'https://script.google.com/macros/s/AKfyc_test-123/exec';
+      const c = await drive.connectScript(url);
+      assert.equal(c.email, 'backups@symbiz.org');
+      const out = await require('../src/routes').driveBackup();
+      assert.equal(out.id, 'file9', JSON.stringify(out));
+      const sent = posts.find(p => p.data);
+      assert.equal(sent.key, key);
+      assert.ok(require('zlib').gunzipSync(Buffer.from(sent.data, 'base64')).toString().includes('"tables"'), 'the whole backup, compressed');
+      assert.equal(sent.keep, 'smart');
+      const st = await drive.status();
+      assert.equal(st.mode, 'script'); assert.ok(st.last.ok);
+    } finally { global.fetch = realFetch; await drive.disconnect(); }
   });
 
   test('office and rep in one sign-in: an office account links to its rep record; a rep can be given office access', async () => {

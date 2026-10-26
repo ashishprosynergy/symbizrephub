@@ -4215,7 +4215,7 @@ function backupCard(){
   return `<div class="row-sub" style="margin-bottom:10px">Three copies of everything, so nothing can be lost:
       <strong>1.</strong> Zoho CRM itself (members, rings, calls, events, registrations).
       <strong>2.</strong> Every night, a full copy of those Zoho records, every field, is saved in Rep Hub's own database, next to the hours, expenses, approvals and notes kept there. A record deleted in Zoho stays in this copy.
-      <strong>3.</strong> All of it is emailed as a backup file, so a copy also lives outside both.</div>
+      <strong>3.</strong> All of it is saved to Google Drive every night and kept for years, and emailed as a backup file, so copies also live outside both.</div>
     <div class="kv"><span class="k">Copy of Zoho</span><span>${zTotal ? `${zTotal.toLocaleString()} records · ${mods.map(m => `${m.n.toLocaleString()} ${esc(m.module.replace(/_/g,' '))}`).join(' · ')}` : 'not made yet'}</span></div>
     ${mLast ? `<div class="kv"><span class="k">Last copied</span><span>${new Date(mLast.at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}${mErr.length ? ` · <span style="color:var(--rust)">${mErr.length} part${mErr.length===1?'':'s'} not copied: ${esc(mErr.map(r => r.module).join(', '))}</span>` : ''}</span></div>` : ''}
     ${zMissing ? `<div class="kv"><span class="k">Kept after deletion</span><span>${zMissing} record${zMissing===1?'':'s'} no longer in Zoho, still in the copy</span></div>` : ''}
@@ -4256,17 +4256,58 @@ async function connectLive(btn){
   catch(e){ toast(e.message); btn.disabled = false; btn.textContent = 'Turn on'; }
 }
 /* Google Drive: the nightly backup file, in a Symbiz Drive folder */
+const KEEP_TEXT = { smart: 'kept for years: every night for 90 days, then one a week for two years, then one a month for good',
+  all: 'every file kept, nothing deleted' };
 function driveBox(d){
-  if(!d.configured) return `<div class="kv"><span class="k">Google Drive</span><span class="row-sub">Not set up on the server yet. Ask your developer (it needs a Google sign-in key; see BACKUP-DRIVE.md).</span></div>`;
-  if(!d.connected) return `<div class="callout" style="margin:8px 0"><strong>Save the backup to Google Drive every night</strong>
-    Sign in with the Symbiz Google account that should hold the backups. Rep Hub keeps a "Rep Hub backups" folder there, adds a file every night,
-    and removes files older than ${d.keepDays || 90} days. It can only see the files it puts there, nothing else in the Drive.
-    <div class="btnrow" style="margin-top:8px"><button class="btn sm primary" onclick="connectDrive(this)">Connect Google Drive</button></div></div>`;
+  if(!d.connected) return `<div class="callout" style="margin:8px 0"><strong>Save the backup to Google Drive every night, for years</strong>
+    Rep Hub keeps a "Rep Hub backups" folder in a Symbiz Google Drive and adds the full backup every night: ${KEEP_TEXT.smart}.
+    Free; no Google Cloud project or payment needed.
+    <div class="btnrow" style="margin-top:8px"><button class="btn sm primary" onclick="openDriveScript()">Set it up (5 minutes)</button>
+      ${d.configured ? `<button class="btn sm" onclick="connectDrive(this)">Or sign in with Google</button>` : ''}</div></div>`;
   const l = d.last;
   return `<div class="kv"><span class="k">Google Drive</span><span><span class="tag ok">Connected</span> ${esc(d.email || '')}
       ${d.folderUrl ? ` · <a href="${esc(d.folderUrl)}" target="_blank" rel="noopener" class="inline-link">Open the folder</a>` : ''}
-      <br><span class="row-sub">${l ? (l.ok ? `Last saved ${whenShort(l.at)} (${Math.round((l.size||0)/1024).toLocaleString()} KB)` : `<span style="color:var(--rust)">Last try failed ${whenShort(l.at)}: ${esc(l.error||'')}</span>`) : 'First copy on its way'} · every night, kept ${d.keepDays || 90} days</span>
+      <br><span class="row-sub">${l ? (l.ok ? `Last saved ${whenShort(l.at)} (${Math.round((l.size||0)/1024).toLocaleString()} KB)` : `<span style="color:var(--rust)">Last try failed ${whenShort(l.at)}: ${esc(l.error||'')}</span>`) : 'First copy on its way'}</span>
+      <br><span class="row-sub">Every night, ${KEEP_TEXT[d.keep] || KEEP_TEXT.smart}.</span>
+      <select onchange="saveKeep(this.value)" style="width:auto;margin-top:4px" aria-label="How long backups are kept">
+        <option value="smart" ${d.keep !== 'all' ? 'selected' : ''}>Keep for years (recommended)</option>
+        <option value="all" ${d.keep === 'all' ? 'selected' : ''}>Keep every file</option></select>
       <br><a href="#" class="inline-link" onclick="event.preventDefault();driveNow()">Save to Drive now</a> · <a href="#" class="inline-link" onclick="event.preventDefault();disconnectDrive()">Disconnect</a></span></div>`;
+}
+async function saveKeep(v){
+  try{ await API.call('/admin/backup/keep', { method:'PUT', body: JSON.stringify({ keep: v }) }); toast(v === 'all' ? 'Every backup will be kept' : 'Backups will be kept for years on a schedule'); }
+  catch(e){ toast(e.message); }
+}
+/* Apps Script: the Symbiz account runs a tiny script that saves each night's file */
+async function openDriveScript(){
+  let src = '';
+  try{ src = (await API.call('/admin/backup/google/script')).source; }catch(e){ return toast(e.message); }
+  openModal(`<h3>Save backups to Google Drive</h3>
+    <p class="lead">Do this signed in to Google with the Symbiz account that should hold the backups. Free, about 5 minutes.</p>
+    <ol class="books-steps">
+      <li>Open <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener"><strong>script.google.com → New project</strong></a>.</li>
+      <li>Delete what's in the editor, and paste this script in its place:
+        <textarea id="driveSrc" readonly rows="6" style="font-family:ui-monospace,Consolas,monospace;font-size:11.5px;margin-top:6px">${esc(src)}</textarea>
+        <div class="btnrow" style="margin-top:6px"><button class="btn sm" type="button" onclick="copyText(document.getElementById('driveSrc').value,this)">Copy the script</button></div></li>
+      <li>Press <strong>Save</strong> (the disk icon). Name it <strong>Rep Hub backups</strong>.</li>
+      <li>Press <strong>Deploy → New deployment</strong>. Click the gear next to "Select type" and choose <strong>Web app</strong>.
+        Set <strong>Execute as: Me</strong> and <strong>Who has access: Anyone</strong>, then <strong>Deploy</strong>.</li>
+      <li>Google asks to <strong>Authorize access</strong>: choose the account, then <strong>Advanced → Go to Rep Hub backups → Allow</strong>.
+        (It's your own script, so Google shows a warning; that's expected.)</li>
+      <li>Copy the <strong>Web app URL</strong> (it ends in <code>/exec</code>) and paste it here:</li>
+    </ol>
+    <div class="btnrow" style="margin:6px 0 0;align-items:stretch">
+      <input id="driveUrl" placeholder="https://script.google.com/macros/s/…/exec" style="flex:1;min-width:220px" autocomplete="off" spellcheck="false">
+      <button class="btn primary" onclick="connectDriveScript(this)">Connect</button></div>
+    <div class="hint" style="margin-top:8px">The script has a private key in it, so only Rep Hub can save files with it. It only touches its own "Rep Hub backups" folder.</div>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
+}
+async function connectDriveScript(btn){
+  const url = (document.getElementById('driveUrl').value || '').trim(); if(!url) return toast('Paste the Web app URL first');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try{ const o = await API.call('/admin/backup/google/script', { method:'POST', body: JSON.stringify({ url }) });
+    closeModal(); toast(`Connected to ${o.email || 'Google Drive'}. The first backup is being saved now.`); backupStatus = null; drawBackupCard(); }
+  catch(e){ toast(e.message); btn.disabled = false; btn.textContent = 'Connect'; }
 }
 async function connectDrive(btn){
   btn.disabled = true;

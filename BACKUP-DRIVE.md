@@ -1,31 +1,52 @@
-# Nightly backup to Google Drive: one-time setup
+# Nightly backup to Google Drive, kept for years
 
-Rep Hub saves a full backup file (its own data plus the copy of Zoho CRM) to a
-"Rep Hub backups" folder in a Symbiz Google Drive every night, and removes
-files older than 90 days. It asks only for `drive.file`, so it can see the
-files it made and nothing else in that Drive.
+Every night Rep Hub saves the full backup (its own data plus the copy of
+Zoho CRM, every field) to a "Rep Hub backups" folder in a Symbiz Google Drive.
 
-This needs a Google sign-in key for Rep Hub, made once in Google Cloud. Do it
-signed in with the **Symbiz** Google Workspace account, so Symbiz owns it.
+Kept for years without piling up: every file for 90 days, one a week for two
+years, then one a month for good (about 220 files after five years). Settings
+→ Backup can switch to "Keep every file".
 
-1. Open https://console.cloud.google.com and create a project, e.g. "Rep Hub".
-2. **APIs & Services → Library** → search **Google Drive API** → **Enable**.
-3. **APIs & Services → OAuth consent screen** (Google Auth Platform → Branding/Audience):
-   - App name: Rep Hub. Support email: a Symbiz address.
-   - Audience / User type: **Internal** (only symbiz.org accounts; no Google review,
-     and the connection does not expire after 7 days as it would for "External / Testing").
-   - Data access / scopes: add `.../auth/drive.file` (and `openid`, `email`).
-4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
-   - Application type: **Web application**.
-   - Authorised redirect URI: `https://symbizrep.netlify.app/api/google/callback`
-5. Copy the **Client ID** and **Client secret** into Netlify:
-   Site configuration → Environment variables:
-   - `GOOGLE_CLIENT_ID`
-   - `GOOGLE_CLIENT_SECRET`
-   Then **Deploys → Trigger deploy**.
-6. In Rep Hub: **Settings → Backup → Connect Google Drive**, and sign in with the
-   Symbiz Google account that should hold the backups. The first file is saved
-   straight away; open the folder from the same page to see it.
+## Recommended: Apps Script (free, no Google Cloud project, ~5 minutes)
 
-To restore: download a file from the folder; it is gzip-compressed JSON with
-every Rep Hub table (`tables`) and every Zoho record with all its fields (`zoho`).
+Signed in to Google with the Symbiz account that should hold the backups:
+
+1. In Rep Hub: **Settings → Backup → Set it up (5 minutes)**. Press **Copy the script**.
+2. Open https://script.google.com/home/projects/create (a new project).
+3. Delete what is in the editor and paste the script. Press **Save**, name it
+   **Rep Hub backups**.
+4. **Deploy → New deployment** → gear icon → **Web app**.
+   - Execute as: **Me**
+   - Who has access: **Anyone**
+   - **Deploy**.
+5. **Authorize access** → choose the account → **Advanced → Go to Rep Hub
+   backups (unsafe) → Allow**. The warning is normal for your own script.
+6. Copy the **Web app URL** (ends in `/exec`), paste it into Rep Hub, press
+   **Connect**. The first backup is saved straight away; **Open the folder**
+   shows it.
+
+The script holds a private key, so only Rep Hub can save files with it, and it
+only touches its own "Rep Hub backups" folder.
+
+If Google says "Who has access: Anyone" is not allowed, the Workspace admin has
+limited it: Google Admin → Apps → Google Workspace → Drive and Docs → Sharing
+settings, or use the Google sign-in option below.
+
+## Alternative: Google sign-in (needs a Google Cloud project)
+
+1. https://console.cloud.google.com/projectcreate → project "Rep Hub" (no billing
+   is needed; dismiss any free-trial offer).
+2. Enable the **Google Drive API**:
+   https://console.cloud.google.com/apis/library/drive.googleapis.com
+3. https://console.cloud.google.com/auth/overview → Audience **Internal**;
+   scopes `drive.file`, `openid`, `email`.
+4. https://console.cloud.google.com/auth/clients → Web application, redirect URI
+   `https://symbizrep.netlify.app/api/google/callback`.
+5. Netlify environment variables `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+   then redeploy.
+6. Rep Hub → Settings → Backup → **Or sign in with Google**.
+
+## Restoring
+
+Download a file from the folder. It is gzip-compressed JSON: `tables` holds
+every Rep Hub table, `zoho` every Zoho CRM record with all its fields.
