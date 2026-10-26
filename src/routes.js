@@ -1175,8 +1175,19 @@ r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
 
     // Guests from the subform, then the flat fields as a fallback.
     const sub = guestsByReg[z.id] || (Array.isArray(z.Guests) ? z.Guests : []);
-    const guests = sub.map(g => ({
-      name: [g.Guest_First_Name, g.Guest_Last_Name].filter(Boolean).join(' '),
+    const nameOf = g => [g.Guest_First_Name, g.Guest_Last_Name].filter(Boolean).join(' ').trim();
+    // A row ticked "Same as main registrant" is the registrant themselves, entered
+    // on the guest list with the name left blank. Shown as a nameless guest, it
+    // looked like the registrant was missing. Use it for their name if the
+    // registration has none, and don't list them a second time as a guest.
+    if (!base.name) {
+      const self = sub.find(g => g.Same_As_Main_Registrant === true && nameOf(g)) || null;
+      if (self) base.name = nameOf(self);
+    }
+    // Still no name: say which record it is, so it can be found and fixed in Zoho
+    if (!base.name) base.name = base.ref ? `No name in Zoho (registration ${base.ref})` : 'No name in Zoho';
+    const guests = sub.filter(g => !(g.Same_As_Main_Registrant === true)).map(g => ({
+      name: nameOf(g),
       type: g.Guest_Type || 'Guest',
       business: g.Guest_Organization || '',
       email: g.Guest_Email || '',
@@ -1205,6 +1216,53 @@ r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
 
     return { ...base, guests, guestCount: guests.length };
   }));
+}));
+
+/**
+ * Leads from an event's guest list (Mel). Each person becomes a Lead in Zoho,
+ * noted as met at the event and whose guest they were. Anyone already in Zoho
+ * as a lead (same email, phone or name) or as a member (same email) is skipped.
+ */
+r.post('/events/:id/leads', auth.authRequired, auth.requireOffice, writesAllowed, wrap(async (req, res) => {
+  if (!(req.user.perms.approvals || req.user.perms.members)) return res.status(403).json({ error: 'Your account cannot add leads. Ask the owner.' });
+  const eventId = String(req.params.id).replace(/[^0-9]/g, '');
+  const people = (Array.isArray(req.body?.people) ? req.body.people : []).slice(0, 300);
+  if (!people.length) return res.status(400).json({ error: 'Nobody was picked' });
+  const ev = await zoho.getRecord(M.EVENT, eventId).catch(() => null);
+  const eventName = ev ? ev.Name : 'an event';
+  const clean = (v, n) => String(v || '').trim().slice(0, n || 120);
+  const sq = v => String(v).replace(/'/g, "\\'");
+  const created = [], skipped = [], failed = [], toMake = [];
+  for (const p of people) {
+    const name = clean(p.name), email = clean(p.email, 200).toLowerCase(), phone = clean(p.phone, 40);
+    if (!name) continue;
+    const words = name.split(/\s+/), lastName = words.length > 1 ? words.pop() : words[0], firstName = words.length ? words.join(' ') : '';
+    // Already in Zoho?
+    let why = null;
+    try {
+      if (email) {
+        if ((await zoho.coql(`select id from Leads where Email = '${sq(email)}' limit 1`).catch(() => [])).length) why = 'already a lead (same email)';
+        else if ((await zoho.coql(`select id from ${M.CONTACT} where Email = '${sq(email)}' limit 1`).catch(() => [])).length) why = 'already in Zoho as a member or contact (same email)';
+      }
+      if (!why && phone && (await zoho.coql(`select id from Leads where Phone = '${sq(phone)}' limit 1`).catch(() => [])).length) why = 'already a lead (same phone)';
+      if (!why && (await zoho.coql(`select id from Leads where Full_Name = '${sq(name)}' limit 1`).catch(() => [])).length) why = 'already a lead (same name)';
+    } catch (_) { /* a check that fails never blocks the lead */ }
+    if (why) { skipped.push({ name, why }); continue; }
+    const how = p.guestOf ? `${clean(p.type, 40) || 'Guest'} of ${clean(p.guestOf)}` : clean(p.type, 60) || 'Registered';
+    toMake.push({ name, record: toZoho.lead({ firstName, lastName, company: clean(p.business) || undefined, email: email || undefined,
+      phone: phone || undefined, city: clean(p.city, 60) || undefined, state: clean(p.state, 30) || undefined,
+      notes: `Met at ${eventName} (${how}). Added from Rep Hub by ${req.user.name}.` }) });
+  }
+  if (toMake.length) {
+    const out = await zoho.insertRecords('Leads', toMake.map(x => x.record)).catch(e => toMake.map(() => ({ message: e.message })));
+    toMake.forEach((x, i) => {
+      const r0 = out[i];
+      if (r0 && (r0.code === 'SUCCESS' || r0.status === 'success')) created.push({ name: x.name, id: r0.details && r0.details.id });
+      else failed.push({ name: x.name, why: (r0 && r0.message) || 'Zoho did not accept it' });
+    });
+  }
+  await audit(req.user.id, 'event.leadsFromGuests', { eventId, created: created.length, skipped: skipped.length, failed: failed.length }, req.ip);
+  res.json({ created, skipped, failed });
 }));
 
 /**
@@ -3377,6 +3435,32 @@ r.post('/admin/users/:id/link', auth.authRequired, access.requirePerm('users'), 
   await audit(req.user.id, 'user.linked', { kept: keep.id, keptEmail: keep.email, merged: drop ? drop.email : null, contactId }, req.ip);
   dropSnapshot();
   res.json({ ok: true, kept: { id: keep.id, email: keep.email }, merged: drop ? { id: drop.id, email: drop.email } : null });
+}));
+
+/* Change the email someone signs in with, and that Rep Hub writes to (Dave
+   Mullet: his Symbiz address rather than his business one). Zoho is left as
+   it is. Their password stays the same. */
+r.put('/admin/users/:id/email', auth.authRequired, access.requirePerm('users'), wrap(async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'That does not look like an email address' });
+  const everyone = await q.everyUser();
+  const target = everyone.find(u => u.id === req.params.id);
+  if (!target) return res.status(404).json({ error: 'No such account' });
+  if (!(await guardTarget(req, res, target))) return;
+  const other = everyone.find(u => u.id !== target.id && String(u.email).toLowerCase() === email);
+  if (other) return res.status(409).json({ error: `${email} is already used by ${other.name}'s account` });
+  const before = target.email;
+  await q.setEmail(target.id, email);
+  await q.dropTokensFor(target.id).catch(() => {});        // old sign-in links stop working
+  dropSnapshot();
+  await audit(req.user.id, 'user.emailChanged', { id: target.id, from: before, to: email }, req.ip);
+  // Tell both addresses, so a change nobody asked for is noticed
+  const e = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const html = `<p>${e((target.name || '').split(' ')[0] || 'Hello')},</p><p>${e(req.user.name)} changed the email you sign in to Rep Hub with
+    from <strong>${e(before)}</strong> to <strong>${e(email)}</strong>. Your password is the same.</p>
+    <p><a href="${cfg.appUrl}">Open Rep Hub</a></p>`;
+  for (const to of [email, before]) reminders.sendEmail(to, 'Your Rep Hub sign-in email changed', html, { userId: target.id, kind: 'email-changed' }).catch(() => {});
+  res.json({ ok: true, email });
 }));
 
 /* Both office and rep, in one sign-in (Mel, Dale). An office account is linked

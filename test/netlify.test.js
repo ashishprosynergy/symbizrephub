@@ -1931,6 +1931,36 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.equal(dale.role, 'staff'); assert.equal(dale.zoho_owner_id, '842');
   });
 
+  test('a sign-in email can be changed (Dave: his Symbiz address); the password stays', async () => {
+    const auth = require('../src/auth');
+    await db.q.insertUser({ id: 'dave', email: 'dave@business.test', name: 'Dave Mullet #0412', phone: null, role: 'rep', region: null, password_hash: auth.hash('dave-pass'), zoho_owner_id: '412' });
+    const admin = J(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse' } })).token;
+    assert.equal((await invoke('PUT', '/admin/users/dave/email', { token: rep, body: { email: 'dave@symbiz.test' } })).statusCode, 403);
+    assert.equal((await invoke('PUT', '/admin/users/dave/email', { token: admin, body: { email: 'admin@test.org' } })).statusCode, 409, 'not one already in use');
+    const ok = await invoke('PUT', '/admin/users/dave/email', { token: admin, body: { email: 'Dave@Symbiz.test' } });
+    assert.equal(ok.statusCode, 200, ok.body);
+    assert.ok(J(await invoke('POST', '/auth/login', { body: { email: 'dave@symbiz.test', password: 'dave-pass' } })).token, 'signs in with the new one, same password');
+    assert.equal((await invoke('POST', '/auth/login', { body: { email: 'dave@business.test', password: 'dave-pass' } })).statusCode, 401);
+  });
+
+  test('guests at an event become leads in Zoho, noted with where they were met', async () => {
+    store.Symbiz_Events = store.Symbiz_Events || [];
+    store.Symbiz_Events.push({ id: '7701', Name: 'PA Regional Summit - 10/21/2026' });
+    // (The test Zoho ignores search conditions, so the "already a lead?" check is tested with no leads in it)
+    store.Leads = [];
+    const out = await invoke('POST', '/events/7701/leads', { token: office, body: { people: [
+      { name: 'Jonas Fisher', business: 'Fisher Lumber', phone: '717-555-0909', type: 'Other Guest', guestOf: 'Elam Stoltzfus' }] } });
+    assert.equal(out.statusCode, 200, out.body);
+    assert.equal(J(out).created.length, 1, out.body);
+    const made = store.Leads.find(l => l.Last_Name === 'Fisher');
+    assert.ok(made, 'the guest is a lead now');
+    assert.equal(made.First_Name, 'Jonas'); assert.equal(made.Company, 'Fisher Lumber');
+    assert.match(made.Description, /Met at PA Regional Summit .*Other Guest of Elam Stoltzfus/);
+    // Somebody already a lead is skipped, not doubled
+    const again = J(await invoke('POST', '/events/7701/leads', { token: office, body: { people: [{ name: 'Jonas Fisher', type: 'Other Guest', guestOf: 'Elam Stoltzfus' }] } }));
+    assert.equal(again.created.length, 0); assert.equal(again.skipped.length, 1);
+  });
+
   test('ring notes pass from one rep to the next, with a handover note when a ring moves', async () => {
     store.Growth_Ring_Groups.push({ id: 'GRN1', Name: 'Notes Ring', Active: true, Regional_Rep: { id: 'CONTACT_REP_1', name: 'Test Rep' } });
     require('../src/lib/zoho').clearCache();

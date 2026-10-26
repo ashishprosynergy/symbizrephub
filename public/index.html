@@ -3978,8 +3978,10 @@ async function submitAddUser(e){
 function teamReps(){
   const su = Array.isArray(serverUsers) ? serverUsers : [];
   const z = Array.isArray(zohoReps) ? zohoReps : [];
-  const out = z.map(r => ({ id: r.contactId, name: r.name, rings: r.rings, regions: r.regions || [], email: r.email || '',
-    phone: r.phone || '', business: r.business || '', account: r.account || su.find(u => u.zoho_owner_id === r.contactId) || null }));
+  const out = z.map(r => { const account = su.find(u => u.zoho_owner_id === r.contactId) || r.account || null;
+    // The email they sign in with (and Rep Hub writes to) wins over the one in Zoho
+    return { id: r.contactId, name: r.name, rings: r.rings, regions: r.regions || [], email: (account && account.email) || r.email || '',
+      zohoEmail: r.email || '', phone: r.phone || '', business: r.business || '', account }; });
   // Accounts for reps no longer named on a ring, or never linked to Zoho
   su.filter(u => u.role === 'rep' && !out.some(r => r.account && r.account.id === u.id)).forEach(u =>
     out.push({ id: u.zoho_owner_id || 'u:' + u.id, name: u.name, rings: 0, regions: u.region ? [u.region] : [], email: u.email, account: u, unlinked: !u.zoho_owner_id }));
@@ -4128,6 +4130,23 @@ async function submitRepLink(e, userId, merge){
     } else toast(ex.message || 'Could not save');
   }
 }
+/* The email someone signs in with and Rep Hub writes to */
+function changeEmail(userId, name, current){
+  openModal(`<h3>Change ${esc(splitRepName(name).name)}'s sign-in email</h3>
+    <p class="lead">They sign in with this address, and Rep Hub's emails (invitations, the weekly digest, messages) go to it.
+      Their password stays the same. Zoho is not changed. Both addresses are told about the change.</p>
+    <form onsubmit="submitChangeEmail(event,'${esc(userId)}')">
+      <div class="field"><label>Now</label><input value="${esc(current)}" disabled></div>
+      <div class="field"><label>New email</label><input name="email" type="email" required placeholder="name@symbiz.org" autocomplete="off"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn primary">Change it</button></div></form>`);
+}
+async function submitChangeEmail(e, userId){
+  e.preventDefault();
+  try{ const o = await API.call('/admin/users/' + encodeURIComponent(userId) + '/email', { method:'PUT', body: JSON.stringify({ email: fv(e.target,'email') }) });
+    closeModal(); toast('Changed. They now sign in with ' + o.email); await loadUsers(true); renderContent(); }
+  catch(ex){ toast(ex.message || 'Could not change it'); }
+}
 async function giveOfficeAccess(userId, name){
   if(!confirm(`Give ${splitRepName(name).name} office access as well? They keep their rings and get a switch between the office and their rep view. Choose what they can do under Access & security.`)) return;
   try{ await API.call('/admin/users/' + encodeURIComponent(userId) + '/office-access', { method:'POST', body: JSON.stringify({ on: true }) });
@@ -4178,6 +4197,7 @@ function vRepAccount(){
         <div class="btnrow" style="margin-top:10px">
           ${(r.status === 'none' || r.status === 'invited') && zid && can('users') ? `<button class="btn sm primary" onclick="repsInvite(['${esc(zid)}'], this)">${r.status === 'none' ? 'Invite to Rep Hub' : 'Send the invitation again'}</button>` : ''}
           ${acct && can('users') && r.status === 'active' ? `<button class="btn sm" onclick="resendLogin('${acct.id}','${esc(acct.name)}')">Send a password reset link</button>` : ''}
+          ${acct && can('users') ? `<button class="btn sm" onclick="changeEmail('${acct.id}','${esc(acct.name)}','${esc(acct.email)}')">Change sign-in email</button>` : ''}
           ${acct && acct.role === 'rep' && can('users') && (isOwner() || isAdmin()) ? `<button class="btn sm" onclick="giveOfficeAccess('${acct.id}','${esc(acct.name)}')">Give office access too</button>` : ''}
           ${acct && acct.role !== 'rep' ? `<span class="tag info">Office account — also a rep</span>` : ''}
           ${acct && acct.role === 'rep' && can('users') && acct.id !== ui.me ? `<button class="btn sm danger" onclick="removeAccount('${acct.id}','${esc(acct.name)}')">Remove account</button>` : ''}
@@ -8623,6 +8643,9 @@ const adapt = {
       // Full guest records from Zoho's subform, not just a count
       guestList: Array.isArray(r.guests) ? r.guests : [],
       guests: Array.isArray(r.guests) ? r.guests.length : (r.bringingGuest ? 1 : 0),
+      // A member (linked to their Zoho contact), or someone who is not one yet
+      contactId: r.contactId || null, registrantType: r.registrantType || '', ref: r.ref || '',
+      city: r.city || '', state: r.state || '',
       guestName: r.guestName || '',
       guestType: r.guestType || '',
       guestBusiness: r.guestBusiness || '',
@@ -9676,6 +9699,7 @@ function vEventDetail() {
         ${API.live && days(e.date) >= 0 ? `<button class="btn" onclick="openRegQR('${e.id}', ${esc(JSON.stringify(e.title))})">Registration QR</button>` : ''}
         <button class="btn" onclick="printSignInSheet('${e.id}')">Sign-in sheet</button>
         <button class="btn" onclick="exportAttendees('${e.id}')">Export list</button>
+        ${API.live && isOffice() && (can('approvals') || can('members')) && coming.length ? `<button class="btn" onclick="openGuestLeads('${e.id}')">Make leads from guests</button>` : ''}
       </div>
 
       ${(() => {
@@ -9708,7 +9732,12 @@ function vEventDetail() {
             <div class="empty" id="regNone" hidden>Nobody matches that search.</div></div>`
           : coming.length ? `<div class="empty">${tab==='guests'?'Nobody is bringing a guest.':'No registrations.'}</div>` : '';
         setTimeout(filterRegs, 0);
-        return chips + tools + body;
+        // Names Zoho doesn't have: listed, so the office can fill them in there
+        const nameless = coming.filter(a => !a.name || /^No name in Zoho/.test(a.name));
+        const fix = nameless.length && isOffice() ? `<div class="callout" style="margin:0 0 10px"><strong>${nameless.length} ${nameless.length===1?'person has':'people have'} no name in Zoho</strong>
+          ${nameless.slice(0,8).map(a => a.guestOf ? `${esc(a.kind)} of ${esc(a.guestOf)}` : esc(a.name)).join(' · ')}${nameless.length>8?` and ${nameless.length-8} more`:''}.
+          Open that registration in Zoho and fill in the guest's first and last name; Rep Hub shows it next time.</div>` : '';
+        return fix + chips + tools + body;
       })()}
       ${coming.length ? ''
         : regsError[e.id]
@@ -9773,6 +9802,7 @@ function attendeeList(eventId){
       key: r.id, name: r.name, business: r.business || '',
       phone: r.phone || '', email: r.email || '',
       kind: 'Registered', attending: r.attending, attended: r.attended,
+      member: !!r.contactId, city: r.city || '', state: r.state || '',
     });
     // Each guest is a person in their own right, from the Guests subform.
     (r.guestList && r.guestList.length ? r.guestList : []).forEach((g, i) => {
@@ -9784,12 +9814,59 @@ function attendeeList(eventId){
         address: g.address || '',
         kind: g.type || 'Guest',               // Spouse | Other Guest
         guestOf: r.name, attended: g.attended || '',
+        city: g.city || '', state: g.state || '',
       });
     });
   });
   return out;
 }
 
+/* Mel: "Can we create a leads list from the summit guest list?" Guests, and
+   anyone who registered without being a member, become leads in Zoho, with
+   where they came from. Spouses are left unticked (they come with a member);
+   anyone already in Zoho as a lead or member is skipped by the server. */
+var guestLeadPeople = [];
+function openGuestLeads(eventId){
+  const e = S.events.find(x => x.id === eventId) || {};
+  const all = attendeeList(eventId);
+  guestLeadPeople = all.filter(a => a.name && !/^No name in Zoho/.test(a.name) && (a.guestOf || !a.member)).map(a => ({
+    name: splitRepName(a.name).name, business: a.business, email: a.email, phone: a.phone, city: a.city, state: a.state,
+    type: a.guestOf ? a.kind : 'Registered (not a member)', guestOf: a.guestOf ? splitRepName(a.guestOf).name : '',
+    spouse: /spouse/i.test(a.kind || '') }));
+  const skipped = all.filter(a => a.guestOf && (!a.name || /^No name in Zoho/.test(a.name))).length;
+  if(!guestLeadPeople.length) return toast('No guests with a name to make leads from');
+  openModal(`<h3>Make leads from ${esc(e.title || 'this event')}</h3>
+    <p class="lead">Each person ticked becomes a lead in Zoho, noted as met at this event (and whose guest they were).
+      Anyone already in Zoho as a lead or member is skipped. Spouses are left unticked, since they come with a member.</p>
+    <div class="btnrow" style="margin:0 0 8px"><button class="btn sm" type="button" onclick="leadTickAll(true)">Tick all</button>
+      <button class="btn sm" type="button" onclick="leadTickAll(false)">Untick all</button>
+      <button class="btn sm" type="button" onclick="downloadGuestLeads(${esc(JSON.stringify(e.title || 'event'))})">Download as spreadsheet</button></div>
+    <div class="pick-list" style="max-height:46vh;overflow:auto">${guestLeadPeople.map((p, i) => `<label class="pick"><input type="checkbox" class="lead-pick" value="${i}" ${p.spouse ? '' : 'checked'}>
+      <span><strong>${esc(p.name)}</strong><span class="row-sub"> · ${esc(p.type)}${p.guestOf ? ' of ' + esc(p.guestOf) : ''}${p.business ? ' · ' + esc(p.business) : ''}${p.phone || p.email ? ' · ' + esc(p.phone || p.email) : ''}</span></span></label>`).join('')}</div>
+    ${skipped ? `<div class="hint" style="margin-top:6px">${skipped} guest${skipped===1?' has':'s have'} no name in Zoho and can't be made a lead until it's filled in.</div>` : ''}
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="makeGuestLeads('${esc(eventId)}', this)">Add to Zoho as leads</button></div>`);
+}
+function leadTickAll(on){ document.querySelectorAll('.lead-pick').forEach(c => { c.checked = on; }); }
+function downloadGuestLeads(title){
+  const rows = [['Name','Type','Guest of','Business','Phone','Email','Town','State']].concat(guestLeadPeople.map(p =>
+    [p.name, p.type, p.guestOf, p.business, p.phone, p.email, p.city, p.state]));
+  downloadCSV(`leads-${String(title).toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,40)}.csv`, rows);
+}
+async function makeGuestLeads(eventId, btn){
+  const people = [...document.querySelectorAll('.lead-pick:checked')].map(c => guestLeadPeople[+c.value]);
+  if(!people.length) return toast('Tick at least one person');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try{
+    const o = await API.call('/events/' + encodeURIComponent(eventId) + '/leads', { method:'POST', body: JSON.stringify({ people }) });
+    closeModal();
+    openModal(`<h3>Leads added</h3>
+      <p class="lead"><strong>${o.created.length}</strong> new lead${o.created.length===1?'':'s'} in Zoho${o.skipped.length ? `; ${o.skipped.length} skipped` : ''}${o.failed.length ? `; <span style="color:var(--rust)">${o.failed.length} could not be added</span>` : ''}.</p>
+      ${o.skipped.length ? `<h3 class="sub-h">Skipped</h3>${o.skipped.map(s => `<div class="row-sub">${esc(s.name)}: ${esc(s.why)}</div>`).join('')}` : ''}
+      ${o.failed.length ? `<h3 class="sub-h">Not added</h3>${o.failed.map(s => `<div class="row-sub">${esc(s.name)}: ${esc(s.why)}</div>`).join('')}` : ''}
+      <div class="m-actions"><button class="btn primary" onclick="closeModal()">Done</button></div>`);
+  }catch(ex){ toast(ex.message || 'Could not add the leads'); btn.disabled = false; btn.textContent = 'Add to Zoho as leads'; }
+}
 function printSignInSheet(eventId){
   const e = S.events.find(x => x.id === eventId);
   if(!e) return;
