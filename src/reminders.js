@@ -23,7 +23,7 @@ function mailer() {
       secure: cfg.mail.port === 465,
       // Keep the connection open between emails. A fresh TLS handshake and
       // login with Gmail cost a second or two on every single send.
-      pool: true, maxConnections: 2, maxMessages: 100,
+      pool: true, maxConnections: 3, maxMessages: 100,
       auth: cfg.mail.user ? { user: cfg.mail.user, pass: cfg.mail.pass } : undefined,
     });
   }
@@ -267,7 +267,46 @@ async function runOfficeSummary({ dryRun = false } = {}) {
   return [{ sent: office.length, stats }];
 }
 
+/* ─────────── outbox: send in the background ───────────
+   Waiting on Gmail for each email made Invite and Send-a-link slow (a second
+   or two each, more on a fresh server). These are saved here at once and sent
+   straight after by a background job; anything that fails is retried by the
+   15-minute job, three times. */
+async function queueEmail(to, subject, html, opts = {}) {
+  if (!cfg.mail.enabled) return { ok: false, error: 'Email is not configured on this site' };
+  const { query } = require('./db');
+  const row = await query('INSERT INTO mail_outbox (to_addr, subject, html, opts) VALUES ($1,$2,$3,$4) RETURNING id',
+    [String(to), String(subject), String(html), JSON.stringify(opts || {})]);
+  return { ok: true, queued: true, id: row[0] && row[0].id };
+}
+async function flushOutbox({ budgetMs = 8000, limit = 50 } = {}) {
+  const { query } = require('./db');
+  const t0 = Date.now();
+  const rows = await query("SELECT id, to_addr, subject, html, opts, tries FROM mail_outbox WHERE status = 'pending' AND tries < 3 ORDER BY id LIMIT $1", [limit]).catch(() => []);
+  let sent = 0, failed = 0, i = 0;
+  // Three at a time: the mail connection pool keeps the logins open
+  const worker = async () => {
+    while (i < rows.length && Date.now() - t0 < budgetMs) {
+      const m = rows[i++];
+      // Claimed first, so two jobs running at once never send the same email twice
+      const claimed = await query("UPDATE mail_outbox SET status = 'sending' WHERE id = $1 AND status = 'pending' RETURNING id", [m.id]).catch(() => []);
+      if (!claimed.length) continue;
+      let opts = {}; try { opts = JSON.parse(m.opts || '{}'); } catch { opts = {}; }
+      const r = await module.exports.sendEmail(m.to_addr, m.subject, m.html, opts).catch(e => ({ ok: false, error: e.message }));
+      if (r && r.ok) { sent++; await query("UPDATE mail_outbox SET status = 'sent', sent_at = now(), error = NULL WHERE id = $1", [m.id]); }
+      else {
+        failed++;
+        await query("UPDATE mail_outbox SET status = CASE WHEN tries + 1 >= 3 THEN 'failed' ELSE 'pending' END, tries = tries + 1, error = $2 WHERE id = $1",
+          [m.id, String((r && r.error) || 'not sent').slice(0, 300)]);
+      }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  return { sent, failed, left: Math.max(0, rows.length - sent - failed) };
+}
+
 module.exports = {
   dueForRep, runWeeklyDigest, runOverdueNudge, runOfficeSummary,
   renderDigestHTML, renderDigestSMS, renderOfficeSummary, sendEmail, sendSMS, htmlToText, supportText,
+  queueEmail, flushOutbox,
 };

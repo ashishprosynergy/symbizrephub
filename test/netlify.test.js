@@ -1931,6 +1931,30 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.equal(dale.role, 'staff'); assert.equal(dale.zoho_owner_id, '842');
   });
 
+  test('invitations go through the outbox: sent once, retried if Gmail fails, never twice', async () => {
+    const cfg = require('../src/config'), reminders = require('../src/reminders');
+    const realSend = reminders.sendEmail, realMail = { ...cfg.mail }, sent = [];
+    cfg.mail.enabled = true; cfg.mail.host = 'smtp.test';
+    let failNext = true;
+    reminders.sendEmail = async (to, subject) => {
+      if (failNext) { failNext = false; return { ok: false, error: 'Gmail busy' }; }
+      sent.push({ to, subject }); return { ok: true };
+    };
+    try {
+      await db.query("DELETE FROM mail_outbox");
+      const q1 = await reminders.queueEmail('rep1@x.test', 'Welcome to Rep Hub', '<p>hi</p>', { kind: 'invite' });
+      assert.ok(q1.ok && q1.queued, 'saved at once, nothing waited on');
+      await reminders.queueEmail('rep2@x.test', 'Welcome to Rep Hub', '<p>hi</p>', { kind: 'invite' });
+      // Two senders at once (the background job and the 15-minute job): each email goes once
+      await Promise.all([reminders.flushOutbox(), reminders.flushOutbox()]);
+      await reminders.flushOutbox();                       // the one Gmail refused is tried again
+      assert.equal(sent.filter(s => s.to === 'rep1@x.test').length + sent.filter(s => s.to === 'rep2@x.test').length, 2, JSON.stringify(sent));
+      assert.equal(new Set(sent.map(s => s.to)).size, sent.length, 'nobody gets it twice');
+      const left = await db.query("SELECT COUNT(*)::int AS n FROM mail_outbox WHERE status <> 'sent'");
+      assert.equal(left[0].n, 0);
+    } finally { reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail); }
+  });
+
   test('a sign-in email can be changed (Dave: his Symbiz address); the password stays', async () => {
     const auth = require('../src/auth');
     await db.q.insertUser({ id: 'dave', email: 'dave@business.test', name: 'Dave Mullet #0412', phone: null, role: 'rep', region: null, password_hash: auth.hash('dave-pass'), zoho_owner_id: '412' });

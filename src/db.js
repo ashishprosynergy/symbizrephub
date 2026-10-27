@@ -329,6 +329,19 @@ CREATE TABLE IF NOT EXISTS zoho_mirror (
   PRIMARY KEY (module, id)
 );
 
+CREATE TABLE IF NOT EXISTS mail_outbox (
+  id         SERIAL PRIMARY KEY,
+  to_addr    TEXT NOT NULL,
+  subject    TEXT NOT NULL,
+  html       TEXT NOT NULL,
+  opts       TEXT,
+  status     TEXT NOT NULL DEFAULT 'pending',
+  tries      INTEGER NOT NULL DEFAULT 0,
+  error      TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  sent_at    TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS zoho_mirror_queue (
   module  TEXT NOT NULL,
   id      TEXT NOT NULL,

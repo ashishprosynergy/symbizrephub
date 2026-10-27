@@ -569,14 +569,15 @@ async function notifyOfficeOfSignup(user) {
   }
 }
 
-async function sendPasswordLink(user, req, { invite, from } = {}) {
+async function sendPasswordLink(user, req, { invite, from, queue } = {}) {
   const token = crypto.randomBytes(32).toString('hex');
   // An invitation sent by the office may sit in an inbox over a weekend
   const hours = from ? 168 : invite ? 72 : 2;
   const expires = new Date(Date.now() + hours * 3600000).toISOString();
   await q.addLoginToken(token, user.id, expires, req.ip, 'setpassword');
   const url = `${siteUrl(req)}/?setup=${token}`;
-  return reminders.sendEmail(user.email,
+  // From the office: into the outbox, sent in the background (no waiting on Gmail)
+  return (queue ? reminders.queueEmail : reminders.sendEmail)(user.email,
     from ? `${(from.name || 'Symbiz').split(' ')[0]} has invited you to Rep Hub` : invite ? 'Set up your Rep Hub password' : 'Reset your Rep Hub password',
     from ? welcomeEmail({ name: user.name, email: user.email, url, from, site: siteUrl(req) }) : passwordLinkEmail({ name: user.name, url, invite, hours }),
     { userId: user.id, kind: invite ? 'invite' : 'reset', replyTo: from ? from.email : undefined });
@@ -3156,47 +3157,48 @@ r.get('/reports/:key', auth.authRequired, auth.requireOffice, wrap(async (req, r
  * This is how accounts get created: pulled from the CRM rather than typed,
  * so a rep added in Zoho simply appears here ready to invite.
  */
-r.get('/admin/reps-from-zoho', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+/* Every rep named on a ring in Zoho, with their email and phone. Used by the
+   Reps screen, each rep's page, invitations and messages. Read from Zoho at
+   most every 10 minutes and shared in the database by every copy of the
+   server; a busy Zoho is never waited on for more than 3 seconds (the saved
+   list is used). Asking Zoho each time was most of the wait on those screens. */
+const REPS_KEY = 'reps_directory_cache';
+async function repsDirectoryFromZoho() {
   const rings = (await zoho.coql(queries.repsOnRings())).map(fromZoho.ring);
-
   const byRep = new Map();
   rings.forEach(ring => {
     if (!ring.repZohoId) return;
-    if (!byRep.has(ring.repZohoId)) {
-      byRep.set(ring.repZohoId, {
-        contactId: ring.repZohoId, name: ring.repName || 'Unnamed rep',
-        rings: 0, ringNames: [], regions: new Set(),
-      });
-    }
+    if (!byRep.has(ring.repZohoId)) byRep.set(ring.repZohoId, { contactId: ring.repZohoId, name: ring.repName || 'Unnamed rep', rings: 0, ringNames: [], regions: [] });
     const e = byRep.get(ring.repZohoId);
     e.rings++;
     if (e.ringNames.length < 6) e.ringNames.push(ring.name);
-    if (ring.regionName) e.regions.add(ring.regionName);
+    if (ring.regionName && !e.regions.includes(ring.regionName)) e.regions.push(ring.regionName);
   });
-
-  // Fill in contact details (email, phone) for the reps we found
   const ids = [...byRep.keys()];
-  if (ids.length) {
-    const contacts = await zoho.coql(queries.contactsByIds(ids)).catch(() => []);
-    contacts.map(fromZoho.member).forEach(c => {
-      const e = byRep.get(c.id);
-      if (e) { e.email = c.email || ''; e.phone = c.phone || ''; e.business = c.business || ''; }
-    });
-  }
-
-  const existing = await q.allUsers();
-  const linked = new Set(existing.map(u => u.zoho_owner_id).filter(Boolean));
-
-  const out = [...byRep.values()]
-    .map(e => ({
-      ...e,
-      regions: [...e.regions],
-      hasAccount: linked.has(e.contactId),
-      account: existing.find(u => u.zoho_owner_id === e.contactId) || null,
-    }))
-    .sort((a, b) => b.rings - a.rings);
-
-  res.json(out);
+  const batches = await Promise.all(chunk(ids, 50).map(b => zoho.coql(queries.contactsByIds(b)).catch(() => [])));
+  batches.flat().map(fromZoho.member).forEach(c => {
+    const e = byRep.get(c.id);
+    if (e) { e.email = c.email || ''; e.phone = c.phone || ''; e.business = c.business || ''; }
+  });
+  const list = [...byRep.values()];
+  q.setSetting(REPS_KEY, JSON.stringify({ at: Date.now(), list })).catch(() => {});
+  return list;
+}
+let repsDirMem = null;
+async function repsDirectory(fresh) {
+  if (!fresh && repsDirMem && Date.now() - repsDirMem.at < 10 * 60000) return repsDirMem.list;
+  let saved = null; try { saved = JSON.parse(await setting(REPS_KEY, 'null')); } catch { saved = null; }
+  if (!fresh && saved && Array.isArray(saved.list) && Date.now() - saved.at < 10 * 60000) { repsDirMem = saved; return saved.list; }
+  const live = repsDirectoryFromZoho().then(list => { repsDirMem = { at: Date.now(), list }; return list; });
+  if (fresh || !saved || !Array.isArray(saved.list)) return live;
+  live.catch(() => {});
+  return Promise.race([live.catch(() => saved.list), new Promise(r => setTimeout(() => r(saved.list), 3000))]);
+}
+r.get('/admin/reps-from-zoho', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+  const [list, existing] = await Promise.all([repsDirectory(req.query.fresh === '1'), q.allUsers()]);
+  const byContact = new Map(existing.filter(u => u.zoho_owner_id).map(u => [u.zoho_owner_id, u]));
+  res.json(list.map(e => ({ ...e, hasAccount: byContact.has(e.contactId), account: byContact.get(e.contactId) || null }))
+    .sort((a, b) => b.rings - a.rings));
 }));
 
 /**
@@ -3248,8 +3250,9 @@ r.post('/admin/users/from-zoho', auth.authRequired, access.requirePerm('users'),
   // A password in an inbox stays there forever; a link expires.
   let emailed = false;
   if (req.body?.sendEmail !== false) {
-    const sent = await sendPasswordLink({ id, name, email }, req, { invite: true, from: req.user });
+    const sent = await sendPasswordLink({ id, name, email }, req, { invite: true, from: req.user, queue: true });
     emailed = !!(sent && sent.ok === true);
+    if (emailed) await sendQueuedMail(req);
   }
   res.status(201).json({ id, tempPassword: emailed ? undefined : temp, emailed, invited: emailed });
 }));
@@ -3392,8 +3395,9 @@ r.post('/admin/users/:id/resend', auth.authRequired, access.requirePerm('users')
   if (!(await guardTarget(req, res, u))) return;
   // Prefer sending a link so they choose their own. Only fall back to a
   // generated password when email cannot go out, so nobody is locked out.
-  const sent = await sendPasswordLink(u, req, { invite: false });
+  const sent = await sendPasswordLink(u, req, { invite: false, queue: true });
   if (sent && sent.ok === true) {
+    await sendQueuedMail(req);
     await audit(req.user.id, 'user.resetLinkSent', { id: u.id }, req.ip);
     return res.json({ emailed: true, sentTo: u.email });
   }
@@ -3753,7 +3757,8 @@ async function snapshot(fresh) {
   snapCache = { at: Date.now(), data };
   return data;
 }
-const dropSnapshot = () => { snapCache = null; repEmailCache = null; };   // moving rings changes who the reps are
+// Moving rings changes who the reps are: forget the saved lists everywhere
+const dropSnapshot = () => { snapCache = null; repEmailCache = null; repsDirMem = null; q.setSetting(REPS_KEY, '').catch(() => {}); };
 
 r.get('/manager/snapshot', ...mgrGuard, wrap(async (req, res) => {
   const snap = await snapshot(!!req.headers['x-fresh'] || req.query.fresh === '1');
@@ -3952,16 +3957,29 @@ r.post('/reps/invite', ...inviteGuards, wrap(async (req, res) => {
       }
       const id = 'u_' + Date.now().toString(36) + crypto.randomBytes(2).toString('hex');
       await q.insertUser({ id, email: rep.email, name: splitName(rep.name), phone: null, role: 'rep', region: null,
-        password_hash: auth.hash(crypto.randomBytes(16).toString('hex')), zoho_owner_id: rep.id });
+        password_hash: unusablePassword(), zoho_owner_id: rep.id });
       u = { id, email: rep.email, name: splitName(rep.name) };
       await audit(req.user.id, 'user.createdFromZoho', { id, contactId: rep.id, email: rep.email, by: 'invite' }, req.ip);
     }
-    const sent = await sendPasswordLink(u, req, { invite: true, from: req.user });
+    const sent = await sendPasswordLink(u, req, { invite: true, from: req.user, queue: true });
     out.push({ id: rep.id, name: rep.name, sent: !!(sent && sent.ok), error: sent && !sent.ok ? (sent.error || 'not sent') : undefined });
   }
   await audit(req.user.id, 'reps.invited', { sent: out.filter(x => x.sent).length, asked: list.length }, req.ip);
+  await sendQueuedMail(req);
   res.json({ results: out, sent: out.filter(x => x.sent).length });
 }));
+/* Send what is in the outbox: by the background job on the live site
+   (answers at once), right here anywhere else */
+async function sendQueuedMail(req) {
+  const site = netlifySite(req);
+  if (site && await kickBackground(site, 'mail-background')) return;
+  await reminders.flushOutbox({ budgetMs: 8000 }).catch(() => {});
+}
+/* A password nobody knows, for an account that will set its own from the
+   invitation. Worked out once: hashing a fresh one each time cost a tenth of
+   a second per rep. */
+let unusableHash = null;
+const unusablePassword = () => unusableHash || (unusableHash = auth.hash(crypto.randomBytes(24).toString('hex')));
 /* "Dale Savage #0842" → "Dale Savage": the number is Zoho's, not part of their name */
 const splitName = n => String(n || '').replace(/\s*#\s*\d+\s*$/, '').trim() || 'Rep';
 
@@ -3974,14 +3992,11 @@ async function repEmails(fresh) {
   return list;
 }
 async function repEmailsFromZoho() {
-  const rings = (await zoho.coql(queries.repsOnRings())).map(fromZoho.ring);
-  const ids = [...new Set(rings.map(x => x.repZohoId).filter(Boolean))];
-  const names = new Map(rings.map(x => [x.repZohoId, x.repName]));
-  const emails = new Map();
-  for (const batch of chunk(ids, 50)) {
-    const cs = await zoho.coql(queries.contactsByIds(batch)).catch(() => []);
-    cs.map(fromZoho.member).forEach(c => { if (c.email) emails.set(c.id, c.email); });
-  }
+  // The same shared, saved list the Reps screen uses
+  const dir = await repsDirectory();
+  const ids = dir.map(d => d.contactId);
+  const names = new Map(dir.map(d => [d.contactId, d.name]));
+  const emails = new Map(dir.filter(d => d.email).map(d => [d.contactId, d.email]));
   // A rep's Rep Hub sign-in email wins over Zoho's, it is the one they read
   (await q.allUsers()).forEach(u => { if (u.zoho_owner_id && u.email && names.has(u.zoho_owner_id)) emails.set(u.zoho_owner_id, u.email); });
   return ids.map(id => ({ id, name: names.get(id) || 'Rep', email: emails.get(id) || '' }));

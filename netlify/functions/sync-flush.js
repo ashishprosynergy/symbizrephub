@@ -16,6 +16,9 @@ module.exports.handler = schedule('*/15 * * * *', async () => {
     await migrate();
     const out = await flushQueue({ limit: 300 });
     if (out.processed) console.log('[sync-flush]', JSON.stringify(out));
+    // Emails the background sender didn't get to (or that failed): try again
+    const mail = await require('../../src/reminders').flushOutbox({ budgetMs: 5000 }).catch(e => ({ error: e.message }));
+    if (mail.sent || mail.failed || mail.error) console.log('[sync-flush] outbox', JSON.stringify(mail));
     // The live copy of Zoho: records changed since, and keeping Zoho's notifications switched on
     const mirror = require('../../src/mirror');
     const m = await mirror.processQueue({ budgetMs: 7000 }).catch(e => ({ error: e.message }));
