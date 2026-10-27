@@ -29,7 +29,7 @@ module.exports = {
 
   /**
    * Google Drive, where the nightly backup is kept (a Symbiz Google account
-   * connects it from Settings → Backup). Needs an OAuth client from Google
+   * connects it from Access & security → Backup). Needs an OAuth client from Google
    * Cloud with the Drive API switched on; see BACKUP-DRIVE.md.
    */
   google: {

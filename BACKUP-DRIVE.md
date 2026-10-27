@@ -11,7 +11,7 @@ years, then one a month for good (about 220 files after five years). Settings
 
 Signed in to Google with the Symbiz account that should hold the backups:
 
-1. In Rep Hub: **Settings → Backup → Set it up (5 minutes)**. Press **Copy the script**.
+1. In Rep Hub: **Access & security → Backup → Set it up (5 minutes)**. Press **Copy the script**.
 2. Open https://script.google.com/home/projects/create (a new project).
 3. Delete what is in the editor and paste the script. Press **Save**, name it
    **Rep Hub backups**.
@@ -44,7 +44,7 @@ settings, or use the Google sign-in option below.
    `https://symbizrep.netlify.app/api/google/callback`.
 5. Netlify environment variables `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
    then redeploy.
-6. Rep Hub → Settings → Backup → **Or sign in with Google**.
+6. Rep Hub → Access & security → Backup → **Or sign in with Google**.
 
 ## Restoring
 

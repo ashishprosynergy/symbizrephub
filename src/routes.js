@@ -2785,7 +2785,7 @@ async function driveBackup() {
 }
 r.driveBackup = driveBackup;
 async function sendBackup({ scheduled = false } = {}) {
-  // Daily or weekly (Sundays, US Eastern), as chosen in Settings → Backup
+  // Daily or weekly (Sundays, US Eastern), as chosen in Access & security → Backup
   if (scheduled && (await setting('backup_frequency', 'weekly')) !== 'daily') {
     const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(new Date());
     if (wd !== 'Sun') return { skipped: 'not the day' };
@@ -2799,7 +2799,7 @@ async function sendBackup({ scheduled = false } = {}) {
     <p><strong>Kept in Rep Hub:</strong> ${count.time_entries || 0} hours entries · ${count.expenses || 0} expenses · ${count.pending_writes || 0} approval requests · ${count.summit_tasks || 0} summit tasks · ${count.ring_notes || 0} ring notes</p>
     <p><strong>Copy of Zoho CRM:</strong> ${zTotal ? Object.entries(zCount).map(([k, n]) => `${n} ${esc(k.replace(/_/g, ' '))}`).join(' · ') : 'not made yet'}</p>
     <p>Keep this email. The spreadsheets open in Excel. The .json.gz file holds everything, Zoho records included with every field, and is what Rep Hub (or another developer) can be rebuilt from.
-      Receipt pictures are too large for email; download them any time from Settings → Backup.</p></div>`;
+      Receipt pictures are too large for email; download them any time from Access & security → Backup.</p></div>`;
   const res = await reminders.sendEmail(to.join(','), `Rep Hub backup — ${day}`, html, { kind: 'backup', attachments: [
     { filename: `rephub-hours-${day}.csv`, content: csvOf(T.time_entries || [], ['id', 'rep_name', 'entry_date', 'hours', 'category', 'description', 'status', 'created_at', 'approved_at', 'approved_by']) },
     { filename: `rephub-expenses-${day}.csv`, content: csvOf(T.expenses || [], ['id', 'rep_name', 'entry_date', 'amount', 'category', 'vendor', 'description', 'status', 'has_receipt', 'created_at', 'approved_at', 'approved_by']) },
@@ -2865,7 +2865,7 @@ r.get('/admin/backup/google/start', ...backupGuard, wrap(async (req, res) => {
   res.json({ url: drive.authUrl(driveRedirect(req), state) });
 }));
 r.get('/google/callback', wrap(async (req, res) => {
-  const back = msg => res.redirect(302, `/?view=settings&drive=${encodeURIComponent(msg)}`);
+  const back = msg => res.redirect(302, `/?view=access&drive=${encodeURIComponent(msg)}`);
   let claims; try { claims = require('jsonwebtoken').verify(String(req.query.state || ''), cfg.jwtSecret); } catch { return back('expired'); }
   if (claims.purpose !== 'gdrive') return back('expired');
   if (req.query.error || !req.query.code) return back('cancelled');

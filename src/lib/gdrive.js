@@ -5,7 +5,7 @@
  *
  *  - Apps Script (no Google Cloud project, nothing to pay for): a short script
  *    in the Symbiz account receives each night's file and saves it. Rep Hub
- *    gives the script, with a secret key in it, from Settings → Backup.
+ *    gives the script, with a secret key in it, from Access & security → Backup.
  *  - Google sign-in (OAuth), when GOOGLE_CLIENT_ID/SECRET are set up.
  *
  * Kept for years without piling up: every file for 90 days, one a week for
@@ -149,7 +149,7 @@ async function token() {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ refresh_token: s.refresh, client_id: cfg.google.clientId, client_secret: cfg.google.clientSecret, grant_type: 'refresh_token' }) });
   const body = await res.json().catch(() => ({}));
-  if (!body.access_token) throw new Error(`Google Drive sign-in failed${body.error ? ': ' + body.error : ''}. Connect it again in Settings → Backup.`);
+  if (!body.access_token) throw new Error(`Google Drive sign-in failed${body.error ? ': ' + body.error : ''}. Connect it again in Access & security → Backup.`);
   access = { token: body.access_token, until: Date.now() + (body.expires_in || 3600) * 1000 };
   return access.token;
 }

@@ -186,7 +186,7 @@ async function billFor(x, { payee = 'rep', fallbackAccount = '', accountMap = {}
     || (fallbackAccount ? await accountId(fallbackAccount) : null);
   if (!acct) {
     throw new Error(`No Zoho Books account for "${x.category}"${mapped ? ` (looked for "${mapped}")` : ''}. ` +
-      'Pick one in Rep Hub Settings → Zoho Books.');
+      'Pick one in Rep Hub Access & security → Zoho Books.');
   }
 
   const day = d => (d instanceof Date ? d.toISOString() : String(d || '')).slice(0, 10);
@@ -266,10 +266,10 @@ async function hoursBillFor(g, { rate, accountMap = {}, approvedBy = '' }) {
   const already = (existing.bills || []).find(b => b.bill_number === number);
   if (already) return { billId: already.bill_id };
   const name = repName(g.rep);
-  if (!(rate > 0)) throw new Error(`No hourly rate set for ${name || 'this rep'}. Set it in Settings → Zoho Books → Hourly rates, then press Make bills now.`);
+  if (!(rate > 0)) throw new Error(`No hourly rate set for ${name || 'this rep'}. Set it in Access & security → Zoho Books → Hourly rates, then press Make bills now.`);
   const wanted = accountMap.Hours || DEFAULT_HOURS_ACCOUNT;
   const acct = (await accountId(wanted)) || (await accountId(DEFAULT_HOURS_ACCOUNT));
-  if (!acct) throw new Error(`No Zoho Books account "${wanted}" for hours. Pick one in Settings → Zoho Books.`);
+  if (!acct) throw new Error(`No Zoho Books account "${wanted}" for hours. Pick one in Access & security → Zoho Books.`);
   const hours = g.rows.reduce((s, r) => s + Number(r.hours), 0);
   const nice = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
   const last = g.rows.map(r => day10(r.entry_date)).sort().pop();

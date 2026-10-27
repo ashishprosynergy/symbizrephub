@@ -1081,6 +1081,16 @@
   details.fold > summary::-webkit-details-marker{display:none;}
   details.fold > summary::after{content:' ▾';color:var(--ink-muted);font-size:12px;}
   details.fold[open] > summary::after{content:' ▴';}
+  /* Access & security: one row per area, opening its own page */
+  .acc-menu{padding:4px 0;}
+  .acc-row{display:flex;align-items:center;gap:12px;width:100%;padding:13px 15px;border:0;border-bottom:1px solid var(--line-soft);
+    background:none;text-align:left;cursor:pointer;font:inherit;color:inherit;}
+  .acc-row:last-child{border-bottom:0;}
+  .acc-row:hover{background:var(--surface-2);}
+  .acc-ic{flex:0 0 34px;height:34px;border-radius:9px;background:var(--primary-soft);color:var(--primary);display:inline-flex;align-items:center;justify-content:center;}
+  .acc-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+  .acc-t{font-weight:600;font-size:14.5px;}
+  .acc-s{font-size:12.8px;color:var(--ink-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .signin-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
   .signin-url{display:inline-block;margin-top:4px;font-weight:600;color:var(--primary);word-break:break-all;}
   .rate-in{display:inline-flex;align-items:center;gap:4px;color:var(--ink-muted);font-size:14px;}
@@ -1906,7 +1916,8 @@ const VIEW_CAP = { ar:'members', events:'calendar', manager:'manager', approvals
 function canView(v){
   if(!isOffice()) return true;
   if(v === 'settings') return can('settings') || can('books');
-  if(v === 'access') return API.live && (isOwner() || isAdmin());
+  // Office staff with accounting settings reach them here too (moved from Settings)
+  if(v === 'access') return API.live && (isOwner() || isAdmin() || can('books'));
   return !VIEW_CAP[v] || can(VIEW_CAP[v]);
 }
 // The owner's password re-typed, for Access & security. Kept for this browser
@@ -3228,7 +3239,7 @@ async function approveBatchInApp(id){
       <p class="lead">${out.time} time entr${out.time === 1 ? 'y' : 'ies'} and ${out.expenses} expense${out.expenses === 1 ? '' : 's'} emailed to ${esc(out.to)}.</p>
       ${out.books && can('books') ? booksResult(out.books) || `<div class="callout ${out.books.failed || out.books.error ? 'rust' : 'ok'}"><strong>Zoho Books</strong>
         ${out.books.error ? esc(out.books.error) : `${out.books.made} bill${out.books.made === 1 ? '' : 's'} made${out.books.left ? `; ${out.books.left} more within 15 minutes` : ''}.
-        ${out.books.failed ? `${out.books.failed} could not be made — see Settings → Zoho Books.` : ''}`}</div>` : ''}
+        ${out.books.failed ? `${out.books.failed} could not be made — see Access & security → Zoho Books.` : ''}`}</div>` : ''}
       <div class="m-actions"><button class="btn primary" onclick="closeModal();render()">Done</button></div>`);
   }catch(e){ err.style.display='block'; err.textContent = e.message; btn.disabled = false; btn.textContent = 'Approve and send to accounting'; }
 }
@@ -4441,26 +4452,9 @@ function vSettings(){
                  onchange="setLink('${r.id}', this.value)"></div>`).join('')}
     </div>` : ''}
 
-    ${can('books') ? `
-    <h3 class="sub-h">Accounting</h3>
-    <div class="card">
-      <div class="two">
-        <div class="field"><label>Send hours and expenses to</label>
-          <input value="${esc(S.settings.accountingEmail || '')}" onchange="setSetting('accountingEmail', this.value)"></div>
-        <div class="field"><label>Send automatically on day</label>
-          <select onchange="setSetting('accountingDay', this.value)">
-            ${['1','15','Last','Off'].map(d => `<option value="${d}" ${String(S.settings.accountingDay || '1') === d ? 'selected' : ''}>${d === 'Off' ? 'Off — manual only' : d === 'Last' ? 'Last day of month' : d + (d === '1' ? 'st' : 'th') + ' of the month'}</option>`).join('')}
-          </select></div>
-      </div>
-      <div class="row-sub">On that day everything approved is put in front of the admins on the Approvals screen.
-        Nothing reaches accounting, or Zoho Books, until an admin gives the final approval there. Reps still see everything they submitted.</div>
-    </div>
-
-    ${API.live ? `<h3 class="sub-h">Zoho Books</h3>
-    <div class="card" id="booksCard">${booksCard()}</div>` : ''}` : ''}
-
-    ${API.live && (isOwner() || isAdmin()) ? `<h3 class="sub-h">Backup</h3>
-    <div class="card" id="backupCard">${backupCard()}</div>` : ''}
+    ${API.live && canView('access') && (can('books') || isOwner() || isAdmin()) ? `<div class="callout info" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px">
+      <span><strong style="display:inline">Accounting, Zoho Books and Backup</strong> are now under Access &amp; security.</span>
+      <button class="btn sm" onclick="setView('access')">Open them</button></div>` : ''}
 
     <h3 class="sub-h">Zoho CRM connection</h3>
     <div class="card">
@@ -4619,10 +4613,12 @@ function vAccess(){
           ${passwordField('Your password','password',{autocomplete:'current-password'})}
           <button class="btn primary" type="submit">Make me the owner</button></form></div>`
       + devicesCard();
-    return head + `<div class="callout info"><strong>${accessStatus.claimed ? esc(accessStatus.ownerName) + ' is the owner' : 'No owner yet'}</strong>
-        ${accessStatus.claimed ? 'Only the owner can change what each role can do. Ask them if you need access to something.' :
-          'A director needs to claim ownership here.'}</div>
-      ${myAccessSummary()}${devicesCard()}`;
+    const sec = ui.accSec, item = ACCESS_SECTIONS().find(s => s.key === sec);
+    if(item) return `<button class="back" onclick="ui.accSec=null;renderContent()">← Access &amp; security</button>
+      <div class="section-head"><div><h2>${esc(item.title)}</h2></div></div>${accessSectionBody(sec)}`;
+    return head + `<div class="row-sub" style="margin:-4px 0 12px">${accessStatus.claimed ? esc(accessStatus.ownerName) + ' is the owner and decides what each role can do.' :
+          'No owner yet: a director needs to claim ownership here.'}</div>
+      ${accessMenu()}`;
   }
 
   if(!elevated()) return head + `<div class="card access-lock">
@@ -4646,10 +4642,15 @@ function vAccess(){
   const roleName = { admin: 'Directors', staff: 'Office staff' };
   const sw = (on, js, label) => `<label class="switch" title="${esc(label)}"><input type="checkbox" ${on?'checked':''} onchange="${js}"><span></span></label>`;
   const left = Math.max(0, Math.round((elevation.until - Date.now()) / 60000));
-  return head + `
-    <div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <span><strong style="display:inline">You're the owner.</strong> You can do everything. Unlocked for about ${left} more minute${left===1?'':'s'}.</span></div>
-
+  const sec = ui.accSec;
+  if(!sec || !ACCESS_SECTIONS().some(s => s.key === sec)) return head + `
+    <div class="row-sub" style="margin:-4px 0 12px">You're the owner and can do everything. Unlocked for about ${left} more minute${left===1?'':'s'}.</div>
+    ${accessMenu()}`;
+  const title = (ACCESS_SECTIONS().find(s => s.key === sec) || {}).title || '';
+  const back = `<button class="back" onclick="ui.accSec=null;renderContent()">← Access &amp; security</button>
+    <div class="section-head"><div><h2>${esc(title)}</h2></div></div>`;
+  if(sec !== 'perms' && sec !== 'signin' && sec !== 'people') return back + accessSectionBody(sec);
+  return back + (sec === 'perms' ? `
     ${[['screens','Screens they can open','Switch a screen off and it disappears from their menu.'],
        ['sensitive','Sensitive areas','Money, accounts and settings. Off unless you switch them on.']].map(([g, title, sub]) => {
       const rows = Object.entries(a.caps).filter(([, c]) => (c.group || 'sensitive') === g);
@@ -4670,9 +4671,9 @@ function vAccess(){
         : `<div class="perm-row perm-fixed"><div><div class="perm-t">Access &amp; security</div>
           <div class="perm-d">This screen. Yours alone.</div></div>
           <span class="tag later">Owner only</span><span class="tag later">Owner only</span></div>`}
-      </div>`; }).join('')}
+      </div>`; }).join('')}` : '') + (sec === 'signin' ? `
 
-    <h3 class="sub-h">"I'm not a robot" check on sign-in</h3>
+    <h3 class="sub-h" style="margin-top:4px">"I'm not a robot" check on sign-in</h3>
     <div class="card">
       ${a.captcha && a.captcha.siteKey ? `<div class="callout ok" style="margin:0 0 10px"><strong>On</strong>
           Google's "I'm not a robot" box shows on sign in, create account and forgotten password.</div>`
@@ -4705,9 +4706,7 @@ function vAccess(){
         People can tick "Don't ask again on this device" for 30 days. It is always on for you.</div>
       ${[['admin','Directors'],['staff','Office staff'],['rep','Reps']].map(([k,l]) => `<div class="kv" style="align-items:center">
         <span class="k">${l}</span>${sw(a.twoStep[k], `setTwoStep('${k}',this.checked)`, '2-step for ' + l)}</div>`).join('')}
-    </div>
-
-    <h3 class="sub-h">People with office access</h3>
+    </div>` : '') + (sec === 'people' ? `
     <div class="card" style="padding:4px 15px">
       ${a.people.map(p => `<div class="row" style="align-items:center">
         <div style="display:flex;gap:10px;align-items:center;min-width:0;flex:1">
@@ -4723,8 +4722,57 @@ function vAccess(){
             ${p.role==='admin' ? `<button class="btn sm ghost" onclick="transferOwner('${p.id}','${esc(p.name).replace(/'/g,'&#39;')}')">Make owner</button>` : ''}`}
         </div></div>`).join('')}
     </div>
-    <div class="row-sub" style="margin:-4px 0 10px">To add someone, use Reps → Add an account. Only you can make someone a director.</div>
-    ${devicesCard()}`;
+    <div class="row-sub" style="margin:-4px 0 10px">To add someone, use Reps → Add an account. Only you can make someone a director.</div>` : '');
+}
+
+/* ── Access & security as a short menu: each row opens its own page ──
+   Accounting, Zoho Books and Backup live here too (moved from Settings). */
+function ACCESS_SECTIONS(){
+  const owner = isOwner(), a = accessData || {}, s = S.settings || {};
+  const on = x => x ? 'on' : 'off';
+  const ts = a.twoStep || {};
+  return [
+    owner && { key:'perms', icon:'key', title:'Who can do what', sub:'Screens and sensitive areas for directors and office staff' },
+    owner && { key:'signin', icon:'check', title:'Sign-in security', sub:`"I'm not a robot" ${on(a.captcha && a.captcha.siteKey)} · 2-step for ${['admin','staff','rep'].filter(k => ts[k]).map(k => ({admin:'directors',staff:'office',rep:'reps'})[k]).join(', ') || 'nobody'}` },
+    owner && { key:'people', icon:'users', title:'People with office access', sub:`${(a.people || []).length} ${(a.people || []).length === 1 ? 'person' : 'people'} · directors and office staff` },
+    can('books') && { key:'accounting', icon:'calendar', title:'Accounting', sub:`To ${s.accountingEmail || 'not set'} · ${String(s.accountingDay || '1') === 'Off' ? 'manual only' : 'automatically on day ' + (s.accountingDay || '1')}` },
+    can('books') && { key:'books', icon:'folder', title:'Zoho Books', sub: booksInfo ? (booksInfo.connected ? `Connected · bills to the rep, hours weekly${booksInfo.failed && booksInfo.failed.length ? ` · ${booksInfo.failed.length} need attention` : ''}` : 'Not connected') : 'Bills, hourly rates and accounts' },
+    (owner || isAdmin()) && { key:'backup', icon:'check', title:'Backup', sub: backupStatus && !backupStatus.error
+      ? `${backupStatus.drive && backupStatus.drive.connected ? 'Google Drive nightly' : 'Google Drive not set up'} · email ${backupStatus.frequency === 'daily' ? 'daily' : 'weekly'}${backupStatus.mirror && backupStatus.mirror.live && backupStatus.mirror.live.connected ? ' · live copy on' : ''}`
+      : 'Copy of Zoho, Google Drive, email and downloads' },
+    !owner && { key:'mine', icon:'user', title:'What your account can do', sub:'The screens and areas open to you' },
+    { key:'devices', icon:'pin', title:'Your trusted devices', sub: Array.isArray(myDevices) ? `${myDevices.length} device${myDevices.length===1?'':'s'} skip the emailed code` : 'Devices that skip the emailed code' },
+  ].filter(Boolean);
+}
+function accessMenu(){
+  // Status lines need a few things fetched once
+  if(can('books') && !booksInfo) loadBooksStatus();
+  if((isOwner() || isAdmin()) && !backupStatus){ API.call('/admin/backup/status').then(v => { backupStatus = v; if(ui.view === 'access') renderContent(); }).catch(() => {}); }
+  return `<div class="card acc-menu">${ACCESS_SECTIONS().map(x => `<button class="acc-row" onclick="ui.accSec='${x.key}';renderContent();window.scrollTo(0,0)">
+      <span class="acc-ic">${icon(x.icon, 18)}</span>
+      <span class="acc-main"><span class="acc-t">${esc(x.title)}</span><span class="acc-s">${esc(x.sub)}</span></span>
+      <span class="tr-go">›</span></button>`).join('')}</div>`;
+}
+/* The sections anyone with access can open (no owner password needed) */
+function accessSectionBody(sec){
+  const s = S.settings;
+  if(sec === 'accounting') return `<div class="card">
+      <div class="two">
+        <div class="field"><label>Send hours and expenses to</label>
+          <input value="${esc(s.accountingEmail || '')}" onchange="setSetting('accountingEmail', this.value)"></div>
+        <div class="field"><label>Send automatically on day</label>
+          <select onchange="setSetting('accountingDay', this.value)">
+            ${['1','15','Last','Off'].map(d => `<option value="${d}" ${String(s.accountingDay || '1') === d ? 'selected' : ''}>${d === 'Off' ? 'Off — manual only' : d === 'Last' ? 'Last day of month' : d + (d === '1' ? 'st' : 'th') + ' of the month'}</option>`).join('')}
+          </select></div>
+      </div>
+      <div class="row-sub">On that day everything approved is put in front of the admins on the Approvals screen.
+        Nothing reaches accounting, or Zoho Books, until an admin gives the final approval there. Reps still see everything they submitted.</div>
+    </div>`;
+  if(sec === 'books') return `<div class="card" id="booksCard">${booksCard()}</div>`;
+  if(sec === 'backup') return `<div class="card" id="backupCard">${backupCard()}</div>`;
+  if(sec === 'mine') return myAccessSummary().replace(/<h3 class="sub-h">[^<]*<\/h3>/, '');
+  if(sec === 'devices') return devicesCard().replace(/<h3 class="sub-h">[^<]*<\/h3>/, '');
+  return '';
 }
 
 function myAccessSummary(){
@@ -4840,7 +4888,7 @@ async function forgetDevice(id){
 function booksResult(b){
   if(!b || !b.background) return '';
   return `<div class="callout ok"><strong>Zoho Books</strong>${b.queued} bill${b.queued===1?' is':'s are'} being made now, with
-    receipts attached. They appear in Zoho Books within a minute or two; anything that fails shows under Settings → Zoho Books.</div>`;
+    receipts attached. They appear in Zoho Books within a minute or two; anything that fails shows under Access & security → Zoho Books.</div>`;
 }
 
 /* Vendor names from Zoho Books, suggested in the expense form. Fetched once
@@ -5086,7 +5134,7 @@ function vAR(){
   loadAR();
   if(!arData) return head + skeleton(5);
   if(arData.connected === false) return head + `<div class="callout info"><strong>Zoho Books isn't connected yet</strong>
-    The list comes from unpaid invoices in Zoho Books. ${can('books') ? 'Connect it in Settings → Zoho Books.' : 'Ask the office to connect it in Settings.'}</div>`;
+    The list comes from unpaid invoices in Zoho Books. ${can('books') ? 'Connect it in Access & security → Zoho Books.' : 'Ask the office to connect it in Settings.'}</div>`;
   if(arData.error) return head + `<div class="callout rust"><strong>Could not read Zoho Books</strong>${esc(arData.error)}</div>`;
   const list = arMembers();
   if(!list.length) return head + `<div class="empty">Nobody is more than 60 days behind. 🎉</div>`;
@@ -7645,7 +7693,7 @@ function goBack(fallback){
   scrollTopNext = true;          // returns to where that screen was scrolled
   closeSheet(); render();
 }
-function setView(v){ goingTo(); ui.trail = []; ui.view=v; ui.ringId=null; ui.memberId=null; ui.facId=null; ui.eventId=null; ui.q=''; ui.ringHealth=null; resetPaging(); closeSheet(); render(); }
+function setView(v){ goingTo(); ui.trail = []; ui.view=v; ui.accSec=null; ui.ringId=null; ui.memberId=null; ui.facId=null; ui.eventId=null; ui.q=''; ui.ringHealth=null; resetPaging(); closeSheet(); render(); }
 function openRing(id){ goingTo(); ui.ringId=id; ui.view='ringDetail'; closeSheet(); render(); }
 function openMember(id){ goingTo(); ui.memberId=id; ui.view='memberDetail'; closeSheet(); render(); }
 function openFac(id){ goingTo(); ui.facId=id; ui.view='facDetail'; closeSheet(); render(); }
@@ -9195,7 +9243,7 @@ function fillShell(){
     const p = new URLSearchParams(location.search), view = p.get('view'), summit = p.get('summit');
     // Back from connecting Google Drive: say how it went once the app is up
     const drive = p.get('drive');
-    if(drive){ setTimeout(() => toast(drive === 'connected' ? 'Google Drive connected. The first backup is being saved there now.'
+    if(drive){ try{ sessionStorage.setItem('rephub_accsec', 'backup'); }catch(e){} setTimeout(() => toast(drive === 'connected' ? 'Google Drive connected. The first backup is being saved there now.'
       : drive === 'cancelled' ? 'Google Drive was not connected' : drive === 'expired' ? 'That took too long. Press Connect Google Drive again.'
       : 'Google Drive could not be connected: ' + drive.replace(/^failed: /, '')), 1200); }
     if(!view && !summit) return;
@@ -9209,7 +9257,8 @@ function applyGoto(){
   try{ g = JSON.parse(sessionStorage.getItem('rephub_goto') || 'null'); sessionStorage.removeItem('rephub_goto'); }catch(e){}
   if(!g) return;
   if(g.summit && isOffice() && can('summits')) return openSummit(g.summit);
-  if(g.view && (VIEW_TITLE[g.view] || g.view === 'today' || g.view === 'dash') && canView(g.view)){ ui.view = g.view; ui.ringId = ui.memberId = ui.facId = ui.eventId = null; }
+  if(g.view && (VIEW_TITLE[g.view] || g.view === 'today' || g.view === 'dash') && canView(g.view)){ ui.view = g.view; ui.ringId = ui.memberId = ui.facId = ui.eventId = null;
+    try{ const sec = sessionStorage.getItem('rephub_accsec'); if(sec){ ui.accSec = sec; sessionStorage.removeItem('rephub_accsec'); } }catch(e){} }
 }
 
 /* Opening or refreshing the app: if someone was signed in on this device,
@@ -10239,10 +10288,10 @@ async function sendToAccounting() {
         <p class="lead">${out.time} time entr${out.time === 1 ? 'y' : 'ies'} and ${out.expenses} expense${out.expenses === 1 ? '' : 's'}
           emailed to ${esc(out.to || to)}, and marked as sent so nothing is claimed twice.</p>
         ${out.books && can('books') ? booksResult(out.books) || (out.books.error
-          ? `<div class="callout rust"><strong>Zoho Books bills not made yet</strong>${esc(out.books.error)} They will be retried; see Settings → Zoho Books.</div>`
+          ? `<div class="callout rust"><strong>Zoho Books bills not made yet</strong>${esc(out.books.error)} They will be retried; see Access & security → Zoho Books.</div>`
           : `<div class="callout ${out.books.failed ? 'rust' : 'ok'}"><strong>Zoho Books</strong>
               ${out.books.made} bill${out.books.made === 1 ? '' : 's'} made with receipts attached${out.books.left ? `; ${out.books.left} more within 15 minutes` : ''}.
-              ${out.books.failed ? `${out.books.failed} could not be made — see Settings → Zoho Books.` : ''}</div>`) : ''}
+              ${out.books.failed ? `${out.books.failed} could not be made — see Access & security → Zoho Books.` : ''}</div>`) : ''}
         <div class="m-actions"><button class="btn primary" onclick="closeModal();render()">Done</button></div>`);
     } catch (e) {
       const mailOff = /mail|smtp|not configured/i.test(e.message || '');
