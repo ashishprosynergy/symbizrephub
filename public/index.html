@@ -2565,10 +2565,10 @@ function vToday(){
       <div class="stat click" onclick="toWhoToContact()"><div class="n" style="color:var(--accent)">${soon.length}</div><div class="l">Due soon</div></div>
       ${API.live
         // Their own numbers: calls logged this month, and their members
-        ? `<div class="stat click" onclick="setView('progress')"><div class="n">${S.activities.filter(a => a.repId === ui.me && a.outcome && String(a.date).slice(0,7) === TODAY_S.slice(0,7)).length}</div><div class="l">Logged this month</div></div>
-           <div class="stat click" onclick="setView('people')"><div class="n">${activeMembers(ui.me).length}</div><div class="l">Your members</div></div>`
-        : `<div class="stat click" onclick="setView('requests')"><div class="n">${reqs}</div><div class="l">Open requests</div></div>
-           <div class="stat click" onclick="setView('unaffiliated')"><div class="n">${(S.membersNoRing||[]).filter(m=>m.status==='active').length}</div><div class="l">Members with no ring<br><span style="font-size:10px;opacity:.7">network-wide</span></div></div>`}
+        ? `<div class="stat click" onclick="drill('progress')"><div class="n">${S.activities.filter(a => a.repId === ui.me && a.outcome && String(a.date).slice(0,7) === TODAY_S.slice(0,7)).length}</div><div class="l">Logged this month</div></div>
+           <div class="stat click" onclick="drill('people')"><div class="n">${activeMembers(ui.me).length}</div><div class="l">Your members</div></div>`
+        : `<div class="stat click" onclick="drill('requests')"><div class="n">${reqs}</div><div class="l">Open requests</div></div>
+           <div class="stat click" onclick="drill('unaffiliated')"><div class="n">${(S.membersNoRing||[]).filter(m=>m.status==='active').length}</div><div class="l">Members with no ring<br><span style="font-size:10px;opacity:.7">network-wide</span></div></div>`}
     </div>
     ${(()=>{ const t=getTimer();
       return t?`<div class="callout ok" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
@@ -3030,18 +3030,18 @@ function vOfficeDash(){
   return `${announceBanner()}
     <div class="hello"><h2>${greeting()}</h2><div class="sub">${todayLong()} · where things stand across every rep and ring</div></div>
     <div class="stats mini">
-      <div class="stat click" onclick="setView('approvals')"><div class="n" style="color:var(--accent)">${pend}</div><div class="l">Awaiting approval</div></div>
-      <div class="stat click" onclick="setView('coverage')"><div class="n" style="color:var(--rust)">${od}</div><div class="l">Overdue contacts</div></div>
-      <div class="stat click" onclick="setView('members')"><div class="n">${act}</div><div class="l">Active members</div></div>
-      <div class="stat click" onclick="setView('allrings')"><div class="n">${rings.length}</div><div class="l">Active rings</div></div>
-      <div class="stat click" onclick="setView('members')" title="Members whose paid start date in Zoho falls this year">
+      <div class="stat click" onclick="drill('approvals')"><div class="n" style="color:var(--accent)">${pend}</div><div class="l">Awaiting approval</div></div>
+      <div class="stat click" onclick="drill('coverage')"><div class="n" style="color:var(--rust)">${od}</div><div class="l">Overdue contacts</div></div>
+      <div class="stat click" onclick="drill('members',()=>{ui.filter='active'})"><div class="n">${act}</div><div class="l">Active members</div></div>
+      <div class="stat click" onclick="drill('allrings')"><div class="n">${rings.length}</div><div class="l">Active rings</div></div>
+      <div class="stat click" onclick="drill('members',()=>{ui.filter='joined'})" title="Members whose paid start date in Zoho falls this year">
         <div class="n" style="color:var(--primary)">+${newM}</div><div class="l">Joined in ${yr}</div></div>
-      <div class="stat click" onclick="setView('insights')" title="Members marked Inactive in Zoho. Zoho does not record the date they left, so this is a running total, not a figure for this year.">
+      <div class="stat click" onclick="drill('members',()=>{ui.filter='discontinued'})" title="Members marked Inactive in Zoho. Zoho does not record the date they left, so this is a running total, not a figure for this year.">
         <div class="n" style="color:var(--rust)">${inactive}</div><div class="l">Inactive members</div></div>
       ${(() => { // Mel: members paying but in no group, beside Inactive
         const n = (S.membersNoRing || []).filter(m => m.status === 'active').length;
         const known = (S.membersNoRing || []).length || !loadingDetail;
-        return `<div class="stat click" onclick="setView('unaffiliated')" title="Active members who are not in any Growth Ring">
+        return `<div class="stat click" onclick="drill('unaffiliated')" title="Active members who are not in any Growth Ring">
           <div class="n" style="color:var(--accent)">${known ? n : '…'}</div><div class="l">Not in a Growth Ring</div></div>`; })()}
     </div>
     ${(() => {
@@ -3078,7 +3078,7 @@ function vOfficeDash(){
         const show = risky.slice(0,6).map(x=>esc(x.r.name)).join(', ');
         out += `<div class="callout rust"><strong>${risky.length} ring${risky.length===1?'':'s'} at risk</strong>
           ${show}${risky.length>6?` and ${risky.length-6} more`:''}
-          <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="setView('allrings');ui.ringHealth='risk';renderContent()">See the ${risky.length}</button></div></div>`;
+          <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="drill('allrings',()=>{ui.ringHealth='risk'})">See the ${risky.length}</button></div></div>`;
       } else if(rated.length){
         out += `<div class="callout ok"><strong>No rings at risk</strong>Every rated group is scoring above 50.</div>`;
       }
@@ -3125,7 +3125,7 @@ function vOfficeDash(){
         <h3 class="sub-h">Needs your attention</h3>
         ${(() => {
           const late = dueItems(null).filter(a=>days(a.nextDue)<-14);
-          const rows = [...S.rings.filter(r=>r.status==='pending').map(r=>`<div class="row tight clicky" onclick="setView('approvals')">
+          const rows = [...S.rings.filter(r=>r.status==='pending').map(r=>`<div class="row tight clicky" onclick="drill('approvals')">
               <div class="row-main"><div class="row-title">${esc(r.name)}</div><div class="row-sub">${esc(splitRepName(pname(r.repId)).name)} · submitted ${fmt(r.createdAt)}</div></div>
               <span class="tag soon">approve</span></div>`),
             ...late.map(a=>`<div class="row tight">
@@ -3430,8 +3430,10 @@ function exportCoverage(){ ui.report='rep-activity'; exportReport(); }
 function vMembersAll(){
   const q=ui.q.toLowerCase();
   let list=S.members.filter(m=>!q||m.name.toLowerCase().includes(q)||(m.business||'').toLowerCase().includes(q));
-  if(!['all','active','renewing','discontinued'].includes(ui.filter)) ui.filter='all';
+  if(!['all','active','joined','renewing','discontinued'].includes(ui.filter)) ui.filter='all';
+  const yrStart = TODAY_S.slice(0,4) + '-01-01';
   if(ui.filter==='active') list=list.filter(m=>m.status==='active');
+  if(ui.filter==='joined') list=list.filter(m=>m.joined && m.joined >= yrStart);
   if(ui.filter==='discontinued') list=list.filter(m=>m.status==='discontinued');
   if(ui.filter==='renewing') list=list.filter(m=>m.renews&&days(m.renews)<=90&&days(m.renews)>=0&&m.status==='active');
 
@@ -3443,8 +3445,8 @@ function vMembersAll(){
     <button class="btn" onclick="ui.report='member-directory';exportReport()">Export CSV</button></div>
     <input class="srch" id="memberSearch" placeholder="Search members" value="${esc(ui.q)}"
            oninput="onSearchInput(this.value)">
-    <div class="chips">${['all','active','renewing','discontinued'].map(f=>
-      `<button class="chip ${ui.filter===f?'on':''}" onclick="ui.filter='${f}';resetPaging();renderContent()">${f[0].toUpperCase()+f.slice(1)}</button>`).join('')}</div>
+    <div class="chips">${['all','active','joined','renewing','discontinued'].map(f=>
+      `<button class="chip ${ui.filter===f?'on':''}" onclick="ui.filter='${f}';resetPaging();renderContent()">${f==='joined' ? 'Joined in ' + TODAY_S.slice(0,4) : f==='discontinued' ? 'Inactive' : f[0].toUpperCase()+f.slice(1)}</button>`).join('')}</div>
 
     <!-- Facilitators folded away (open while searching), so the members come first -->
     <details class="fold" ${q ? 'open' : ''}><summary class="sub-h" style="display:block;margin:18px 0 6px;font-family:var(--serif);font-size:15px">Facilitators · ${facs.length}</summary>
@@ -4220,7 +4222,7 @@ function vRepAccount(){
             .map(([v, l]) => `<div class="num"><span class="num-n">${v}</span><span class="num-l">${l}</span></div>`).join('')}</div>
         ${m && m.goal ? goalBars({ calls: m.callsQuarter, visits: m.visitsQuarter, newMembers: newMembersFor(zid) }, m.goal) : ''}
         ${m && m.nextCheckin ? `<div class="row-sub" style="margin-top:8px">Next check-in ${m.nextCheckin <= TODAY_S ? '<strong style="color:var(--rust)">due</strong>' : fmt(m.nextCheckin)}</div>` : ''}
-        ${can('manager') ? `<div class="btnrow" style="margin-top:10px"><button class="btn sm" onclick="setView('manager')">Open in Rep manager</button></div>` : ''}</div>` : ''}
+        ${can('manager') ? `<div class="btnrow" style="margin-top:10px"><button class="btn sm" onclick="drill('manager')">Open in Rep manager</button></div>` : ''}</div>` : ''}
     </div>
 
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
@@ -4452,9 +4454,6 @@ function vSettings(){
                  onchange="setLink('${r.id}', this.value)"></div>`).join('')}
     </div>` : ''}
 
-    ${API.live && canView('access') && (can('books') || isOwner() || isAdmin()) ? `<div class="callout info" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px">
-      <span><strong style="display:inline">Accounting, Zoho Books and Backup</strong> are now under Access &amp; security.</span>
-      <button class="btn sm" onclick="setView('access')">Open them</button></div>` : ''}
 
     <h3 class="sub-h">Zoho CRM connection</h3>
     <div class="card">
@@ -5119,7 +5118,7 @@ function arCard(){
   loadAR();
   if(!arData || arData.error || arData.connected === false || !Array.isArray(arData.members) || !arMembers().length) return '';
   const list = arMembers(), total = list.reduce((s, a) => s + a.balance, 0);
-  return `<div class="card ar-card clicky" onclick="setView('ar')">
+  return `<div class="card ar-card clicky" onclick="drill('ar')">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
       <div><div class="trend-t" style="margin:0">${isRep() ? 'Your members' : 'Members'} over 60 days in A/R · ${list.length}</div>
         <div class="row-sub">${money(total)} unpaid${isRep() ? ' — a call to each to see where their membership stands' : ' across ' + new Set(list.map(a => a.repId || '')).size + ' rep' + (new Set(list.map(a => a.repId || '')).size === 1 ? '' : 's')}</div></div>
@@ -5490,7 +5489,7 @@ function vManager(){
           : `<strong style="color:var(--primary)">Nobody is behind</strong> · `}${totalLogged} call${totalLogged===1?'':'s'} logged in 30 days${unvisited?` · <a href="#" class="inline-link" onclick="event.preventDefault();openNeverVisited()">${unvisited} ring${unvisited===1?'':'s'} never visited</a>`:''}</div>
         <div class="btnrow" style="margin-top:12px">
           <button class="btn sm" onclick="ui.report='rep-coverage';exportReport()">Export CSV</button>
-          <button class="btn sm" onclick="setView('coverage')">Coverage map</button>
+          <button class="btn sm" onclick="drill('coverage')">Coverage map</button>
           <button class="btn sm" onclick="openSignInQR()">Sign-in link for reps</button>
           ${myRepSelf() ? `<button class="btn sm primary" onclick="openMyRepView()">My rep view</button>` : ''}</div>
       </div>
@@ -5506,8 +5505,8 @@ function vManager(){
 
     <div class="kpis">
       ${kpi(cards.length,'reps','user','neutral',"ui.mgrFilter='all';renderContent()")}
-      ${kpi(totalRings,'rings','ring','neutral',"setView('allrings')")}
-      ${kpi(totalMembers,'members','users','neutral',"setView('members')")}
+      ${kpi(totalRings,'rings','ring','neutral',"drill('allrings')")}
+      ${kpi(totalMembers,'members','users','neutral',"drill('members')")}
       ${kpi(totalOverdue,'calls overdue','phone',totalOverdue?'rust':'neutral',"ui.mgrFilter='behind';renderContent()")}
       ${kpi(totalLogged,'logged in 30d','check',totalLogged?'green':'rust',"ui.mgrSort='active';renderContent()")}
       ${kpi(unvisited,'never visited','pin',unvisited?'amber':'neutral','openNeverVisited()')}
@@ -5527,7 +5526,7 @@ function vManager(){
 
     ${heavy.length?`<div class="callout rust"><strong>${heavy.length===1?'One rep is':`${heavy.length} reps are`} carrying well above average</strong>
       ${heavy.map(c=>`${esc(c.name)} has ${c.rings} against an average of ${Math.round(avg)}`).join('; ')}.
-      <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="setView('coverage')">Look at coverage</button>
+      <div class="btnrow" style="margin-top:9px"><button class="btn sm" onclick="drill('coverage')">Look at coverage</button>
         ${API.live ? heavy.slice(0,3).map(c => `<button class="btn sm" onclick="openMoveRings('${esc(c.id)}')">Move some of ${esc(splitRepName(c.name).name.split(' ')[0])}'s rings</button>`).join('') : ''}</div></div>`:''}
 
     <div class="mgr-tools">
@@ -5595,7 +5594,7 @@ function vManager(){
             <button class="btn sm" onclick="openGoals('${esc(c.id)}')">Goals</button>
             <button class="btn sm" onclick="openRepNotes('${esc(c.id)}')">Check-ins</button>
             <button class="btn sm" onclick="openMoveRings('${esc(c.id)}')">Move rings</button>` : ''}
-            ${c.noRhythm?`<button class="btn sm" onclick="setView('allrings')">${c.noRhythm} rings with no rhythm</button>`:''}</div></details>
+            ${c.noRhythm?`<button class="btn sm" onclick="drill('allrings')">${c.noRhythm} rings with no rhythm</button>`:''}</div></details>
         </div>
       </div>`;
     }).join('')}
@@ -6218,7 +6217,7 @@ function summitProgressCard(){
   if(!ahead.length) return '';
   return `<div class="card summit-prog"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
       <div class="trend-t" style="margin:0">Summit planning</div>
-      <button class="btn sm ghost" onclick="setView('summits')">All summits ›</button></div>
+      <button class="btn sm ghost" onclick="drill('summits')">All summits ›</button></div>
     ${ahead.map(s => { const pct = s.tasksTotal ? Math.round(s.tasksDone / s.tasksTotal * 100) : 0, d = days(s.date);
       const tone = s.tasksLate ? 'var(--rust)' : pct >= 80 ? 'var(--primary)' : 'var(--accent)';
       const nt = s.nextTask;
@@ -7693,7 +7692,21 @@ function goBack(fallback){
   scrollTopNext = true;          // returns to where that screen was scrolled
   closeSheet(); render();
 }
-function setView(v){ goingTo(); ui.trail = []; ui.view=v; ui.accSec=null; ui.ringId=null; ui.memberId=null; ui.facId=null; ui.eventId=null; ui.q=''; ui.ringHealth=null; resetPaging(); closeSheet(); render(); }
+/* Open a screen from a tile or link on another one, keeping the way back:
+   it shows "← Back to …" at the top. setView, from the menu, starts afresh. */
+function drill(v, setup){
+  goingTo(); ui.view = v; ui.ringId = null; ui.memberId = null; ui.facId = null; ui.eventId = null; ui.q = ''; ui.accSec = null;
+  resetPaging(); closeSheet();
+  if(typeof setup === 'function') setup();
+  ui.drilled = v; render();
+}
+function drillBackBar(){
+  if(!ui.drilled || ui.drilled !== ui.view || !(ui.trail || []).length) return '';
+  const from = ui.trail[ui.trail.length - 1];
+  const name = from.view === 'dash' ? 'Overview' : from.view === 'today' ? 'Today' : (VIEW_TITLE[from.view] || 'where you were');
+  return `<button class="back" onclick="goBack('${isRep() ? 'today' : 'dash'}')">← Back to ${esc(name)}</button>`;
+}
+function setView(v){ ui.drilled=null; goingTo(); ui.trail = []; ui.view=v; ui.accSec=null; ui.ringId=null; ui.memberId=null; ui.facId=null; ui.eventId=null; ui.q=''; ui.ringHealth=null; resetPaging(); closeSheet(); render(); }
 function openRing(id){ goingTo(); ui.ringId=id; ui.view='ringDetail'; closeSheet(); render(); }
 function openMember(id){ goingTo(); ui.memberId=id; ui.view='memberDetail'; closeSheet(); render(); }
 function openFac(id){ goingTo(); ui.facId=id; ui.view='facDetail'; closeSheet(); render(); }
@@ -9046,7 +9059,10 @@ function renderContentSafe(el){
   }
   // Was showing the grey "loading" rows: when the real screen replaces them, ease it in
   const wasLoading = prev === ui.view && !!el.querySelector('.skel');
-  try { renderContentInner(el); renderRetry = null; animateCounts(el);
+  try { renderContentInner(el); renderRetry = null;
+    // Opened from a tile on another screen: the way back, at the top
+    const backBar = drillBackBar(); if(backBar) el.insertAdjacentHTML('afterbegin', backBar);
+    animateCounts(el);
     if(wasLoading && !el.querySelector('.skel')){ el.classList.remove('v-enter'); void el.offsetWidth; el.classList.add('v-enter'); } }
   catch(e){
     console.error('[render]', e);
