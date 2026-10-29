@@ -2784,7 +2784,7 @@ function vMemberDetail(){
     ${m.renews&&days(m.renews)<=45&&days(m.renews)>=0&&m.status==='active'?`<div class="callout"><strong>Renews in ${days(m.renews)} days</strong>Worth a conversation before the date.</div>`:''}
     <div style="margin-bottom:10px">${callButtons(m)}</div>
     <div class="card">
-      ${m.email?`<div class="kv"><span class="k">Email</span><a href="mailto:${esc(m.email)}">${esc(m.email)}</a></div>`:''}
+      ${m.email?`<div class="kv"><span class="k">Email</span><a target="_blank" rel="noopener" href="mailto:${esc(m.email)}">${esc(m.email)}</a></div>`:''}
       ${m.address?`<div class="kv"><span class="k">Address</span>
         <span><a href="https://maps.google.com/?q=${encodeURIComponent(m.address)}" target="_blank" rel="noopener">${esc(m.address)}</a>
         ${mapAllowed() ? ` · <a href="#" class="inline-link" onclick="event.preventDefault();showOnMap('${m.id}')">Show on member map</a>` : ''}</span></div>`:''}
@@ -2797,7 +2797,7 @@ function vMemberDetail(){
     </div>
     ${addressMap(m.address)}
     ${m.status==='active'&&mine?`<div class="btnrow" style="margin-bottom:8px;">
-      <a class="btn" href="mailto:${esc(m.email)}">Email</a>
+      <a class="btn" target="_blank" rel="noopener" href="mailto:${esc(m.email)}">Email</a>
       <button class="btn primary" onclick='openLog(${JSON.stringify({ringId:m.ringId,who:m.name,type:"Member Call",memberId:m.id})})'>Log a call</button>
       <button class="btn danger" onclick="openExit('${m.id}')">Exit interview</button></div>`:''}
     <h3 class="sub-h">Conversation history</h3>
@@ -2830,7 +2830,7 @@ function vFacDetail(){
     <div class="section-head"><div><h2>${esc(f.name)}</h2><div class="sub">Facilitator · ${esc(f.business)}</div></div></div>
     <div class="card">
       <div class="kv"><span class="k">Phone</span><a href="tel:${esc(f.phone)}">${esc(f.phone)}</a></div>
-      <div class="kv"><span class="k">Email</span><a href="mailto:${esc(f.email)}">${esc(f.email)}</a></div>
+      <div class="kv"><span class="k">Email</span><a target="_blank" rel="noopener" href="mailto:${esc(f.email)}">${esc(f.email)}</a></div>
       <div class="kv"><span class="k">Facilitating since</span><span>${fmt(f.since)}</span></div>
       <div class="kv"><span class="k">Next call due</span><span>${due?fmt(due.nextDue):'not scheduled'}</span></div>
     </div>
@@ -4193,7 +4193,7 @@ function vRepAccount(){
 
     <div class="rep-grid">
       <div class="card"><div class="trend-t">Rep Hub account</div>
-        ${kv('Email', r.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : '<span style="color:var(--rust)">none in Zoho</span>')}
+        ${kv('Email', r.email ? `<a target="_blank" rel="noopener" href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : '<span style="color:var(--rust)">none in Zoho</span>')}
         ${r.phone ? kv('Phone', `<a href="${telHref(r.phone)}">${esc(r.phone)}</a>`) : ''}
         ${r.business ? kv('Business', esc(r.business)) : ''}
         ${kv('Status', r.status === 'active' ? 'Signed in, last ' + fmt(String(acct.last_login_at).slice(0, 10))
@@ -6994,7 +6994,7 @@ function pendingDetails(p){
     ${row('Name', esc(name || d.lastName || ''))}
     ${row('Member?', d.contactId ? '<span class="tag ok">Yes — linked to their Zoho contact</span>' : d.registrantType ? esc(d.registrantType === 'Member' ? 'Says yes (not linked)' : 'No — new contact') : '')}
     ${row('Business', esc(d.business || d.company || ''))}
-    ${row('Email', d.email ? `<a href="mailto:${esc(d.email)}">${esc(d.email)}</a>` : '')}
+    ${row('Email', d.email ? `<a target="_blank" rel="noopener" href="mailto:${esc(d.email)}">${esc(d.email)}</a>` : '')}
     ${row('Phone', d.phone ? `<a href="${telHref(d.phone)}">${esc(d.phone)}</a>` : '')}
     ${row('Town', esc([d.city, d.state].filter(Boolean).join(', ')))}
     ${d.bringingGuest ? row('Guest', esc([[d.guestFirstName, d.guestLastName].filter(Boolean).join(' '), d.guestType, d.guestBusiness, d.guestPhone, d.guestEmail].filter(Boolean).join(' · ')) || 'Yes, details not given') : ''}
@@ -9745,7 +9745,7 @@ function vEventDetail() {
         </div>
         <div class="att-actions">
           ${a.phone?`<a class="btn sm" href="tel:${esc(String(a.phone).replace(/[^0-9+]/g,''))}">Call</a>`:''}
-          ${a.email?`<a class="btn sm" href="mailto:${esc(a.email)}">Email</a>`:''}
+          ${a.email?`<a class="btn sm" target="_blank" rel="noopener" href="mailto:${esc(a.email)}">Email</a>`:''}
           ${!a.guestOf && API.live?`<button class="btn sm" onclick="openCancelRegistration('${a.key}','${esc(a.name)}','${esc(e.title)}')">Cancel</button>`:''}
         </div></div>`;
 
