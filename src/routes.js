@@ -819,7 +819,7 @@ r.post('/auth/elevate', auth.authRequired, wrap(async (req, res) => {
 
 r.get('/auth/me', auth.authRequired, wrap(async (req, res) => {
   const pending = (await q.pendingFor(req.user.id))?.c || 0;
-  res.json({ user: req.user, pendingSync: pending });
+  res.json({ user: req.user, pendingSync: pending, prefs: { emailLinks: await setting('emailLinks', 'app') } });
 }));
 
 r.post('/auth/password', auth.authRequired, wrap(async (req, res) => {
@@ -1014,8 +1014,32 @@ r.post('/activities', auth.authRequired, writesAllowed, wrap(async (req, res) =>
   const id = out[0]?.details?.id;
 
   await audit(req.user.id, 'activity.logged', { id, type: b.type, ringId: b.ringId, repZohoId }, req.ip);
+  if (/exit interview/i.test(b.type)) await notifyExitInterview(req, b, ringRec).catch(e => console.error('[exit] notify failed:', e.message));
   res.status(201).json({ id, nextDue });
 }));
+
+/** The addresses saved in a Settings list (registrationApprovers, exitInterviewNotify) */
+async function emailList(key) {
+  return String(await setting(key, '')).split(/[\s,;]+/).filter(x => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
+}
+
+/* An exit interview is saved in Zoho with the member's visits, but ending the
+ * membership is the office's job: tell the people named in Access & security
+ * (Exit interviews), with what was said, so it gets entered in Zoho. */
+async function notifyExitInterview(req, b, ringRec) {
+  const list = await emailList('exitInterviewNotify');
+  if (!list.length) return;
+  const c = b.memberId ? await zoho.getRecord(M.CONTACT, b.memberId).catch(() => null) : null;
+  const who = (c && (c.Full_Name || [c.First_Name, c.Last_Name].filter(Boolean).join(' '))) || 'A member';
+  const row = (k, v) => v ? `<tr><td style="padding:3px 12px 3px 0;color:#6B7468;vertical-align:top">${k}</td><td style="padding:3px 0">${esc(v)}</td></tr>` : '';
+  const html = `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:540px;color:#1E2A20">
+    <p style="font-size:15px"><strong>${esc(req.user.name || 'A rep')}</strong> recorded an exit interview with <strong>${esc(who)}</strong>.
+      Please end the membership in Zoho.</p>
+    <table style="font-size:14px;border-collapse:collapse">${row('Member', who)}${row('Growth Ring', ringRec && ringRec.name)}${row('Date', b.date)}${row('Rep', req.user.name)}${row('What was said', b.notes)}</table>
+    <p style="font-size:12.5px;color:#6B7468;margin-top:16px">The interview itself is already saved in Zoho with the member's visits.</p></div>`;
+  for (const to of list) await reminders.queueEmail(to, `Exit interview to enter in Zoho: ${who}`, html, { kind: 'exit', replyTo: req.user.email });
+  await sendQueuedMail(req);
+}
 
 /* ═══════════ MEMBERS ═══════════ */
 r.get('/members', auth.authRequired, wrap(async (req, res) => {
@@ -2111,7 +2135,7 @@ r.post('/public/events/:id/register', wrap(async (req, res) => {
  * (Access & security → Registrations). Queued, so the person registering
  * never waits on Gmail; one email per approver, with a link to Approvals. */
 async function notifyRegistrationApprovers(req, p, { by } = {}) {
-  const list = String(await setting('registrationApprovers', '')).split(/[\s,;]+/).filter(x => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
+  const list = await emailList('registrationApprovers');
   if (!list.length) return;
   const url = `${siteUrl(req)}/?view=approvals`;
   const line = (k, v) => v ? `<tr><td style="padding:3px 12px 3px 0;color:#6B7468">${k}</td><td style="padding:3px 0">${esc(v)}</td></tr>` : '';
@@ -3568,7 +3592,7 @@ const OFFICE_SETTINGS = {
   accountingEmail: 'accounting@symbiz.org', accountingDay: '1',
   booksAuto: 'on', booksPayee: 'rep', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
   supportName: 'Ashish Raj', supportPhone: '540-212-9403',
-  registrationApprovers: '',
+  registrationApprovers: '', exitInterviewNotify: '', emailLinks: 'app',
 };
 
 /** Who to ring for help — shown on the sign-in screen, so no sign-in needed. */
@@ -3599,7 +3623,8 @@ r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
     if (k === 'accountingEmail' && val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
       return res.status(400).json({ error: 'That accounting address does not look like an email' });
     }
-    if (k === 'registrationApprovers') {
+    if (k === 'emailLinks' && !['app', 'gmail'].includes(val)) continue;
+    if (k === 'registrationApprovers' || k === 'exitInterviewNotify') {
       const bad = val.split(/[\s,;]+/).filter(Boolean).find(x => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
       if (bad) return res.status(400).json({ error: `"${bad}" does not look like an email address` });
       val = val.split(/[\s,;]+/).filter(Boolean).map(x => x.toLowerCase()).join(', ');

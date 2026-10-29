@@ -372,6 +372,41 @@ describe('netlify function handler', () => {
     await db.q.setSetting('retryDays', '4');
   });
 
+  const J = r => JSON.parse(r.body);
+  test('an exit interview emails the people named in Settings, so the membership is ended in Zoho (Mel, Keturah)', async () => {
+    const cfg = require('../src/config'), reminders = require('../src/reminders');
+    const realSend = reminders.sendEmail, realMail = { ...cfg.mail }, sent = [];
+    cfg.mail.enabled = true; cfg.mail.host = 'smtp.test';
+    reminders.sendEmail = async (to, subject, html) => { sent.push({ to, subject, html }); return { ok: true }; };
+    try {
+      await db.query("DELETE FROM mail_outbox");
+      await db.q.setSetting('exitInterviewNotify', 'office@x.test');
+      const ring = J(await invoke('POST', '/rings', { token: repToken, body: { name: 'Exit Ring', facFreq: 'Quarterly', memFreq: 'Annual' } }));
+      await invoke('POST', '/activities', { token: repToken, body: { ringId: ring.id, type: 'Member Call', date: '2026-10-20', outcome: 'Connected' } });
+      assert.equal(sent.filter(s => /Exit interview/.test(s.subject)).length, 0, 'an ordinary call emails nobody');
+      const res = await invoke('POST', '/activities', { token: repToken,
+        body: { ringId: ring.id, type: 'Exit Interview', date: '2026-10-28', outcome: 'Connected', notes: 'Reason for leaving: Time. Would consider returning: Maybe' } });
+      assert.equal(res.statusCode, 201, res.body);
+      const exit = sent.filter(s => /Exit interview to enter in Zoho/.test(s.subject));
+      assert.deepEqual(exit.map(s => s.to), ['office@x.test']);
+      assert.match(exit[0].html, /Exit Ring/);
+      assert.match(exit[0].html, /Reason for leaving: Time/);
+    } finally {
+      reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
+      await db.q.setSetting('exitInterviewNotify', '');
+    }
+  });
+
+  test('Email buttons: everyone, reps too, learns whether to open Gmail', async () => {
+    assert.equal(J(await invoke('GET', '/auth/me', { token: repToken })).prefs.emailLinks, 'app');
+    assert.equal((await invoke('PUT', '/admin/settings', { token: repToken, body: { emailLinks: 'gmail' } })).statusCode, 403);
+    await invoke('PUT', '/admin/settings', { token: officeToken, body: { emailLinks: 'nonsense' } });
+    assert.equal(J(await invoke('GET', '/auth/me', { token: repToken })).prefs.emailLinks, 'app', 'only app or gmail');
+    await db.q.setSetting('emailLinks', 'gmail');
+    assert.equal(J(await invoke('GET', '/auth/me', { token: repToken })).prefs.emailLinks, 'gmail');
+    await db.q.setSetting('emailLinks', 'app');
+  });
+
   test('reports stay office-only', async () => {
     assert.equal((await invoke('GET', '/reports', { token: repToken })).statusCode, 403);
     assert.equal((await invoke('GET', '/reports', { token: officeToken })).statusCode, 200);
