@@ -5097,7 +5097,7 @@ function printQRPoster(title, link){
 }
 
 /* ══════════════ A/R OVER 60 DAYS (Mel) ══════════════
- * Members with an invoice more than 60 days past due, from Zoho Books. The
+ * Members with an invoice more than 60 days old (from its invoice date), from Zoho Books. The
  * rep calls to find out where the membership stands. Reps see their own. */
 var arData = null, arBusy = false;
 function loadAR(force){
@@ -5127,7 +5127,7 @@ function arCard(){
 }
 function vAR(){
   const head = `<div class="section-head"><div><h2>A/R over 60 days</h2>
-      <div class="sub">${isRep() ? 'Your members' : 'Members'} with an invoice more than 60 days past due in Zoho Books. ${isRep() ? 'Reach out to find out where their membership stands, then log the call.' : 'Each rep reaches out to find out where the membership stands.'}</div></div>
+      <div class="sub">${isRep() ? 'Your members' : 'Members'} with an unpaid invoice more than 60 days old (from the invoice date) in Zoho Books. ${isRep() ? 'Reach out to find out where their membership stands, then log the call.' : 'Each rep reaches out to find out where the membership stands.'}</div></div>
     ${arData && !arData.error ? `<button class="btn sm" onclick="loadAR(true)" ${arBusy ? 'disabled' : ''}>${arBusy ? 'Refreshing…' : 'Refresh'}</button>` : ''}</div>`;
   if(!API.live) return head + `<div class="empty">This needs the live server.</div>`;
   loadAR();
@@ -5138,17 +5138,17 @@ function vAR(){
   const list = arMembers();
   if(!list.length) return head + `<div class="empty">Nobody is more than 60 days behind. 🎉</div>`;
   const row = a => { const m = arMember(a), phone = m ? (m.phone || m.mobile) : '';
-    // Has anyone spoken to them since they went 60 days over? So the rep sees
+    // Has anyone spoken to them since the invoice turned 60 days old? So the rep sees
     // who is still to call, and the office sees who has been followed up.
     const lc = a.contactId ? lastContact(a.contactId) : null;
-    const since = a.invoices.length ? addDays(a.invoices[0].due, 60) : null;
+    const since = a.invoices.length ? addDays(a.invoices[0].date, 60) : null;
     const reached = lc && since && lc.date >= since;
     const contact = !a.contactId ? `<div class="row-sub" style="color:var(--ink-muted)">Not linked to a member record — the name in Zoho Books doesn't match a member in a ring.</div>`
       : reached ? `<div class="row-sub"><span class="tag ok">Contacted ${fmtShort(lc.date)}</span> ${esc(lc.outcome || '')}${lc.repId && !isRep() ? ' · ' + esc(splitRepName(pname(lc.repId)).name) : ''}</div>`
       : `<div class="row-sub"><span class="tag overdue">Not contacted yet</span>${lc ? ' last call ' + fmtShort(lc.date) + ', before it went overdue' : ''}</div>`;
     return `<div class="row ar-row"><div class="row-main">
         <div class="row-title">${esc(a.name)} ${a.days >= 120 ? `<span class="tag overdue">${a.days} days</span>` : `<span class="tag soon">${a.days} days</span>`}</div>
-        <div class="row-sub">${money(a.balance)} unpaid · ${a.invoices.length} invoice${a.invoices.length === 1 ? '' : 's'} (${a.invoices.map(i => esc(i.number) + ' due ' + fmtShort(i.due)).join(', ')})${a.rings.length ? ' · ring ' + esc(a.rings.join(', ')) : ' · not in a ring'}</div>
+        <div class="row-sub">${money(a.balance)} unpaid · ${a.invoices.length} invoice${a.invoices.length === 1 ? '' : 's'} (${a.invoices.map(i => esc(i.number) + ' dated ' + fmtShort(i.date)).join(', ')})${a.rings.length ? ' · ring ' + esc(a.rings.join(', ')) : ' · not in a ring'}</div>
         ${contact}</div>
       <div class="row-actions">
         ${phone ? `<a class="btn sm" href="${telHref(phone)}">Call</a>` : ''}
@@ -5156,7 +5156,7 @@ function vAR(){
           <button class="btn sm" onclick="openMember('${m.id}')">Open</button>` : ''}</div></div>`; };
   const total = list.reduce((s, a) => s + a.balance, 0);
   const toCall = list.filter(a => { const lc = a.contactId ? lastContact(a.contactId) : null;
-    return !(lc && a.invoices.length && lc.date >= addDays(a.invoices[0].due, 60)); }).length;
+    return !(lc && a.invoices.length && lc.date >= addDays(a.invoices[0].date, 60)); }).length;
   if(isRep()) return head + `<div class="stats"><div class="stat"><div class="n" style="color:var(--rust)">${list.length}</div><div class="l">members</div></div>
       <div class="stat"><div class="n" style="color:var(--accent)">${toCall}</div><div class="l">still to contact</div></div>
       <div class="stat"><div class="n">${money(total)}</div><div class="l">unpaid</div></div></div>

@@ -2007,18 +2007,21 @@ async function arOver(days) {
     if (g && rings.has(g.id) && !e.rings.some(x => x.id === g.id)) e.rings.push(rings.get(g.id));
     if (k) byNo.set(k, e); byName.set(normName(c.name), e);
   });
+  // Counted from the INVOICE date (Keturah: "60 days from the invoice date"),
+  // not the due date, which put members 30 days later than Symbiz wants
   const t = today(), cutoff = addDays(t, -days), by = new Map();
-  invoices.filter(i => i.balance > 0 && i.due && i.due <= cutoff && !/\btest\b/i.test(i.customer || '')).forEach(i => {
+  const dated = i => i.date || i.due;
+  invoices.filter(i => i.balance > 0 && dated(i) && dated(i) <= cutoff && !/\btest\b/i.test(i.customer || '')).forEach(i => {
     if (!by.has(i.customer)) by.set(i.customer, { customer: i.customer, invoices: [], balance: 0 });
     const e = by.get(i.customer);
-    e.invoices.push({ number: i.number, date: i.date, due: i.due, balance: i.balance, days: -daysUntil(i.due) });
+    e.invoices.push({ number: i.number, date: dated(i), due: i.due, balance: i.balance, days: -daysUntil(dated(i)) });
     e.balance += i.balance;
   });
   const list = [...by.values()].map(e => {
     const m = byNo.get(memberNo(e.customer)) || byName.get(normName(e.customer)) || null;
     const ring = m && m.rings[0];
     return { name: e.customer, contactId: m ? m.contactId : null, balance: Math.round(e.balance * 100) / 100,
-      days: Math.max(...e.invoices.map(x => x.days)), invoices: e.invoices.sort((a, b) => a.due.localeCompare(b.due)),
+      days: Math.max(...e.invoices.map(x => x.days)), invoices: e.invoices.sort((a, b) => String(a.date).localeCompare(String(b.date))),
       rings: m ? m.rings.map(r => r.name) : [], repId: ring ? ring.repZohoId : null, repName: ring ? ring.repName : null,
       repIds: m ? [...new Set(m.rings.map(r => r.repZohoId).filter(Boolean))] : [] };
   }).sort((a, b) => b.days - a.days || b.balance - a.balance);

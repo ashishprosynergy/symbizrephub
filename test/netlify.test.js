@@ -2057,12 +2057,15 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
       { invoice_id: 'I2', invoice_number: 'INV-2', customer_name: 'Slow Payer #61', date: day(70), due_date: day(65), total: 750, balance: 750 },
       { invoice_id: 'I3', invoice_number: 'INV-3', customer_name: 'Recent Payer #0062', date: day(12), due_date: day(10), total: 750, balance: 750 },
       { invoice_id: 'I4', invoice_number: 'INV-4', customer_name: 'Test Automation #9901', date: day(90), due_date: day(90), total: 9, balance: 9 },
+      // Keturah: 60 days from the INVOICE date. Dated 65 days ago, only due 35 days ago: on the list
+      { invoice_id: 'I5', invoice_number: 'INV-5', customer_name: 'Monthly Member #0063', date: day(65), due_date: day(35), total: 50, balance: 50 },
     ];
     const cfg = require('../src/config'), books = require('../src/lib/books');
     cfg.books.orgId = 'ORG1'; cfg.books.refreshToken = 'test-refresh'; books._resetForTests();   // Books connected
     const all = J(await invoke('GET', '/members/ar', { token: office }));
     assert.equal(all.connected, true, JSON.stringify(all));
-    assert.deepEqual(all.members.map(m => m.name).sort(), ['Late Payer #0060', 'Slow Payer #61'], 'only 60+ days, tests left out');
+    assert.deepEqual(all.members.map(m => m.name).sort(), ['Late Payer #0060', 'Monthly Member #0063', 'Slow Payer #61'], '60+ days from the invoice date, tests left out');
+    assert.ok(all.members.find(m => m.name === 'Monthly Member #0063').days >= 65, 'days counted from the invoice date');
     const late = all.members.find(m => m.name === 'Late Payer #0060');
     assert.equal(late.repId, 'REPM'); assert.equal(late.contactId, 'M60'); assert.ok(late.days >= 95);
     assert.equal(all.members.find(m => m.name === 'Slow Payer #61').repId, 'CONTACT_REP_1', 'matched by member number even without the leading zero');
