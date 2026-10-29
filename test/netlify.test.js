@@ -1546,6 +1546,28 @@ describe('self-registration for summits and events', () => {
     assert.match(rows[0].summary, /Ann Lee.*TN Regional Summit.*guest/);
     assert.equal((await invoke('POST', '/public/events/882/register', { body })).statusCode, 404, 'tests cannot be registered for');
   });
+
+  test('the people named in Settings are emailed each new registration to approve (Jeanetta)', async () => {
+    const cfg = require('../src/config'), reminders = require('../src/reminders');
+    const realSend = reminders.sendEmail, realMail = { ...cfg.mail }, sent = [];
+    cfg.mail.enabled = true; cfg.mail.host = 'smtp.test';
+    reminders.sendEmail = async (to, subject, html) => { sent.push({ to, subject, html }); return { ok: true }; };
+    try {
+      await db.query("DELETE FROM mail_outbox");
+      const admin = J(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse' } })).token;
+      assert.equal((await invoke('PUT', '/admin/settings', { token: admin, body: { registrationApprovers: 'not-an-email' } })).statusCode, 400);
+      const ok = J(await invoke('PUT', '/admin/settings', { token: admin, body: { registrationApprovers: 'Approver@Office.test, second@office.test' } }));
+      assert.equal(ok.saved.registrationApprovers, 'approver@office.test, second@office.test');
+      const r = await invoke('POST', '/public/events/881/register', { body: { firstName: 'Nia', lastName: 'Shirk', email: 'nia.qr@example.com' }, headers: { 'x-nf-client-connection-ip': '8.8.4.4' } });
+      assert.equal(r.statusCode, 201, r.body);
+      assert.deepEqual(sent.map(s => s.to).sort(), ['approver@office.test', 'second@office.test']);
+      assert.match(sent[0].subject, /Registration to approve: Nia Shirk for TN Regional Summit/);
+      assert.match(sent[0].html, /\?view=approvals/);
+    } finally {
+      reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
+      await db.q.setSetting('registrationApprovers', '');
+    }
+  });
 });
 
 describe('summit checklist from a Google Sheet', () => {

@@ -4734,6 +4734,7 @@ function ACCESS_SECTIONS(){
     owner && { key:'perms', icon:'key', title:'Who can do what', sub:'Screens and sensitive areas for directors and office staff' },
     owner && { key:'signin', icon:'check', title:'Sign-in security', sub:`"I'm not a robot" ${on(a.captcha && a.captcha.siteKey)} · 2-step for ${['admin','staff','rep'].filter(k => ts[k]).map(k => ({admin:'directors',staff:'office',rep:'reps'})[k]).join(', ') || 'nobody'}` },
     owner && { key:'people', icon:'users', title:'People with office access', sub:`${(a.people || []).length} ${(a.people || []).length === 1 ? 'person' : 'people'} · directors and office staff` },
+    can('settings') && { key:'registrations', icon:'check', title:'New registrations', sub: s.registrationApprovers ? `Emailed to ${s.registrationApprovers} to approve` : 'Nobody is emailed yet' },
     can('books') && { key:'accounting', icon:'calendar', title:'Accounting', sub:`To ${s.accountingEmail || 'not set'} · ${String(s.accountingDay || '1') === 'Off' ? 'manual only' : 'automatically on day ' + (s.accountingDay || '1')}` },
     can('books') && { key:'books', icon:'folder', title:'Zoho Books', sub: booksInfo ? (booksInfo.connected ? `Connected · bills to the rep, hours weekly${booksInfo.failed && booksInfo.failed.length ? ` · ${booksInfo.failed.length} need attention` : ''}` : 'Not connected') : 'Bills, hourly rates and accounts' },
     (owner || isAdmin()) && { key:'backup', icon:'check', title:'Backup', sub: backupStatus && !backupStatus.error
@@ -4766,6 +4767,13 @@ function accessSectionBody(sec){
       </div>
       <div class="row-sub">On that day everything approved is put in front of the admins on the Approvals screen.
         Nothing reaches accounting, or Zoho Books, until an admin gives the final approval there. Reps still see everything they submitted.</div>
+    </div>`;
+  if(sec === 'registrations') return `<div class="card">
+      <div class="field"><label>Email each new event or summit registration to</label>
+        <input type="text" placeholder="name@symbiz.org" value="${esc(s.registrationApprovers || '')}" onchange="setSetting('registrationApprovers', this.value.trim())"></div>
+      <div class="row-sub">When a rep registers someone, or someone registers themselves with the QR code, these people get an email
+        with a button to review it. It waits on their Approvals screen until approved. Separate several addresses with commas.
+        Each person needs a Rep Hub office account with the Approvals screen switched on.</div>
     </div>`;
   if(sec === 'books') return `<div class="card" id="booksCard">${booksCard()}</div>`;
   if(sec === 'backup') return `<div class="card" id="backupCard">${backupCard()}</div>`;
@@ -4928,7 +4936,7 @@ async function retryBooks(btn){
 // Settings the server acts on. These used to be kept only in this browser,
 // so the server never saw (for one) the accounting address typed in here.
 const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount',
-  'supportName','supportPhone'];
+  'supportName','supportPhone','registrationApprovers'];
 async function setSetting(k,v){
   S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`);
   if(k === 'supportName' || k === 'supportPhone'){

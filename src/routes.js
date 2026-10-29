@@ -2103,8 +2103,31 @@ r.post('/public/events/:id/register', wrap(async (req, res) => {
   const out = await q.addWriteRequest({ kind: 'registration', payload, repId: 'public', repName: 'Self-registered (QR code)',
     summary: `${payload.name}${contactId ? ' (member)' : ''} registered for ${e.title}${g ? ' with a guest' : ''}${dupes.length ? ' — possible duplicate' : ''}` });
   await audit(null, 'public.registration', { eventId: e.id, id: out[0]?.id, member: !!contactId }, clientIp(req));
+  await notifyRegistrationApprovers(req, payload, { by: 'Registered themselves (QR code / portal)' }).catch(err => console.error('[registration] notify failed:', err.message));
   res.status(201).json({ ok: true, event: e.title });
 }));
+
+/* ── Someone is waiting to be approved: email the people named in Settings ──
+ * (Access & security → Registrations). Queued, so the person registering
+ * never waits on Gmail; one email per approver, with a link to Approvals. */
+async function notifyRegistrationApprovers(req, p, { by } = {}) {
+  const list = String(await setting('registrationApprovers', '')).split(/[\s,;]+/).filter(x => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
+  if (!list.length) return;
+  const url = `${siteUrl(req)}/?view=approvals`;
+  const line = (k, v) => v ? `<tr><td style="padding:3px 12px 3px 0;color:#6B7468">${k}</td><td style="padding:3px 0">${esc(v)}</td></tr>` : '';
+  const guest = p.bringingGuest ? [p.guestFirstName, p.guestLastName].filter(Boolean).join(' ') || 'Yes' : '';
+  const html = `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:520px;color:#1E2A20">
+    <p style="font-size:15px"><strong>${esc(p.name || 'Someone')}</strong> has registered for <strong>${esc(p.eventName || 'an event')}</strong>. It is waiting for your approval.</p>
+    <table style="font-size:14px;border-collapse:collapse">${line('Email', p.email)}${line('Phone', p.phone)}${line('Business', p.business)}
+      ${line('Guest', guest)}${line('Sent by', by)}</table>
+    ${p.duplicate ? '<p style="color:#9A4A1F;font-size:14px">This may be a duplicate: please check before approving.</p>' : ''}
+    <p style="margin:18px 0"><a href="${url}" style="background:#2E5132;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;display:inline-block">Review and approve</a></p>
+    <p style="font-size:12.5px;color:#6B7468">Nothing is added to Zoho until it is approved in Rep Hub.</p></div>`;
+  for (const to of list) {
+    await reminders.queueEmail(to, `Registration to approve: ${p.name || 'someone'} for ${p.eventName || 'an event'}`, html, { kind: 'registration' });
+  }
+  await sendQueuedMail(req);
+}
 
 /* ── Is this person already registered? ──
  * Checked against the event's registrations in Zoho and the requests still
@@ -2168,6 +2191,7 @@ r.post('/pending/registration', auth.authRequired, wrap(async (req, res) => {
              (b.bringingGuest ? ' (bringing a guest)' : ''),
   });
   await audit(req.user.id, 'pending.registration', { eventId: b.eventId }, req.ip);
+  await notifyRegistrationApprovers(req, payload, { by: req.user.name }).catch(err => console.error('[registration] notify failed:', err.message));
   res.status(201).json({ id: out[0]?.id, status: 'pending' });
 }));
 
@@ -3544,6 +3568,7 @@ const OFFICE_SETTINGS = {
   accountingEmail: 'accounting@symbiz.org', accountingDay: '1',
   booksAuto: 'on', booksPayee: 'rep', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
   supportName: 'Ashish Raj', supportPhone: '540-212-9403',
+  registrationApprovers: '',
 };
 
 /** Who to ring for help — shown on the sign-in screen, so no sign-in needed. */
@@ -3573,6 +3598,11 @@ r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
     let val = String(v ?? '').trim().slice(0, 500);
     if (k === 'accountingEmail' && val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
       return res.status(400).json({ error: 'That accounting address does not look like an email' });
+    }
+    if (k === 'registrationApprovers') {
+      const bad = val.split(/[\s,;]+/).filter(Boolean).find(x => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
+      if (bad) return res.status(400).json({ error: `"${bad}" does not look like an email address` });
+      val = val.split(/[\s,;]+/).filter(Boolean).map(x => x.toLowerCase()).join(', ');
     }
     if (k === 'accountingDay' && !['1', '15', 'Last', 'Off'].includes(val)) continue;
     if (k === 'booksPayee' && !['rep', 'vendor'].includes(val)) continue;
