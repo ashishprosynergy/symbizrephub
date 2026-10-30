@@ -129,6 +129,11 @@ const fakeZoho = http.createServer((req, res) => {
     }
     if (url.pathname === '/crm/v8/coql') {
       const sq = JSON.parse(body || '{}').select_query || '';
+      // A field someone deleted in Zoho: refused the way Zoho refuses it
+      if (/\bGone_Field\b/.test(sq)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ code: 'INVALID_QUERY', details: { column_name: 'Gone_Field' }, message: 'column given seems to be invalid', status: 'error' }));
+      }
       const mod = Object.keys(store).find(m => sq.includes(`from ${m}`)) || 'Rep_Activities';
       // Like Zoho: "limit offset, count", at most 200 a page
       const lim = sq.match(/limit\s+(\d+)\s*(?:,\s*(\d+))?\s*$/i);
@@ -443,6 +448,14 @@ describe('netlify function handler', () => {
     await db.q.setSetting('emailLinks', 'gmail');
     assert.equal(J(await invoke('GET', '/auth/me', { token: repToken })).prefs.emailLinks, 'gmail');
     await db.q.setSetting('emailLinks', 'app');
+  });
+
+  test('a field removed in Zoho is left out, not the whole screen (Meeting_Date_Time, 29 Oct)', async () => {
+    const zoho = require('../src/lib/zoho');
+    store.Contacts.push({ id: 'GONE1', Full_Name: 'Still Here' });
+    const rows = await zoho.coqlPaged('select id, Gone_Field, Full_Name from Contacts where id is not null limit 200');
+    assert.ok(rows.some(r => r.id === 'GONE1'), 'the query still answers');
+    store.Contacts = store.Contacts.filter(c => c.id !== 'GONE1');
   });
 
   test('reports stay office-only', async () => {

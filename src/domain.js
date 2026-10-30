@@ -230,7 +230,8 @@ const fromZoho = {
     groupType: z.Group_Type || 'Growth Ring',
     meetingFrequency: z.Meeting_Frequency || null,
     meetingFormat: z.Meeting_Format || null,
-    meetingDateTime: z.Meeting_Date_Time || null,
+    // Zoho replaced Meeting_Date_Time with From/To times on 29 Oct 2026
+    meetingDateTime: z.Meeting_From_Time || z.Meeting_Date_Time || null,
     nextMeeting: z.Next_Meeting_Date_Time || null,
     lastRepVisit: z.Last_Rep_Visit || null,
     nextRepVisit: z.Next_Rep_Visit || null,
@@ -347,7 +348,7 @@ const fromZoho = {
  */
 const RING_FIELDS = `id, Name, Facilitator, Regional_Rep, Region_Lookup, of_Members,
   Target_Group_Size, Status, Active, Group_Type, Meeting_Frequency, Meeting_Format,
-  Meeting_Date_Time, Next_Meeting_Date_Time, Last_Rep_Visit, Next_Rep_Visit, GR_Group_Id`;
+  Meeting_From_Time, Next_Meeting_Date_Time, Last_Rep_Visit, Next_Rep_Visit, GR_Group_Id`;
 
 /**
  * What a rep needs about a member before a call or a visit.

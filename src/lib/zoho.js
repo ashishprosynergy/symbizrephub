@@ -281,9 +281,36 @@ const PAGE = 200, MAX_ROWS = 10000, WAVE = 4;
 /* `gentle`: one page at a time with a short pause between, for the overnight
    copy of whole modules. Four pages at once there took Zoho's room for COQL,
    and people using the app saw "Zoho POST /coql failed" while it ran. */
+/* A field renamed or deleted in Zoho made every query naming it fail, and
+   with it whole screens ("column given seems to be invalid": Meeting_Date_Time,
+   29 Oct 2026). Now that one column is left out and the query asked again, so
+   the app keeps working with one blank field while someone fixes the name. */
+const droppedColumns = new Set();
+async function coqlOnce(q, tries = 0) {
+  let sq = q;
+  for (const c of droppedColumns) sq = withoutColumn(sq, c);
+  try {
+    return await request('/coql', { method: 'POST', body: { select_query: sq } });
+  } catch (e) {
+    const col = e.status === 400 && e.body && e.body.code === 'INVALID_QUERY' && e.body.details && e.body.details.column_name;
+    if (!col || col === 'id' || tries >= 5 || withoutColumn(sq, col) === sq) throw e;
+    console.warn(`[zoho] Zoho has no field ${col} any more; leaving it out until the app is updated`);
+    droppedColumns.add(col);
+    return coqlOnce(q, tries + 1);
+  }
+}
+/** "select a, b, c from X …" without column b (only in the select list) */
+function withoutColumn(sq, col) {
+  const m = sq.match(/^(\s*select\s+)([\s\S]*?)(\s+from\s[\s\S]*)$/i);
+  if (!m) return sq;
+  const cols = m[2].split(',').map(s => s.trim()).filter(Boolean);
+  const kept = cols.filter(c => c !== col);
+  return kept.length && kept.length < cols.length ? m[1] + kept.join(', ') + m[3] : sq;
+}
+
 async function coqlPaged(selectQuery, { gentle = false } = {}) {
   const m = selectQuery.match(/\blimit\s+200\s*$/i);
-  const one = async q => (await request('/coql', { method: 'POST', body: { select_query: q } }))?.data || [];
+  const one = async q => (await coqlOnce(q))?.data || [];
   if (!m) return one(selectQuery);
   const base = selectQuery.slice(0, m.index).trimEnd();
   const ordered = /\border\s+by\b/i.test(base) ? base : `${base} order by id`;
