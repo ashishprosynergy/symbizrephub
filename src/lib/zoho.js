@@ -401,8 +401,23 @@ async function ping() {
   return lastPing.value;
 }
 
+/** A file on a record's Attachments list (the filled-in exit interview form) */
+async function attachFile(module, id, filename, content, type = 'application/pdf') {
+  const form = new FormData();
+  form.append('file', new Blob([content], { type }), filename);
+  const res = await fetch(`${API()}/${module}/${id}/Attachments`, {
+    method: 'POST', headers: { Authorization: `Zoho-oauthtoken ${await getAccessToken()}` }, body: form });
+  const json = safeJSON(await res.text());
+  const r = json && json.data && json.data[0];
+  if (!res.ok || !r || (r.code && r.code !== 'SUCCESS')) {
+    throw new ZohoError(`Zoho did not take the attachment (${(r && r.message) || (json && json.message) || res.status})`, res.status, json);
+  }
+  return r.details && r.details.id;
+}
+
 module.exports = {
   ZohoError,
+  attachFile,
   getAccessToken,
   request,
   getRecords,

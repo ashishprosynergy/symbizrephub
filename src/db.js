@@ -329,6 +329,17 @@ CREATE TABLE IF NOT EXISTS zoho_mirror (
   PRIMARY KEY (module, id)
 );
 
+CREATE TABLE IF NOT EXISTS exit_forms (
+  id          SERIAL PRIMARY KEY,
+  activity_id TEXT,
+  member_id   TEXT,
+  payload     TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  tries       INTEGER NOT NULL DEFAULT 0,
+  result      TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS mail_outbox (
   id         SERIAL PRIMARY KEY,
   to_addr    TEXT NOT NULL,

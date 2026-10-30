@@ -8,6 +8,7 @@ const auth = require('./auth');
 const access = require('./access');
 const { enqueue, flushQueue } = require('./sync');
 const reminders = require('./reminders');
+const exits = require('./exits');
 const { tablePDF } = require('./lib/pdf');
 const books = require('./lib/books');
 const {
@@ -1014,7 +1015,7 @@ r.post('/activities', auth.authRequired, writesAllowed, wrap(async (req, res) =>
   const id = out[0]?.details?.id;
 
   await audit(req.user.id, 'activity.logged', { id, type: b.type, ringId: b.ringId, repZohoId }, req.ip);
-  if (/exit interview/i.test(b.type)) await notifyExitInterview(req, b, ringRec).catch(e => console.error('[exit] notify failed:', e.message));
+  if (/exit interview/i.test(b.type)) await fileExitInterview(req, b, ringRec, id).catch(e => console.error('[exit] could not queue the form:', e.message));
   res.status(201).json({ id, nextDue });
 }));
 
@@ -1023,22 +1024,27 @@ async function emailList(key) {
   return String(await setting(key, '')).split(/[\s,;]+/).filter(x => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
 }
 
-/* An exit interview is saved in Zoho with the member's visits, but ending the
- * membership is the office's job: tell the people named in Access & security
- * (Exit interviews), with what was said, so it gets entered in Zoho. */
-async function notifyExitInterview(req, b, ringRec) {
-  const list = await emailList('exitInterviewNotify');
-  if (!list.length) return;
-  const c = b.memberId ? await zoho.getRecord(M.CONTACT, b.memberId).catch(() => null) : null;
-  const who = (c && (c.Full_Name || [c.First_Name, c.Last_Name].filter(Boolean).join(' '))) || 'A member';
-  const row = (k, v) => v ? `<tr><td style="padding:3px 12px 3px 0;color:#6B7468;vertical-align:top">${k}</td><td style="padding:3px 0">${esc(v)}</td></tr>` : '';
-  const html = `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:540px;color:#1E2A20">
-    <p style="font-size:15px"><strong>${esc(req.user.name || 'A rep')}</strong> recorded an exit interview with <strong>${esc(who)}</strong>.
-      Please end the membership in Zoho.</p>
-    <table style="font-size:14px;border-collapse:collapse">${row('Member', who)}${row('Growth Ring', ringRec && ringRec.name)}${row('Date', b.date)}${row('Rep', req.user.name)}${row('What was said', b.notes)}</table>
-    <p style="font-size:12.5px;color:#6B7468;margin-top:16px">The interview itself is already saved in Zoho with the member's visits.</p></div>`;
-  for (const to of list) await reminders.queueEmail(to, `Exit interview to enter in Zoho: ${who}`, html, { kind: 'exit', replyTo: req.user.email });
-  await sendQueuedMail(req);
+/* An exit interview is saved in Zoho with the member's visits; the office
+ * also wants the paper form. It is filled in, attached to the member in Zoho,
+ * saved in their Drive folder and emailed (src/exits.js), in the background
+ * so the rep is not kept waiting. */
+async function fileExitInterview(req, b, ringRec, activityId) {
+  const clip = v => String(v == null ? '' : v).trim().slice(0, 3000);
+  const x = b.exit && typeof b.exit === 'object' ? b.exit : {};
+  let memberName = clip(b.memberName).slice(0, 120);
+  if (!memberName && b.memberId) {
+    const c = await zoho.getRecord(M.CONTACT, b.memberId).catch(() => null);
+    memberName = (c && (c.Full_Name || [c.First_Name, c.Last_Name].filter(Boolean).join(' '))) || '';
+  }
+  await exits.queueExit({
+    activityId, memberId: b.memberId || null, memberName: memberName || 'A member',
+    ringName: ringRec && ringRec.name, repName: req.user.name, repEmail: req.user.email, date: b.date,
+    exit: Object.fromEntries(['joined', 'reasonJoining', 'value', 'reasonCategory', 'reasonLeaving', 'suggestions', 'wouldReturn', 'wouldReturnWhy', 'other']
+      .map(k => [k, clip(x[k])])),
+  });
+  const site = netlifySite(req);
+  if (site && await kickBackground(site, 'exit-background')) return;
+  await exits.processExits({ budgetMs: 8000 }).catch(e => console.error('[exit] filing failed:', e.message));
 }
 
 /* ═══════════ MEMBERS ═══════════ */
@@ -3592,7 +3598,7 @@ const OFFICE_SETTINGS = {
   accountingEmail: 'accounting@symbiz.org', accountingDay: '1',
   booksAuto: 'on', booksPayee: 'rep', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
   supportName: 'Ashish Raj', supportPhone: '540-212-9403',
-  registrationApprovers: '', exitInterviewNotify: '', emailLinks: 'app',
+  registrationApprovers: '', exitInterviewNotify: '', exitInterviewFolder: '', emailLinks: 'app',
 };
 
 /** Who to ring for help — shown on the sign-in screen, so no sign-in needed. */
@@ -3624,6 +3630,9 @@ r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
       return res.status(400).json({ error: 'That accounting address does not look like an email' });
     }
     if (k === 'emailLinks' && !['app', 'gmail'].includes(val)) continue;
+    if (k === 'exitInterviewFolder' && val && !exits.folderId(val)) {
+      return res.status(400).json({ error: 'Paste the link to the Google Drive folder (it has /folders/ in it)' });
+    }
     if (k === 'registrationApprovers' || k === 'exitInterviewNotify') {
       const bad = val.split(/[\s,;]+/).filter(Boolean).find(x => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
       if (bad) return res.status(400).json({ error: `"${bad}" does not look like an email address` });

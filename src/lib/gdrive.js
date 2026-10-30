@@ -53,6 +53,7 @@ async function scriptSource() {
 // (Execute as: Me, Who has access: Anyone). The key below is what Rep Hub sends; keep it private.
 const KEY = '${k}';
 const FOLDER = 'Rep Hub backups';
+const VERSION = 2;   // 2: also files forms into a chosen folder (exit interviews)
 
 function doPost(e) {
   try {
@@ -60,7 +61,11 @@ function doPost(e) {
     if (b.key !== KEY) return reply({ ok: false, error: 'Wrong key' });
     const folder = getFolder();
     const me = Session.getEffectiveUser().getEmail();
-    if (b.action === 'ping') return reply({ ok: true, folderUrl: folder.getUrl(), email: me });
+    if (b.action === 'ping') return reply({ ok: true, folderUrl: folder.getUrl(), email: me, version: VERSION });
+    if (b.action === 'file') {
+      const f = DriveApp.getFolderById(b.folderId).createFile(Utilities.newBlob(Utilities.base64Decode(b.data), b.type || 'application/pdf', b.name));
+      return reply({ ok: true, id: f.getId(), url: f.getUrl() });
+    }
     const file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(b.data), 'application/gzip', b.name));
     const removed = b.keep === 'all' ? 0 : tidy(folder);
     return reply({ ok: true, id: file.getId(), folderUrl: folder.getUrl(), email: me, removed: removed });
@@ -222,4 +227,25 @@ async function status() {
 }
 async function disconnect() { const { q } = require('../db'); await q.setSetting(KEY, ''); access = { token: null, until: 0 }; }
 
-module.exports = { configured, authUrl, exchange, upload, status, disconnect, noteFailure, scriptSource, connectScript, toDelete };
+/**
+ * One file into a folder someone chose (the office's "Exit Interview forms"),
+ * not the backups folder. Needs the Drive script from Rep Hub (version 2+),
+ * and the Google account it runs as must be able to edit that folder.
+ */
+async function saveToFolder(folderId, name, content, type = 'application/pdf') {
+  const s = await state();
+  if (!s || s.mode !== 'script' || !s.url) throw new Error('Google Drive is not connected through the Drive script (Access & security → Backup)');
+  const key = await scriptKey();
+  // An older script would save it among the backups instead: check first
+  const ping = await callScript(s.url, { key, action: 'ping' });
+  if (!(ping.version >= 2)) throw new Error('the Google Drive script needs updating: copy it again from Access & security → Backup, paste it over the old one, and deploy a new version');
+  try {
+    const out = await callScript(s.url, { key, action: 'file', folderId, name, type, data: Buffer.from(content).toString('base64') });
+    return { id: out.id, url: out.url || null };
+  } catch (e) {
+    if (/not found|access|permission/i.test(e.message)) throw new Error(`${ping.email || "The Drive script's account"} cannot add files to that folder. Share the folder with it as an Editor.`);
+    throw e;
+  }
+}
+
+module.exports = { configured, authUrl, exchange, upload, status, disconnect, noteFailure, scriptSource, connectScript, toDelete, saveToFolder };

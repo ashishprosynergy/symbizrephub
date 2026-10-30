@@ -24,6 +24,9 @@ module.exports.handler = schedule('*/15 * * * *', async () => {
     const m = await mirror.processQueue({ budgetMs: 7000 }).catch(e => ({ error: e.message }));
     if (m.saved || m.deleted || m.failed || m.error) console.log('[sync-flush] live copy', JSON.stringify(m));
     if (process.env.URL) await mirror.ensureWatch(process.env.URL).catch(e => console.error('[sync-flush] live updates:', e.message));
+    // Exit interview forms not yet in Zoho, Drive or the office's inbox
+    const ex = await require('../../src/exits').processExits({ budgetMs: 8000 }).catch(e => ({ error: e.message }));
+    if (ex.filed || ex.waiting || ex.error) console.log('[sync-flush] exit forms', JSON.stringify(ex));
     // Zoho Books bills the accounting send did not get to in time
     if (await books.configured()) {
       const b = await books.makeBills({ budgetMs: 12000 }).catch(e => ({ error: e.message }));

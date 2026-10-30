@@ -4779,6 +4779,10 @@ function accessSectionBody(sec){
         <input type="text" placeholder="name@symbiz.org" value="${esc(s.exitInterviewNotify || '')}" onchange="setSetting('exitInterviewNotify', this.value.trim())"></div>
       <div class="row-sub">When a rep records an exit interview, these people get an email with the member, the ring and what was said,
         so the membership can be ended in Zoho. The interview itself is already saved in Zoho.</div>
+      <div class="field" style="margin-top:14px"><label>Save each exit interview form in this Google Drive folder</label>
+        <input type="text" placeholder="https://drive.google.com/drive/folders/…" value="${esc(s.exitInterviewFolder || '')}" onchange="setSetting('exitInterviewFolder', this.value.trim())"></div>
+      <div class="row-sub">The filled-in form (PDF) is saved there and attached to the member in Zoho. Uses the Google Drive script
+        from Backup: update it to the latest copy, and share this folder with the Google account it runs as (Editor).</div>
     </div>`;
   if(sec === 'emaillinks') return `<div class="card">
       <div class="field"><label>When someone presses Email on a member or rep</label>
@@ -4951,7 +4955,7 @@ async function retryBooks(btn){
 // Settings the server acts on. These used to be kept only in this browser,
 // so the server never saw (for one) the accounting address typed in here.
 const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount',
-  'supportName','supportPhone','registrationApprovers','exitInterviewNotify','emailLinks'];
+  'supportName','supportPhone','registrationApprovers','exitInterviewNotify','exitInterviewFolder','emailLinks'];
 async function setSetting(k,v){
   S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`);
   if(k === 'supportName' || k === 'supportPhone'){
@@ -7390,36 +7394,63 @@ function mailHref(to){
     return 'https://mail.google.com/mail/?authuser=' + encodeURIComponent(mine) + '&view=cm&fs=1&to=' + encodeURIComponent(to);
   return 'mailto:' + to;
 }
+/* The Growth Ring Exit Interview, question for question as on the office's
+   paper form (Revision 1, Oct 2026). The office gets it as that form, filled
+   in: attached to the member in Zoho, in their Drive folder and by email. */
+const EXIT_QUESTIONS = [
+  ['reasonJoining', 'What was your reason for joining Symbiz?'],
+  ['value', 'What value did you receive from your Symbiz membership?'],
+  ['reasonLeaving', 'What is your reason for discontinuing your membership?'],
+  ['suggestions', 'What suggestions do you have for how we can better serve our members?'],
+  ['wouldReturn', 'Would you consider joining a Growth Ring again in the future?'],
+  ['other', 'Any other comments or suggestions?'],
+];
 function openExit(memberId){
   const m=member(memberId);
-  openModal(`<h3>Exit interview</h3>
-    <p class="lead">For ${esc(m.name)}. This marks the membership discontinued and feeds retention reporting.</p>
+  const joined = /^\d{4}-\d{2}-\d{2}/.test(m.memberSince || m.joined || '') ? String(m.memberSince || m.joined).slice(0,10) : '';
+  const ta = (k, label, extra='') => `<div class="field"><label>${label}</label>${extra}<textarea name="${k}" rows="2"></textarea></div>`;
+  openModal(`<h3>Growth Ring Exit Interview</h3>
+    <p class="lead">For ${esc(m.name)}${ring(m.ringId) ? ' · ' + esc(ring(m.ringId).name) : ''}. The office gets it as the exit interview form, and ends the membership in Zoho.</p>
     <form onsubmit="submitExit(event,'${memberId}')">
-      <div class="field"><label>Date</label><input type="date" name="date" value="${TODAY_S}" required></div>
-      <div class="field"><label>Main reason for leaving</label><select name="reason" required>${EXIT_REASONS.map(r=>`<option>${r}</option>`).join('')}</select></div>
-      <div class="field"><label>Would they consider returning?</label><select name="wouldReturn"><option>Yes</option><option selected>Maybe</option><option>No</option></select></div>
-      <div class="field"><label>Worth asking</label><div class="card flat" style="margin:0;padding:11px">${CALL_PROMPTS['Exit Interview'].map(p=>`<div style="font-size:13px;color:var(--ink-muted);padding:3px 0">· ${p}</div>`).join('')}</div></div>
-      <div class="field"><label>What did they say?</label><textarea name="notes" placeholder="In their own words, as close as you can"></textarea></div>
+      <div class="two">
+        <div class="field"><label>Date</label><input type="date" name="date" value="${TODAY_S}" required></div>
+        <div class="field"><label>Date originally joined Symbiz</label><input type="date" name="joined" value="${joined}"></div>
+      </div>
+      ${ta('reasonJoining', EXIT_QUESTIONS[0][1])}
+      ${ta('value', EXIT_QUESTIONS[1][1])}
+      ${ta('reasonLeaving', EXIT_QUESTIONS[2][1], `<select name="reason" required style="margin-bottom:6px">${EXIT_REASONS.map(r=>`<option>${r}</option>`).join('')}</select>`)}
+      ${ta('suggestions', EXIT_QUESTIONS[3][1])}
+      <div class="field"><label>${EXIT_QUESTIONS[4][1]}</label>
+        <select name="wouldReturn" style="margin-bottom:6px"><option>Yes</option><option selected>Maybe</option><option>No</option></select>
+        <input name="wouldReturnWhy" placeholder="Anything they said about it (optional)"></div>
+      ${ta('other', EXIT_QUESTIONS[5][1])}
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
       <button type="submit" class="btn danger">Record exit interview</button></div></form>`);
 }
 async function submitExit(e,memberId){
   e.preventDefault(); const f=e.target, m=member(memberId);
   if(API.live){
-    // Recorded in Zoho with the member's visits; ending the membership itself
-    // stays with the office, who do it in Zoho
-    const body = { ringId: m.ringId, memberId, type: 'Exit Interview', date: fv(f,'date'), outcome: 'Connected',
-      notes: [`Reason for leaving: ${fv(f,'reason')}`, `Would consider returning: ${fv(f,'wouldReturn')}`, fv(f,'notes')].filter(Boolean).join('. ') };
+    // Recorded in Zoho with the member's visits (every answer, in the notes);
+    // the server files the form and tells the office, who end the membership
+    const exit = { joined: fv(f,'joined'), reasonJoining: fv(f,'reasonJoining'), value: fv(f,'value'),
+      reasonCategory: fv(f,'reason'), reasonLeaving: fv(f,'reasonLeaving'), suggestions: fv(f,'suggestions'),
+      wouldReturn: fv(f,'wouldReturn'), wouldReturnWhy: fv(f,'wouldReturnWhy'), other: fv(f,'other') };
+    const answer = { ...exit, reasonLeaving: [exit.reasonCategory, exit.reasonLeaving].filter(Boolean).join(': '),
+      wouldReturn: [exit.wouldReturn, exit.wouldReturnWhy].filter(Boolean).join(' - ') };
+    const notes = [`Reason for leaving: ${exit.reasonCategory}`, `Would consider returning: ${exit.wouldReturn}`,
+      ...EXIT_QUESTIONS.map(([k, q]) => answer[k] ? `${q} ${answer[k]}` : '')].filter(Boolean).join('. ');
+    const body = { ringId: m.ringId, memberId, memberName: m.name, type: 'Exit Interview', date: fv(f,'date'), outcome: 'Connected', notes, exit };
     try{
       const how = await sendActivity(body, { ...body, repId: ui.me, who: m.name, nextDue: null }, `the exit interview with ${m.name}`);
       closeModal();
-      toast(how === 'sent' ? 'Exit interview saved to Zoho. The office will end the membership.' : 'No signal: saved on this phone, and it will be sent when you have signal');
+      toast(how === 'sent' ? 'Exit interview saved. The office gets the form and will end the membership.' : 'No signal: saved on this phone, and it will be sent when you have signal');
     }catch(ex){ toast(ex.message || 'Could not save the exit interview'); }
     return;
   }
   S.activities.forEach(a=>{ if(a.memberId===memberId) a.nextDue=null; });
   S.activities.push({id:'a'+(S.ids.act++),ringId:m.ringId,repId:ui.me,memberId,type:'Exit Interview',who:m.name,
-    date:fv(f,'date'),nextDue:null,outcome:'Connected',exitReason:fv(f,'reason'),wouldReturn:fv(f,'wouldReturn'),notes:fv(f,'notes')});
+    date:fv(f,'date'),nextDue:null,outcome:'Connected',exitReason:fv(f,'reason'),wouldReturn:fv(f,'wouldReturn'),
+    notes:EXIT_QUESTIONS.map(([k,q])=>fv(f,k)?q+' '+fv(f,k):'').filter(Boolean).join('. ')});
   m.status='discontinued';
   save(); queueWrite('exit'); logAudit(`Recorded exit interview for ${m.name}`); closeModal(); toast('Exit interview recorded'); render();
 }
@@ -8819,6 +8850,9 @@ const adapt = {
       // would have counted as done.
       outcome: a.outcome || null,
       notes: a.notes || '',
+      // Exit interviews: the reason and would-return answer lead the notes
+      exitReason: /exit/i.test(a.type || '') ? ((String(a.notes || '').match(/Reason for leaving: ([^.]+)/) || [])[1] || '') : '',
+      wouldReturn: /exit/i.test(a.type || '') ? ((String(a.notes || '').match(/Would consider returning: ([^.]+)/) || [])[1] || '') : '',
     };
   },
 };

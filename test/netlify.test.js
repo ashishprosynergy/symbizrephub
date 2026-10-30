@@ -108,6 +108,19 @@ const fakeZoho = http.createServer((req, res) => {
       res.writeHead(404); return res.end('{}');
     }
     if (url.pathname === '/crm/v8/org') return json({ org: [{ company_name: 'Symbiz Network (test)' }] });
+    // A file on a record's Attachments list
+    const zatt = url.pathname.match(/^\/crm\/v8\/([A-Za-z_]+)\/([^/]+)\/Attachments$/);
+    if (zatt && req.method === 'POST') {
+      (store.attachments = store.attachments || []).push({ module: zatt[1], id: zatt[2], type: req.headers['content-type'], body });
+      return json({ data: [{ code: 'SUCCESS', details: { id: 'ATT' + store.attachments.length } }] });
+    }
+    // A fake Google Drive script (Apps Script web app), version 2
+    if (url.pathname === '/drive-script') {
+      const b = JSON.parse(body || '{}');
+      if (b.action === 'ping') return json({ ok: true, version: 2, email: 'drive@office.test' });
+      if (b.action === 'file') { (store.driveFiles = store.driveFiles || []).push(b); return json({ ok: true, id: 'F1', url: 'https://drive.test/F1' }); }
+      return json({ ok: false, error: 'unexpected' });
+    }
     if (url.pathname === '/crm/v8/settings/fields') {
       // Every field any record of the module has, like Zoho's field list
       const rows = store[url.searchParams.get('module')] || [];
@@ -377,23 +390,48 @@ describe('netlify function handler', () => {
     const cfg = require('../src/config'), reminders = require('../src/reminders');
     const realSend = reminders.sendEmail, realMail = { ...cfg.mail }, sent = [];
     cfg.mail.enabled = true; cfg.mail.host = 'smtp.test';
-    reminders.sendEmail = async (to, subject, html) => { sent.push({ to, subject, html }); return { ok: true }; };
+    reminders.sendEmail = async (to, subject, html, opts = {}) => { sent.push({ to, subject, html, attachments: opts.attachments }); return { ok: true }; };
     try {
       await db.query("DELETE FROM mail_outbox");
       await db.q.setSetting('exitInterviewNotify', 'office@x.test');
+      await db.q.setSetting('exitInterviewFolder', 'https://drive.google.com/drive/folders/1v_TESTFOLDER_abc?usp=sharing');
+      await db.q.setSetting('gdrive', JSON.stringify({ mode: 'script', url: `http://127.0.0.1:${FAKE_ZOHO_PORT}/drive-script` }));
+      store.attachments = []; store.driveFiles = [];
       const ring = J(await invoke('POST', '/rings', { token: repToken, body: { name: 'Exit Ring', facFreq: 'Quarterly', memFreq: 'Annual' } }));
       await invoke('POST', '/activities', { token: repToken, body: { ringId: ring.id, type: 'Member Call', date: '2026-10-20', outcome: 'Connected' } });
       assert.equal(sent.filter(s => /Exit interview/.test(s.subject)).length, 0, 'an ordinary call emails nobody');
+      const exitAnswers = { joined: '2024-02-24', reasonJoining: 'Meeting structure', value: 'Accountability', reasonCategory: 'Time commitment',
+        reasonLeaving: 'Busy season', suggestions: '', wouldReturn: 'Yes', wouldReturnWhy: 'next winter', other: 'Thanks' };
       const res = await invoke('POST', '/activities', { token: repToken,
-        body: { ringId: ring.id, type: 'Exit Interview', date: '2026-10-28', outcome: 'Connected', notes: 'Reason for leaving: Time. Would consider returning: Maybe' } });
+        body: { ringId: ring.id, memberId: 'C77', memberName: 'Sheldon Martin #0714', type: 'Exit Interview', date: '2026-10-28', outcome: 'Connected',
+          notes: 'Reason for leaving: Time commitment. Would consider returning: Yes', exit: exitAnswers } });
       assert.equal(res.statusCode, 201, res.body);
+      // The form, as a PDF, on the member in Zoho and in the Drive folder
+      assert.equal(store.attachments.length, 1);
+      assert.deepEqual([store.attachments[0].module, store.attachments[0].id], ['Contacts', 'C77']);
+      assert.match(store.attachments[0].type, /multipart\/form-data/);
+      assert.match(store.attachments[0].body, /Exit Interview - Sheldon Martin #0714\.pdf/);
+      assert.equal(store.driveFiles.length, 1);
+      assert.equal(store.driveFiles[0].folderId, '1v_TESTFOLDER_abc');
+      const pdf = Buffer.from(store.driveFiles[0].data, 'base64').toString('latin1');
+      assert.match(pdf, /^%PDF/);
+      assert.match(pdf, /What was your reason for joining Symbiz\?/);
+      assert.match(pdf, /Time commitment: Busy season/);
+      assert.match(pdf, /02\/24\/2024/);
+      // And by email, with the same form attached
       const exit = sent.filter(s => /Exit interview to enter in Zoho/.test(s.subject));
       assert.deepEqual(exit.map(s => s.to), ['office@x.test']);
       assert.match(exit[0].html, /Exit Ring/);
-      assert.match(exit[0].html, /Reason for leaving: Time/);
+      assert.match(exit[0].html, /Busy season/);
+      assert.match(exit[0].html, /attached to the member in Zoho/);
+      assert.equal(exit[0].attachments[0].filename, 'Exit Interview - Sheldon Martin #0714.pdf');
+      const rows = await db.query("SELECT status FROM exit_forms");
+      assert.ok(rows.every(r => r.status === 'done'), JSON.stringify(rows));
     } finally {
       reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
       await db.q.setSetting('exitInterviewNotify', '');
+      await db.q.setSetting('exitInterviewFolder', '');
+      await db.q.setSetting('gdrive', '');
     }
   });
 

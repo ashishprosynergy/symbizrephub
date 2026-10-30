@@ -105,6 +105,11 @@ function tablePDF({ title, subtitle = '', columns, rows, footer, note }) {
   }
   pages.push(body);
 
+  return assemble(pages, PAGE_W, PAGE_H);
+}
+
+/** Pages of drawing commands → a PDF with Helvetica and Helvetica-Bold */
+function assemble(pages, pageW, pageH) {
   // Objects: 1 catalog, 2 page tree, 3-4 fonts, then a page + content per page
   const objs = [];
   const kids = pages.map((_, i) => `${5 + i * 2} 0 R`).join(' ');
@@ -113,7 +118,7 @@ function tablePDF({ title, subtitle = '', columns, rows, footer, note }) {
   objs.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
   objs.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
   pages.forEach((content, i) => {
-    objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] ` +
+    objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW} ${pageH}] ` +
       `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${6 + i * 2} 0 R >>`);
     objs.push(`<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`);
   });
@@ -131,4 +136,81 @@ function tablePDF({ title, subtitle = '', columns, rows, footer, note }) {
   return Buffer.from(out, 'latin1');
 }
 
-module.exports = { tablePDF };
+/* Words broken onto lines no wider than `width` */
+function wrap(text, width, size) {
+  const max = Math.max(10, Math.floor(width / (size * 0.52)));
+  const lines = [];
+  String(text == null ? '' : text).split(/\r?\n/).forEach(para => {
+    let line = '';
+    clean(para).split(' ').forEach(word => {
+      while (word.length > max) { if (line) { lines.push(line); line = ''; } lines.push(word.slice(0, max)); word = word.slice(max); }
+      const next = line ? line + ' ' + word : word;
+      if (next.length > max) { lines.push(line); line = word; } else line = next;
+    });
+    lines.push(line);
+  });
+  return lines;
+}
+
+/**
+ * A filled-in paper form, portrait: details in two columns, then each
+ * question with its answer underneath (the Growth Ring Exit Interview).
+ * @param {object} o
+ * @param {string} o.title
+ * @param {Array<[string, string]>} o.details   label, value pairs, two to a row
+ * @param {Array<{q:string, a:string}>} o.questions
+ * @param {Array<[string, string]>} [o.signoff]  e.g. Interviewer, Reviewed by
+ * @param {string} [o.note]  small print at the foot
+ * @returns {Buffer}
+ */
+function formPDF({ title, details = [], questions = [], signoff = [], note }) {
+  const W = 612, H = 792, M = 54, BODY = 10.5, LINE = 14.5;
+  const pages = [];
+  let body = '', y = 0;
+  const text = (t, x, yy, font, size, colour = '0 g') => `${colour} BT /${font} ${size} Tf ${x.toFixed(2)} ${yy.toFixed(2)} Td ${pdfStr(t)} Tj ET\n`;
+  const rule = yy => `0.75 G 0.5 w ${M} ${yy.toFixed(2)} m ${W - M} ${yy.toFixed(2)} l S\n`;
+  const start = () => {
+    body = text('Symbiz Network', M, H - M, 'F2', 11, '0.18 0.32 0.2 rg') + text(title, M, H - M - 24, 'F2', 17);
+    y = H - M - 50;
+  };
+  const room = need => { if (y - need < M + 20) { pages.push(body); start(); } };
+  start();
+  const colW = (W - M * 2) / 2;
+  for (let i = 0; i < details.length; i += 2) {
+    room(LINE * 2);
+    [details[i], details[i + 1]].forEach((d, k) => {
+      if (!d) return;
+      const x = M + k * colW;
+      body += text(d[0] + ':', x, y, 'F2', BODY);
+      body += text(fit(d[1] || '-', colW - 10 - textWidth(d[0] + ': ', BODY), BODY), x + textWidth(d[0] + ': ', BODY) + 4, y, 'F1', BODY);
+    });
+    y -= LINE + 6;
+  }
+  y -= 6;
+  questions.forEach(({ q, a }) => {
+    const lines = wrap(a && String(a).trim() ? a : '-', W - M * 2 - 10, BODY);
+    room(LINE * 2 + Math.min(lines.length, 3) * LINE);
+    body += text(q, M, y, 'F2', BODY + 0.5);
+    y -= LINE + 2;
+    lines.forEach(l => { room(LINE); body += text(l, M + 10, y, 'F1', BODY); y -= LINE; });
+    body += rule(y + 4);
+    y -= 12;
+  });
+  if (signoff.length) {
+    y -= 8;
+    for (let i = 0; i < signoff.length; i += 2) {
+      room(LINE * 2);
+      [signoff[i], signoff[i + 1]].forEach((d, k) => {
+        if (!d) return;
+        const x = M + k * colW;
+        body += text(d[0] + ':', x, y, 'F2', BODY) + text(fit(d[1] || '', colW - 90, BODY), x + textWidth(d[0] + ': ', BODY) + 4, y, 'F1', BODY);
+      });
+      y -= LINE + 6;
+    }
+  }
+  if (note) body += text(note, M, M - 10, 'F1', 7.5, '0.45 g');
+  pages.push(body);
+  return assemble(pages, W, H);
+}
+
+module.exports = { tablePDF, formPDF };
