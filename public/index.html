@@ -532,7 +532,14 @@
   .powered{margin-top:22px;padding-top:14px;border-top:1px solid var(--line);text-align:center;font-size:12px;
     color:var(--ink-faint);letter-spacing:.01em;}
   .powered strong{color:var(--ink-muted);font-weight:600;}
-  .grecaptcha-badge{visibility:hidden;}   /* v3's floating badge would cover the phone tab bar; the note above credits Google */
+  .grecaptcha-badge{visibility:hidden;}
+  /* Approvals: one compact row per item, details folded */
+  .appr-list{padding:2px 14px;margin-bottom:10px}
+  .appr-list .pend-row{padding:9px 0}
+  .appr-list .pend-more{margin-top:3px}
+  .appr-list .pend-more summary{font-size:12px;color:var(--ink-muted);cursor:pointer}
+  .appr-none{font-size:13px;color:var(--ink-muted);padding:4px 2px 12px}
+  .appr-toggle{margin:0 0 10px}   /* v3's floating badge would cover the phone tab bar; the note above credits Google */
   .perm-all{background:var(--surface-2);border-radius:8px;padding-left:10px;padding-right:0;}
 
   /* 2-step code screen and the owner's lock screen */
@@ -3148,12 +3155,13 @@ function vApprovals(){
   const waiting = asks.filter(p=>p.status==='pending');
   // Sent back: the rep has it with the reason; it no longer needs the office
   const decided = asks.filter(p=>p.status==='approved').slice(0,20);
+  // Decided ones stay out of the way until asked for
   const zohoAsks = `
     <h3 class="sub-h">Requests to add to Zoho · ${waiting.length}</h3>
-    <div class="row-sub" style="margin-bottom:10px">Registrations, cancellations and leads submitted by reps.
-      Nothing reaches the CRM until you approve it here.</div>
-    ${waiting.length ? pendingRows(waiting, true) : `<div class="empty">Nothing waiting.</div>`}
-    ${decided.length ? `<h3 class="sub-h">Recently decided</h3>${pendingRows(decided, false)}` : ''}
+    ${waiting.length ? `<div class="card appr-list">${pendingRows(waiting, true)}</div>` : `<div class="appr-none">Nothing waiting. Registrations, cancellations and leads from reps land here before Zoho.</div>`}
+    ${decided.length ? `<button class="btn sm ghost appr-toggle" onclick="ui.showDecided=!ui.showDecided;renderContent()">
+        ${ui.showDecided ? 'Hide decided' : `Show recently decided (${decided.length})`}</button>
+      ${ui.showDecided ? `<div class="card appr-list">${pendingRows(decided, false)}</div>` : ''}` : ''}
   `;
   // Hours and expenses reps have submitted: the first thing to approve
   const claims = can('accounting') ? [...S.timeEntries.filter(t => t.status === 'Submitted').map(t => ({ ...t, kind:'time' })),
@@ -3254,22 +3262,22 @@ async function returnBatchInApp(id){
 }
 function vApprovalsInner(extra){
   const pend=S.rings.filter(r=>r.status==='pending');
-  const rows=pend.map(r=>{const f=fac(r.facId);return `<div class="card">
-    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
-      <div><div class="row-title">${esc(r.name)}</div><div class="row-sub">${pname(r.repId)} · submitted ${fmt(r.createdAt)}</div></div>
-      <div class="status pending"><span class="dot"></span>Pending</div></div>
-    <div class="kv" style="margin-top:10px"><span class="k">Facilitator</span><span>${f?esc(f.name):'—'}${f?` · ${esc(f.phone)}`:''}</span></div>
-    <div class="kv"><span class="k">Facilitator calls</span><span>${r.facFreq}</span></div>
-    <div class="kv"><span class="k">Member calls</span><span>${r.memFreq}</span></div>
-    <div class="kv"><span class="k">Meets</span><span>${r.meetingRhythm}</span></div>
-    <div class="kv"><span class="k">Group size limit</span><span>${r.capacity}</span></div>
-    <div class="btnrow" style="margin-top:13px">
+  const rows=pend.map(r=>{const f=fac(r.facId);return `<div class="row pend-row">
+    <div class="row-main"><div class="row-title">${esc(r.name)}</div>
+      <div class="row-sub">${pname(r.repId)} · submitted ${fmt(r.createdAt)}${f?' · facilitator '+esc(f.name):''}</div>
+      <details class="pend-more"><summary>Details</summary>
+        <div class="kv"><span class="k">Facilitator</span><span>${f?esc(f.name):'—'}${f&&f.phone?` · ${esc(f.phone)}`:''}</span></div>
+        <div class="kv"><span class="k">Facilitator calls</span><span>${r.facFreq}</span></div>
+        <div class="kv"><span class="k">Member calls</span><span>${r.memFreq}</span></div>
+        <div class="kv"><span class="k">Meets</span><span>${r.meetingRhythm}</span></div>
+        <div class="kv"><span class="k">Group size limit</span><span>${r.capacity}</span></div></details></div>
+    <div class="row-actions">
       <button class="btn primary sm" onclick="approve('${r.id}')">Approve</button>
-      <button class="btn sm" onclick="openEditRing('${r.id}',true)">Edit and approve</button>
-      <button class="btn danger sm" onclick="openReject('${r.id}')">Send back</button></div></div>`;}).join('')
-    ||`<div class="empty">Nothing waiting on your review.</div>`;
+      <button class="btn sm" onclick="openEditRing('${r.id}',true)">Edit</button>
+      <button class="btn sm" onclick="openReject('${r.id}')">Send back</button></div></div>`;}).join('');
   return `${extra||''}
-    <div class="section-head"><div><h2>Growth Rings awaiting approval</h2><div class="sub">New Growth Rings reps have submitted.</div></div></div>${rows}`;
+    <h3 class="sub-h">Growth Rings awaiting approval · ${pend.length}</h3>
+    ${rows ? `<div class="card appr-list">${rows}</div>` : `<div class="appr-none">No new Growth Rings waiting.</div>`}`;
 }
 
 function vCoverage(){
@@ -7044,7 +7052,7 @@ function pendingRows(list, canDecide){
         ${p.status==='approved'&&p.zoho_id?` · <span style="color:var(--primary)">in Zoho</span>`:''}
         ${p.status==='pending'&&p.error?` · <span style="color:var(--rust)">last try failed: ${esc(p.error)}</span>`:''}</div>
       ${p.status==='pending' && pendingDupes(p).length ? `<div class="dup-note">${pendingDupes(p).map(x => `<div>⚠ ${x.where === 'zoho' ? `Already registered in Zoho as <strong>${esc(x.name || '')}</strong>${x.date ? ' on ' + fmt(x.date) : ''}` : `Also waiting on Approvals${x.by ? ' (from ' + esc(x.by) + ')' : ''}`} — ${esc(x.why.join(', '))}</div>`).join('')}</div>` : ''}
-      <details class="pend-more" ${canDecide && p.status==='pending' ? 'open' : ''}><summary>What was filled in</summary>${pendingDetails(p)}</details>
+      <details class="pend-more"><summary>Details</summary>${pendingDetails(p)}</details>
     </div>
     <div class="row-actions">
       ${p.status==='pending'
