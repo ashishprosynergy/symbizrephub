@@ -8879,7 +8879,13 @@ async function loadFromServer(){
 
   try{
     // Pass one: just the rings. Fast, and it is what every screen keys off.
-    const rawRings = await API.rings(asRep);
+    // Asked twice before giving up: a deploy switching over, or Zoho pausing
+    // for a moment, should not put "Couldn't reach the server" on screen
+    const rawRings = await API.rings(asRep).catch(async e => {
+      if(e.message === 'SESSION_EXPIRED' || e.status === 401 || e.status === 403) throw e;
+      await new Promise(r => setTimeout(r, 1500));
+      return API.rings(asRep);
+    });
     const rings = (rawRings||[]).map(adapt.ring);
     loadError = null;
     S.rings = rings;
