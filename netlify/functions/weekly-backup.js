@@ -11,7 +11,9 @@ const crypto = require('crypto');
 const { schedule } = require('@netlify/functions');
 const cfg = require('../../src/config');
 
-module.exports.handler = schedule('0 7 * * *', async () => {
+// 03:00 UTC: 11 pm Eastern, when reps are not using the app. It used to run at
+// 07:00 UTC, the middle of the working day in India, and slowed the app there.
+module.exports.handler = schedule('0 3 * * *', async () => {
   try {
     const site = process.env.URL || cfg.appUrl;
     const key = crypto.createHmac('sha256', cfg.jwtSecret).update('books-background').digest('hex');

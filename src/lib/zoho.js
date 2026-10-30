@@ -147,7 +147,10 @@ async function request(path, { method = 'GET', body, query, _attempt = 0, _inner
       return request(path, { method, body, query, _attempt: _attempt + 1 });
     }
 
-    if (!res.ok) throw new ZohoError(`Zoho ${method} ${path} failed`, res.status, json);
+    if (!res.ok) {
+      const why = [json && json.code, json && json.message].filter(Boolean).join(': ');
+      throw new ZohoError(`Zoho ${method} ${path} failed (${res.status}${why ? ' ' + why : ''})`, res.status, json);
+    }
     return json;
   } finally {
     // release only if this frame still holds the slot
@@ -275,7 +278,10 @@ const inflight = new Map();      // the same question asked twice at once goes t
  * Pages are fetched a few at a time so long lists stay quick.
  */
 const PAGE = 200, MAX_ROWS = 10000, WAVE = 4;
-async function coqlPaged(selectQuery) {
+/* `gentle`: one page at a time with a short pause between, for the overnight
+   copy of whole modules. Four pages at once there took Zoho's room for COQL,
+   and people using the app saw "Zoho POST /coql failed" while it ran. */
+async function coqlPaged(selectQuery, { gentle = false } = {}) {
   const m = selectQuery.match(/\blimit\s+200\s*$/i);
   const one = async q => (await request('/coql', { method: 'POST', body: { select_query: q } }))?.data || [];
   if (!m) return one(selectQuery);
@@ -285,7 +291,8 @@ async function coqlPaged(selectQuery) {
   const rows = await page(0);
   let offset = PAGE, done = rows.length < PAGE;
   while (!done && offset < MAX_ROWS) {
-    const offsets = Array.from({ length: WAVE }, (_, i) => offset + i * PAGE).filter(o => o < MAX_ROWS);
+    if (gentle) await sleep(400);
+    const offsets = Array.from({ length: gentle ? 1 : WAVE }, (_, i) => offset + i * PAGE).filter(o => o < MAX_ROWS);
     const pages = await Promise.all(offsets.map(page));
     for (const p of pages) { rows.push(...p); if (p.length < PAGE) { done = true; break; } }
     offset += offsets.length * PAGE;

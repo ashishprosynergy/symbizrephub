@@ -48,7 +48,7 @@
 
 # Every night: copy Zoho into our database, then email the backup when due
 [functions."weekly-backup"]
-  schedule = "0 7 * * *"
+  schedule = "0 3 * * *"   # 11 pm Eastern: reps are not using the app
 
 # The offline worker must always be checked for a newer version
 [[headers]]

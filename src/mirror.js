@@ -33,7 +33,7 @@ async function readAll(module, fields) {
   const ask = async group => {
     const cols = ['id', ...group.filter(f => f !== 'id')];
     try {
-      const rows = await zoho.coqlPaged(`select ${cols.join(', ')} from ${module} where id is not null limit 200`);
+      const rows = await zoho.coqlPaged(`select ${cols.join(', ')} from ${module} where id is not null limit 200`, { gentle: true });
       rows.forEach(r => byId.set(r.id, Object.assign(byId.get(r.id) || {}, r)));
     } catch (e) {
       if (group.length === 1) { skipped.push(group[0]); return; }
