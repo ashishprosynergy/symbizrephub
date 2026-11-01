@@ -1114,13 +1114,13 @@ function withMembership(m, by) {
  * Worked out by diffing active members against the join table, because
  * Contacts cannot be filtered on the group lookup.
  */
-r.get('/members/no-ring', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
+r.get('/members/no-ring', auth.authRequired, wrap(async (req, res) => {
   // Page the join table and the member list in parallel — these are the two
   // slowest calls in the app and they do not depend on each other.
   // Every row of each (paged inside zoho.coql). A failure is reported, not
   // turned into a shorter list that looks right.
   const [links, members] = await Promise.all([
-    zoho.coql(queries.allGroupMembers()), zoho.coql(queries.allActiveMembers()),
+    zoho.coql(queries.allGroupMembers()), zoho.coql(queries.allActiveMembers().replace(' from ', ', Region_Rep from ')),
   ]);
   const linkPages = [links], memberPages = [members];
   const inAGroup = new Set();
@@ -1129,8 +1129,8 @@ r.get('/members/no-ring', auth.authRequired, auth.requireOffice, wrap(async (req
   // A rep should see the unaffiliated members in THEIR patch, not the whole
   // network. Their patch is the set of states their own rings cover.
   let repStates = null;
-  if (req.user.role === 'rep') {
-    const { rings } = await scopeRings(req.user, req.query.as);
+  if (req.user.role === 'rep' || req.query.as) {
+    const { rings, repContactId } = await scopeRings(req.user, req.query.as);
     const regionNames = new Set(rings.map(r => r.regionName).filter(Boolean));
     const memberStates = new Set();
     if (rings.length) {
@@ -1141,13 +1141,14 @@ r.get('/members/no-ring', auth.authRequired, auth.requireOffice, wrap(async (req
         mine.forEach(c => { if (c.Mailing_State) memberStates.add(c.Mailing_State); });
       }
     }
-    repStates = { regionNames, memberStates };
+    repStates = { regionNames, memberStates, repContactId };
   }
 
   const out = [];
   memberPages.flat().forEach(c => {
     if (inAGroup.has(c.id)) return;
-    if (repStates && repStates.memberStates.size && !repStates.memberStates.has(c.Mailing_State)) return;
+    // A rep's patch: the states their rings' members live in, and anyone Zoho names them Region Rep for
+    if (repStates && !(repStates.memberStates.has(c.Mailing_State) || (c.Region_Rep && c.Region_Rep.id === repStates.repContactId))) return;
     if (out.some(m => m.id === c.id)) return;
     out.push(fromZoho.member(c));
   });
@@ -1156,6 +1157,46 @@ r.get('/members/no-ring', auth.authRequired, auth.requireOffice, wrap(async (req
 }));
 
 /** Events the office has flagged Show_on_Portal — requests #2 and #4. */
+/* ═══════════ THE SYMBIZ CALENDAR ═══════════
+ * Weekly L10 calls, facilitator calls and forum calls, read from the
+ * calendar's private iCal link(s) in Access & security → Symbiz calendar,
+ * each with its Zoom or Zoho Meeting link. Fetched at most every 10 minutes;
+ * if the calendar cannot be reached, the last copy that worked is used. */
+const ical = require('./lib/ical');
+const calMem = new Map();                          // url → { at, text }
+// https only (webcal:// is the same link); plain http just for the test server on this machine
+const icalUrls = v => String(v || '').split(/[\s,]+/).map(s => s.trim().replace(/^webcal:/i, 'https:')).filter(u => /^(https:\/\/|http:\/\/127\.0\.0\.1[:/])\S+$/i.test(u));
+async function calendarText(url) {
+  const hit = calMem.get(url);
+  if (hit && Date.now() - hit.at < 10 * 60000) return hit.text;
+  const key = 'ical:' + crypto.createHash('sha256').update(url).digest('hex').slice(0, 24);
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000), headers: { Accept: 'text/calendar' } });
+    const text = await res.text();
+    if (!res.ok || !/BEGIN:VCALENDAR/.test(text)) throw new Error(res.ok ? 'that link is not a calendar (iCal) file' : `the calendar answered ${res.status}`);
+    calMem.set(url, { at: Date.now(), text });
+    query('INSERT INTO zoho_cache (key, body, at) VALUES ($1,$2,now()) ON CONFLICT (key) DO UPDATE SET body = EXCLUDED.body, at = now()', [key, text]).catch(() => {});
+    return text;
+  } catch (e) {
+    const saved = await query('SELECT body FROM zoho_cache WHERE key = $1', [key]).catch(() => []);
+    if (saved[0]) { calMem.set(url, { at: Date.now() - 8 * 60000, text: saved[0].body }); return saved[0].body; }
+    throw e;
+  }
+}
+r.get('/calendar/symbiz', auth.authRequired, wrap(async (req, res) => {
+  const urls = icalUrls(await setting('calendarFeeds', ''));
+  if (!urls.length) return res.json({ configured: false, items: [] });
+  const day = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null;
+  const from = day(req.query.from) || today(), to = day(req.query.to) || addDays(from, 45);
+  const fromMs = Date.parse(from + 'T00:00:00Z') - 864e5, toMs = Math.min(Date.parse(to + 'T23:59:59Z') + 864e5, fromMs + 200 * 864e5);
+  const keywords = String(await setting('calendarKeywords', 'L10, Facilitator, Forum')).split(',').map(s => s.trim()).filter(Boolean);
+  const texts = [], errors = [];
+  await Promise.all(urls.map(async (u, i) => {
+    try { texts[i] = await calendarText(u); } catch (e) { errors.push(`Calendar ${i + 1}: ${e.message}`); }
+  }));
+  res.json({ configured: true, items: ical.between(texts.filter(Boolean), fromMs, toMs, { keywords }), errors });
+}));
+
 r.get('/events', auth.authRequired, wrap(async (req, res) => {
   const rows = await zoho.coql(queries.portalEvents());
   res.json(rows.map(fromZoho.event));
@@ -3599,6 +3640,7 @@ const OFFICE_SETTINGS = {
   booksAuto: 'on', booksPayee: 'rep', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
   supportName: 'Ashish Raj', supportPhone: '540-212-9403',
   registrationApprovers: '', exitInterviewNotify: '', exitInterviewFolder: '', emailLinks: 'app',
+  calendarFeeds: '', calendarKeywords: 'L10, Facilitator, Forum',
 };
 
 /** Who to ring for help — shown on the sign-in screen, so no sign-in needed. */
@@ -3630,6 +3672,10 @@ r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
       return res.status(400).json({ error: 'That accounting address does not look like an email' });
     }
     if (k === 'emailLinks' && !['app', 'gmail'].includes(val)) continue;
+    if (k === 'calendarFeeds' && val && !icalUrls(val).length) {
+      return res.status(400).json({ error: 'Paste the calendar\'s iCal link: it starts https:// (Google: Settings → the calendar → Secret address in iCal format)' });
+    }
+    if (k === 'calendarFeeds') { calMem.clear(); val = icalUrls(val).join('\n'); }
     if (k === 'exitInterviewFolder' && val && !exits.folderId(val)) {
       return res.status(400).json({ error: 'Paste the link to the Google Drive folder (it has /folders/ in it)' });
     }

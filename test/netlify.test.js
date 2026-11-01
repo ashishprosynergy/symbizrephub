@@ -114,6 +114,16 @@ const fakeZoho = http.createServer((req, res) => {
       (store.attachments = store.attachments || []).push({ module: zatt[1], id: zatt[2], type: req.headers['content-type'], body });
       return json({ data: [{ code: 'SUCCESS', details: { id: 'ATT' + store.attachments.length } }] });
     }
+    // A fake Symbiz calendar (its private iCal link)
+    if (url.pathname === '/symbiz.ics') {
+      res.writeHead(200, { 'Content-Type': 'text/calendar' });
+      return res.end(['BEGIN:VCALENDAR', 'X-WR-TIMEZONE:America/New_York',
+        'BEGIN:VEVENT', 'UID:l10', 'SUMMARY:Weekly L10', 'DTSTART;TZID=America/New_York:20261006T090000', 'DTEND;TZID=America/New_York:20261006T100000',
+        'RRULE:FREQ=WEEKLY;BYDAY=TU', 'DESCRIPTION:Join Zoom\\nhttps://us02web.zoom.us/j/811?pwd=x', 'END:VEVENT',
+        'BEGIN:VEVENT', 'UID:fac', 'SUMMARY:Facilitator Call', 'DTSTART:20261105T190000Z', 'DURATION:PT1H',
+        'LOCATION:https://meeting.zoho.com/meeting/abc', 'END:VEVENT',
+        'BEGIN:VEVENT', 'UID:x', 'SUMMARY:Dentist', 'DTSTART:20261104T150000Z', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n'));
+    }
     // A fake Google Drive script (Apps Script web app), version 2
     if (url.pathname === '/drive-script') {
       const b = JSON.parse(body || '{}');
@@ -456,6 +466,34 @@ describe('netlify function handler', () => {
     const rows = await zoho.coqlPaged('select id, Gone_Field, Full_Name from Contacts where id is not null limit 200');
     assert.ok(rows.some(r => r.id === 'GONE1'), 'the query still answers');
     store.Contacts = store.Contacts.filter(c => c.id !== 'GONE1');
+  });
+
+  test('the Symbiz calendar: L10 and facilitator calls with their Zoom/Zoho links, for reps too', async () => {
+    assert.deepEqual(J(await invoke('GET', '/calendar/symbiz', { token: repToken })), { configured: false, items: [] });
+    assert.equal((await invoke('PUT', '/admin/settings', { token: officeToken, body: { calendarFeeds: 'not a link' } })).statusCode, 400);
+    const ok = await invoke('PUT', '/admin/settings', { token: officeToken, body: { calendarFeeds: `http://127.0.0.1:${FAKE_ZOHO_PORT}/symbiz.ics` } });
+    assert.equal(ok.statusCode, 200, ok.body);
+    const out = J(await handler({ httpMethod: 'GET', path: '/.netlify/functions/api/calendar/symbiz', rawUrl: 'https://example.netlify.app/.netlify/functions/api/calendar/symbiz',
+      headers: { authorization: `Bearer ${repToken}` }, queryStringParameters: { from: '2026-11-01', to: '2026-11-14' }, body: null, isBase64Encoded: false }, {}));
+    assert.equal(out.configured, true);
+    assert.deepEqual(out.items.map(i => [i.start, i.type]), [
+      ['2026-11-03T14:00:00.000Z', 'L10'], ['2026-11-05T19:00:00.000Z', 'Facilitator call'], ['2026-11-10T14:00:00.000Z', 'L10']]);
+    assert.equal(out.items[0].link, 'https://us02web.zoom.us/j/811?pwd=x');
+    assert.equal(out.items[1].link, 'https://meeting.zoho.com/meeting/abc');
+    await db.q.setSetting('calendarFeeds', '');
+  });
+
+  test('a rep sees the members in their area who are not in a Growth Ring', async () => {
+    const before = { c: store.Contacts, g: store.Group_Members };
+    store.Contacts = [
+      { id: 'NR1', Full_Name: 'In A Ring', Mailing_State: 'PA', Active: true, Status: 'Active' },
+      { id: 'NR2', Full_Name: 'Named To This Rep', Mailing_State: 'OH', Active: true, Status: 'Active', Region_Rep: { id: 'CONTACT_REP_1' } }];
+    store.Group_Members = [{ id: 'GM1', Members: { id: 'NR1' }, Growth_Ring_Groups: { id: 'GRX' } }];
+    try {
+      const res = await invoke('GET', '/members/no-ring', { token: repToken });
+      assert.equal(res.statusCode, 200, res.body);
+      assert.deepEqual(J(res).map(m => m.id), ['NR2']);
+    } finally { store.Contacts = before.c; store.Group_Members = before.g; }
   });
 
   test('reports stay office-only', async () => {

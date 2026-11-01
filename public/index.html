@@ -907,6 +907,8 @@
     border-radius:9px;padding:10px 12px;margin-bottom:8px}
   .ag-item.k-event{border-left-color:var(--rust)}
   .ag-item.k-visit{border-left-color:var(--info)}
+  .ag-item.k-call{border-left-color:var(--accent)}
+  .cal-chip.k-call{background:var(--accent-soft);color:var(--accent)}
   .ag-time{min-width:64px;font-size:12.5px;font-weight:600;color:var(--ink-muted);padding-top:2px}
   .ag-body{flex:1;min-width:0}
   @media (max-width:520px){ .ag-item{flex-direction:column;gap:3px} .ag-time{min-width:0} }
@@ -1365,7 +1367,9 @@ const API = {
   events(){ return this.call('/events'); },
   registrations(eventId){ return this.call('/events/'+eventId+'/registrations'); },
   visits(as){ return this.call('/visits' + (as ? '?as='+encodeURIComponent(as) : '')); },
-  membersNoRingLive(){ return this.call('/members/no-ring'); },
+  // A rep's own patch; the office previewing a rep asks for that rep's
+  membersNoRingLive(as){ return this.call('/members/no-ring' + (as ? '?as=' + encodeURIComponent(as) : '')); },
+  symbizCalendar(from, to){ return this.call(`/calendar/symbiz?from=${from}&to=${to}`); },
   time(){ return this.call('/time'); },
   addTime(d){ return this.call('/time',{method:'POST',body:JSON.stringify(d)}); },
   approveTime(id){ return this.call('/time/'+id+'/approve',{method:'POST'}); },
@@ -2573,7 +2577,10 @@ function vToday(){
       ${API.live
         // Their own numbers: calls logged this month, and their members
         ? `<div class="stat click" onclick="drill('progress')"><div class="n">${S.activities.filter(a => a.repId === ui.me && a.outcome && String(a.date).slice(0,7) === TODAY_S.slice(0,7)).length}</div><div class="l">Logged this month</div></div>
-           <div class="stat click" onclick="drill('people')"><div class="n">${activeMembers(ui.me).length}</div><div class="l">Your members</div></div>`
+           <div class="stat click" onclick="drill('people')"><div class="n">${activeMembers(ui.me).length}</div><div class="l">Your members</div></div>
+           <div class="stat click" onclick="drill('unaffiliated')" title="Active members in your area who are not in any Growth Ring">
+             <div class="n" style="color:var(--accent)">${(S.membersNoRing||[]).length || !loadingDetail ? (S.membersNoRing||[]).filter(m=>m.status==='active').length : '…'}</div>
+             <div class="l">Not in a Growth Ring</div></div>`
         : `<div class="stat click" onclick="drill('requests')"><div class="n">${reqs}</div><div class="l">Open requests</div></div>
            <div class="stat click" onclick="drill('unaffiliated')"><div class="n">${(S.membersNoRing||[]).filter(m=>m.status==='active').length}</div><div class="l">Members with no ring<br><span style="font-size:10px;opacity:.7">network-wide</span></div></div>`}
     </div>
@@ -2592,6 +2599,7 @@ function vToday(){
       return next.length?`<h3 class="sub-h">On your calendar</h3>`+next.map(i=>`<div class="row tight ${i.kind==='event'?'clicky':''}" ${i.kind==='event'?`onclick="openEvent('${i.id}')"`:''}>
         <div class="row-main"><div class="row-title">${esc(i.title)}</div>
         <div class="row-sub">${fmt(i.date)}${i.time?' at '+esc(i.time):''}${i.sub?' · '+esc(i.sub):''}</div></div>
+        ${i.kind==='call' && i.link ? `<a class="btn sm primary" href="${esc(i.link)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Join</a>` : ''}
         <span class="tag ${i.kind==='event'?'info':i.kind==='visit'?'ok':'later'}">${whenWords(i.date)}</span></div>`).join(''):''; })()}
     ${(() => {
       // How their calls are going, once there is something to show
@@ -4743,6 +4751,7 @@ function ACCESS_SECTIONS(){
     owner && { key:'signin', icon:'check', title:'Sign-in security', sub:`"I'm not a robot" ${on(a.captcha && a.captcha.siteKey)} · 2-step for ${['admin','staff','rep'].filter(k => ts[k]).map(k => ({admin:'directors',staff:'office',rep:'reps'})[k]).join(', ') || 'nobody'}` },
     owner && { key:'people', icon:'users', title:'People with office access', sub:`${(a.people || []).length} ${(a.people || []).length === 1 ? 'person' : 'people'} · directors and office staff` },
     can('settings') && { key:'registrations', icon:'check', title:'Office notifications', sub:`Registrations: ${s.registrationApprovers || 'nobody'} · Exit interviews: ${s.exitInterviewNotify || 'nobody'}` },
+    can('settings') && { key:'calendar', icon:'calendar', title:'Symbiz calendar', sub: s.calendarFeeds ? `Showing ${s.calendarKeywords || 'every'} calls on the calendar` : 'Not connected: weekly L10, facilitator and forum calls' },
     can('settings') && { key:'emaillinks', icon:'user', title:'Email buttons', sub: s.emailLinks === 'gmail' ? 'Open Gmail in the account each person signs in with' : "Open each computer's own email app" },
     can('books') && { key:'accounting', icon:'calendar', title:'Accounting', sub:`To ${s.accountingEmail || 'not set'} · ${String(s.accountingDay || '1') === 'Off' ? 'manual only' : 'automatically on day ' + (s.accountingDay || '1')}` },
     can('books') && { key:'books', icon:'folder', title:'Zoho Books', sub: booksInfo ? (booksInfo.connected ? `Connected · bills to the rep, hours weekly${booksInfo.failed && booksInfo.failed.length ? ` · ${booksInfo.failed.length} need attention` : ''}` : 'Not connected') : 'Bills, hourly rates and accounts' },
@@ -4792,6 +4801,17 @@ function accessSectionBody(sec){
       <div class="row-sub">The filled-in form (PDF) is saved there and attached to the member in Zoho. Uses the Google Drive script
         from Backup: update it to the latest copy, and share this folder with the Google account it runs as (Editor).</div>
     </div>`;
+  if(sec === 'calendar') return `<div class="card">
+      <div class="field"><label>The calendar's private iCal link</label>
+        <textarea rows="2" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" onchange="setSetting('calendarFeeds', this.value.trim()).then(checkSymbizCalendar)">${esc(s.calendarFeeds || '')}</textarea></div>
+      <div class="row-sub">Google Calendar: Settings → the Symbiz calendar → <strong>Secret address in iCal format</strong> → copy.
+        Zoho Calendar: the calendar's ⋮ menu → Share → <strong>Private iCal URL</strong>. One link per line for more than one calendar.
+        The Zoom or Zoho Meeting link is taken from each event, so no Zoom sign-in is needed.</div>
+      <div class="field" style="margin-top:14px"><label>Show events whose title has any of these words</label>
+        <input value="${esc(s.calendarKeywords ?? 'L10, Facilitator, Forum')}" onchange="setSetting('calendarKeywords', this.value.trim()).then(checkSymbizCalendar)"></div>
+      <div class="row-sub">Separate with commas. Leave empty to show every event on that calendar.</div>
+      <div id="calCheck" style="margin-top:12px"></div>
+    </div>`;
   if(sec === 'emaillinks') return `<div class="card">
       <div class="field"><label>When someone presses Email on a member or rep</label>
         <select onchange="setSetting('emailLinks', this.value)">
@@ -4809,6 +4829,19 @@ function accessSectionBody(sec){
   return '';
 }
 
+/** After the calendar link changes: what Rep Hub now sees in the next two weeks */
+async function checkSymbizCalendar(){
+  const el = () => document.getElementById('calCheck');
+  if(!el()) return;
+  el().innerHTML = '<div class="row-sub">Reading the calendar…</div>';
+  symbizCalls = { from: null, to: null, items: [], configured: null, errors: [] };
+  await loadSymbizCalls(TODAY_S, addDays(TODAY_S, 14));
+  if(!el()) return;
+  const c = symbizCalls;
+  el().innerHTML = c.errors.length ? `<div class="callout rust"><strong>Could not read it</strong>${esc(c.errors.join('; '))}</div>`
+    : !c.configured ? '' : `<div class="callout ok"><strong>${c.items.length} call${c.items.length===1?'':'s'} in the next two weeks</strong>
+      ${c.items.slice(0,6).map(i => `${esc(fmtShort(i.date))} ${esc(i.time)} · ${esc(i.title)}${i.link ? '' : ' (no meeting link)'}`).join('<br>')}</div>`;
+}
 function myAccessSummary(){
   const p = me().perms || {};
   const labels = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', rings:'Rings',
@@ -4963,7 +4996,7 @@ async function retryBooks(btn){
 // Settings the server acts on. These used to be kept only in this browser,
 // so the server never saw (for one) the accounting address typed in here.
 const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount',
-  'supportName','supportPhone','registrationApprovers','exitInterviewNotify','exitInterviewFolder','emailLinks'];
+  'supportName','supportPhone','registrationApprovers','exitInterviewNotify','exitInterviewFolder','emailLinks','calendarFeeds','calendarKeywords'];
 async function setSetting(k,v){
   S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`);
   if(k === 'supportName' || k === 'supportPhone'){
@@ -8967,7 +9000,8 @@ async function loadFromServer(){
         at>=0 ? S.facilitators[at] = entry : S.facilitators.push(entry);
       });
     }),
-    settle(API.membersNoRingLive(), v => { got.noRing = (v||[]).map(m=>adapt.member(m,{})); }),
+    settle(API.membersNoRingLive(previewRepId), v => { got.noRing = (v||[]).map(m=>adapt.member(m,{})); }),
+    loadSymbizCalls(TODAY_S, addDays(TODAY_S, 60)),
   ]);
   if(got.members){
     const byId = new Map(got.members.map(m => [m.id, m]));
@@ -8975,7 +9009,7 @@ async function loadFromServer(){
     (got.noRing || []).forEach(m => { if(!byId.has(m.id)) byId.set(m.id, { ...m, repId: isRep() ? ui.me : null }); });
     S.members = [...byId.values()];
   }
-  if(got.noRing) S.membersNoRing = got.noRing.map(m => ({ ...m, repId: null }));
+  if(got.noRing) S.membersNoRing = got.noRing.map(m => ({ ...m, repId: isRep() ? ui.me : null }));
 
   loadingDetail = false;
   lastLoadAt = Date.now();
@@ -9037,7 +9071,7 @@ async function loadSecondary(){
     API.visits().catch(()=>[]),
     API.time().catch(()=>[]),
     API.expenses().catch(()=>[]),
-    isOffice() ? API.membersNoRingLive().catch(()=>[]) : Promise.resolve([]),
+    API.membersNoRingLive(previewRepId).catch(()=>[]),
   ]);
 
   (facs||[]).forEach(f=>{
@@ -9050,7 +9084,7 @@ async function loadSecondary(){
   S.visits = (visits||[]).map(adapt.visit);
   S.timeEntries = (time||[]).map(adapt.timeEntry);
   S.expenses = (exp||[]).map(adapt.expense);
-  S.membersNoRing = (noRing||[]).map(m=>({...adapt.member(m, {}), repId:null}));
+  S.membersNoRing = (noRing||[]).map(m=>({...adapt.member(m, {}), repId: isRep() ? ui.me : null}));
   save();
   render();
 }
@@ -9494,8 +9528,26 @@ function recurringBetween(meetDay, fromISO, toISO) {
  * With a range, a ring that meets monthly appears on each meeting day in it;
  * without one, just its next meeting (what the home screen wants).
  */
+/* ── The Symbiz calendar: L10, facilitator and forum calls (Access & security →
+   Symbiz calendar). Times arrive in UTC and show in this device's time. ── */
+var symbizCalls = { from: null, to: null, items: [], configured: null, errors: [] };
+async function loadSymbizCalls(from, to){
+  if(!API.live) return;
+  if(symbizCalls.from && symbizCalls.from <= from && symbizCalls.to >= to && symbizCalls.at > Date.now() - 10*60000) return;
+  const f = symbizCalls.from && symbizCalls.from < from ? symbizCalls.from : from, t = symbizCalls.to && symbizCalls.to > to ? symbizCalls.to : to;
+  try{
+    const v = await API.symbizCalendar(f, t);
+    symbizCalls = { from: f, to: t, at: Date.now(), configured: !!v.configured, errors: v.errors || [],
+      items: (v.items || []).map(c => { const d = new Date(c.start);
+        const date = c.allDay ? c.date : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        return { ...c, date, time: c.allDay ? '' : d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }) }; }) };
+  }catch(e){ symbizCalls.errors = [e.message]; }
+}
 function calendarItems(repId, range) {
   const out = [];
+  symbizCalls.items.filter(c => !range || (c.date >= range.from && c.date <= range.to)).forEach(c => out.push({
+    kind: 'call', date: c.date, time: c.time, title: c.title, sub: c.type === 'Other' ? 'Symbiz calendar' : c.type,
+    where: c.where, link: c.link, id: c.id, repId: null }));
   const mine = r => !repId || r.repId === repId;
   myEvents(repId).forEach(e => out.push({
     kind: 'event', date: e.date, time: e.time, title: e.title, repId: e.repId || null,
@@ -9573,6 +9625,9 @@ function vCalendar() {
     return new Date(Date.UTC(y, m, 0)).toISOString().slice(0,10); })();
   const agendaEnd = addDays(TODAY_S, 30);
   const range = { from: monthStart < TODAY_S ? monthStart : TODAY_S, to: monthEnd > agendaEnd ? monthEnd : agendaEnd };
+  // The Symbiz calls for this stretch: fetched once, then the calendar redraws
+  if(API.live && !(symbizCalls.from && symbizCalls.from <= range.from && symbizCalls.to >= range.to))
+    loadSymbizCalls(range.from, range.to).then(() => { if(ui.view === 'calendar') renderContent(); });
   let items = calendarItems(repId, range).filter(i => !ui.calFilter || ui.calFilter === 'all' || i.kind === ui.calFilter);
 
   /**
@@ -9587,7 +9642,7 @@ function vCalendar() {
     items = items.filter(i => i.repId === repId);
     networkHidden = before - items.length;
   } else if(repId){
-    networkHidden = items.filter(i => i.kind === 'event' && !i.repId).length;
+    networkHidden = items.filter(i => (i.kind === 'event' || i.kind === 'call') && !i.repId).length;
   }
 
   const [yy, mm] = ui.calMonth.split('-').map(Number);
@@ -9652,6 +9707,7 @@ function vCalendar() {
     return n === 0 ? 'Today' : n === 1 ? 'Tomorrow'
       : new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }); };
   const actions = i => {
+    if (i.kind === 'call') return i.link ? `<a class="btn sm primary" href="${esc(i.link)}" target="_blank" rel="noopener">Join${/zoom/i.test(i.link) ? ' on Zoom' : /zoho/i.test(i.link) ? ' on Zoho' : ''}</a>` : '<span class="row-sub">No meeting link in the calendar</span>';
     if (i.kind === 'event') return `<button class="btn sm" onclick="openEvent('${i.id}')">Details${i.regs?` · ${i.regs} registered`:''}</button>
       <button class="btn sm" onclick="printSignInSheet('${i.id}')">Sign-in sheet</button>`;
     if (i.kind === 'visit') return `${i.repId === ui.me ? `<button class="btn sm primary" onclick="completeVisit('${i.id}')">Mark visited</button>` : ''}
@@ -9676,14 +9732,15 @@ function vCalendar() {
     : `<div class="empty">Nothing in the next 30 days.</div>`;
 
   return `<div class="section-head"><div><h2>Calendar</h2>
-    <div class="sub">Local events, ring visits, and when each of your groups meets.</div></div>
+    <div class="sub">Local events, ring visits, Symbiz calls, and when each of your groups meets.</div></div>
     <div class="btnrow" style="margin:0">
       ${isRep()?`<button class="btn sm primary" onclick="openVisit()">Schedule a visit</button>`:''}
       ${isOffice()?repPicker('calRep', PEOPLE.filter(p=>p.role==='rep'), ui.calRep, 'All reps'):''}</div></div>
 
     ${summary}
 
-    <div class="chips">${[['all','Everything'],['event','Local events'],['visit','Ring visits'],['meeting','Group meetings']]
+    ${symbizCalls.errors && symbizCalls.errors.length && isOffice() ? `<div class="callout rust" style="padding:9px 13px;font-size:12.5px"><strong>The Symbiz calendar could not be read</strong>${esc(symbizCalls.errors.join('; '))}</div>` : ''}
+    <div class="chips">${[['all','Everything'],['call','Symbiz calls'],['event','Local events'],['visit','Ring visits'],['meeting','Group meetings']]
       .map(([k,l])=>`<button class="chip ${((ui.calFilter||'all')===k)?'on':''}" onclick="ui.calFilter='${k}';renderContent()">${l}</button>`).join('')}</div>
 
     <div class="cal-head">
