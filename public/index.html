@@ -1070,6 +1070,23 @@
   .stats.mini{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
   .stats.mini .stat{flex:1 1 0;min-width:88px;padding:9px 11px;display:flex;flex-direction:column;gap:1px;}
   @media (max-width:520px){ .stats.mini{gap:6px;} .stats.mini .stat{min-width:0;padding:8px 8px;} .stats.mini .stat .n{font-size:20px;} .stats.mini .stat .l{font-size:10.5px;} .stats.mini .stat .l br, .stats.mini .stat .l span{display:none;} }
+  /* Phones: nothing squeezed or stacked on top of something else.
+     - Number tiles: rows of four (seven tiles in one row cut every label to "Awaitin approv")
+     - A list row whose buttons don't fit beside the text puts them underneath,
+       instead of squeezing the text to one word a line (Approvals, Hours)
+     - The calendar's month and arrows stay together on one line */
+  @media (max-width:600px){
+    .stats.mini{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));}
+    .stats.mini .stat{min-width:0;}
+    .stats.mini .stat .l{overflow-wrap:normal;word-break:normal;hyphens:none;}
+    .row{flex-wrap:wrap;row-gap:8px;}
+    .row-main{flex:1 1 190px;}
+    .row-actions{margin-left:auto;max-width:100%;}
+    .row-actions .tag{white-space:nowrap;}
+    .cal-head .seg-toggle{flex:0 0 100%;}
+    .cal-head strong{min-width:0;flex:1;text-align:center;}
+    .cal-head > span[style*="flex:1"]{display:none;}
+  }
   .mgr-card .more-pop{right:auto;}
   .stats.mini .stat .n{font-size:22px;}
   .stats.mini .stat .l{font-size:11.5px;line-height:1.25;}
@@ -1108,7 +1125,7 @@
   .more-menu > summary{list-style:none;}
   .more-menu > summary::-webkit-details-marker{display:none;}
   .more-pop{position:absolute;z-index:20;top:calc(100% + 6px);left:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;
-    box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px;display:flex;flex-direction:column;gap:4px;min-width:200px;}
+    box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px;display:flex;flex-direction:column;gap:4px;min-width:200px;max-width:calc(100vw - 16px);}
   .more-pop .btn{justify-content:flex-start;text-align:left;width:100%;}
   /* Small buttons side by side in a list row are easy to mis-tap on a phone */
   @media (max-width: 640px){
@@ -7274,6 +7291,16 @@ function openModal(h){ const b=document.getElementById('modalBody'); b.innerHTML
   document.documentElement.classList.add('modal-open'); }   // the page behind stays still
 // Typing in a form marks it, so a stray tap beside the box doesn't throw the work away
 document.addEventListener('input', e => { const b = document.getElementById('modalBody'); if(b && b.contains(e.target)) b.dataset.typed = '1'; }, true);
+// A menu opened near the right edge of a phone hung off the screen: shift it back on
+document.addEventListener('toggle', e => {
+  const d = e.target;
+  if(!(d instanceof HTMLDetailsElement) || !d.classList.contains('more-menu') || !d.open) return;
+  const pop = d.querySelector('.more-pop'); if(!pop) return;
+  pop.style.left = ''; pop.style.right = '';
+  const r = pop.getBoundingClientRect(), room = window.innerWidth - 8;
+  if(r.right > room) pop.style.left = (pop.offsetLeft - (r.right - room)) + 'px';
+  if(pop.getBoundingClientRect().left < 8) pop.style.left = (pop.offsetLeft + 8 - pop.getBoundingClientRect().left) + 'px';
+}, true);
 // A "Print or export" menu closes once something in it is picked, or on a tap elsewhere
 document.addEventListener('click', e => {
   document.querySelectorAll('details.more-menu[open]').forEach(d => {
