@@ -469,7 +469,10 @@ describe('netlify function handler', () => {
   });
 
   test('the Symbiz calendar: L10 and facilitator calls with their Zoom/Zoho links, for reps too', async () => {
+    await db.q.setSetting('calendarZoho', 'off');
     assert.deepEqual(J(await invoke('GET', '/calendar/symbiz', { token: repToken })), { configured: false, items: [] });
+    await db.q.setSetting('calendarZoho', 'on');
+    store.Events = [];
     assert.equal((await invoke('PUT', '/admin/settings', { token: officeToken, body: { calendarFeeds: 'not a link' } })).statusCode, 400);
     const ok = await invoke('PUT', '/admin/settings', { token: officeToken, body: { calendarFeeds: `http://127.0.0.1:${FAKE_ZOHO_PORT}/symbiz.ics` } });
     assert.equal(ok.statusCode, 200, ok.body);
@@ -481,6 +484,23 @@ describe('netlify function handler', () => {
     assert.equal(out.items[0].link, 'https://us02web.zoom.us/j/811?pwd=x');
     assert.equal(out.items[1].link, 'https://meeting.zoho.com/meeting/abc');
     await db.q.setSetting('calendarFeeds', '');
+  });
+
+  test('the Symbiz calendar also shows the calls booked as Meetings in Zoho CRM', async () => {
+    store.Events = [
+      { id: 'EV1', Event_Title: 'Weekly L10 Call', Start_DateTime: '2026-11-03T09:00:00-05:00', End_DateTime: '2026-11-03T10:00:00-05:00', Venue: 'https://us02web.zoom.us/j/811?pwd=x' },
+      { id: 'EV2', Event_Title: 'Forum call - Owners', Start_DateTime: '2026-11-06T19:00:00-05:00', End_DateTime: '2026-11-06T20:00:00-05:00', Venue: 'Online',
+        Description: 'Join: https://meeting.zoho.com/meeting/xyz' },
+      { id: 'EV3', Event_Title: 'Dentist', Start_DateTime: '2026-11-04T09:00:00-05:00' }];
+    try {
+      const out = J(await handler({ httpMethod: 'GET', path: '/.netlify/functions/api/calendar/symbiz', rawUrl: 'https://example.netlify.app/.netlify/functions/api/calendar/symbiz',
+        headers: { authorization: `Bearer ${repToken}` }, queryStringParameters: { from: '2026-11-01', to: '2026-11-14' }, body: null, isBase64Encoded: false }, {}));
+      assert.equal(out.configured, true);
+      assert.deepEqual(out.items.map(i => [i.title, i.type, i.date, i.link, i.where]), [
+        ['Weekly L10 Call', 'L10', '2026-11-03', 'https://us02web.zoom.us/j/811?pwd=x', ''],
+        ['Forum call - Owners', 'Forum call', '2026-11-06', 'https://meeting.zoho.com/meeting/xyz', 'Online']]);
+      assert.equal(out.items[1].start, '2026-11-07T00:00:00.000Z');
+    } finally { store.Events = []; }
   });
 
   test('a rep sees the members in their area who are not in a Growth Ring', async () => {

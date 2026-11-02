@@ -1183,18 +1183,47 @@ async function calendarText(url) {
     throw e;
   }
 }
+/* The same calls booked as Meetings in Zoho CRM (Activities → Meetings).
+   Each repeat of a Zoho meeting is its own record, so no repeat rules here;
+   the Zoom or Zoho Meeting link is read from the location or description. */
+async function zohoMeetings(fromMs, toMs, wanted) {
+  const iso = ms => new Date(ms).toISOString().slice(0, 10);
+  const rows = await zoho.coql(`select Event_Title, Start_DateTime, End_DateTime, All_day, Venue, Description from Events
+    where Start_DateTime between '${iso(fromMs)}T00:00:00+00:00' and '${iso(toMs)}T23:59:59+00:00' order by Start_DateTime limit 200`);
+  return rows.filter(e => e.Start_DateTime && wanted(e.Event_Title || '')).map(e => {
+    const start = new Date(e.Start_DateTime), end = e.End_DateTime ? new Date(e.End_DateTime) : new Date(+start + 3600e3);
+    const venue = String(e.Venue || '').trim();
+    return {
+      id: 'zoho|' + e.id, title: e.Event_Title, type: ical.kindOf(e.Event_Title), start: start.toISOString(), end: end.toISOString(),
+      allDay: !!e.All_day, date: String(e.Start_DateTime).slice(0, 10),   // Zoho sends the org's own clock time, so its date is the meeting's
+      link: ical.meetingLink(`${venue}\n${e.Description || ''}`), where: venue && !/^https?:/i.test(venue) ? venue : '',
+    };
+  });
+}
+
 r.get('/calendar/symbiz', auth.authRequired, wrap(async (req, res) => {
   const urls = icalUrls(await setting('calendarFeeds', ''));
-  if (!urls.length) return res.json({ configured: false, items: [] });
+  const fromZohoCrm = (await setting('calendarZoho', 'on')) === 'on';
+  if (!urls.length && !fromZohoCrm) return res.json({ configured: false, items: [] });
   const day = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null;
   const from = day(req.query.from) || today(), to = day(req.query.to) || addDays(from, 45);
   const fromMs = Date.parse(from + 'T00:00:00Z') - 864e5, toMs = Math.min(Date.parse(to + 'T23:59:59Z') + 864e5, fromMs + 200 * 864e5);
   const keywords = String(await setting('calendarKeywords', 'L10, Facilitator, Forum')).split(',').map(s => s.trim()).filter(Boolean);
+  const wanted = t => !keywords.length || keywords.some(k => t.toLowerCase().includes(k.toLowerCase()));
   const texts = [], errors = [];
-  await Promise.all(urls.map(async (u, i) => {
-    try { texts[i] = await calendarText(u); } catch (e) { errors.push(`Calendar ${i + 1}: ${e.message}`); }
-  }));
-  res.json({ configured: true, items: ical.between(texts.filter(Boolean), fromMs, toMs, { keywords }), errors });
+  let crm = [];
+  await Promise.all([
+    ...urls.map(async (u, i) => {
+      try { texts[i] = await calendarText(u); } catch (e) { errors.push(`Calendar ${i + 1}: ${e.message}`); }
+    }),
+    fromZohoCrm && zohoMeetings(fromMs, toMs, wanted).then(x => { crm = x; }, e => errors.push(`Zoho Meetings: ${e.message}`)),
+  ]);
+  // A call in both the calendar and Zoho shows once (same title, same start)
+  const items = ical.between(texts.filter(Boolean), fromMs, toMs, { keywords });
+  const have = new Set(items.map(x => x.title.toLowerCase() + '|' + x.start));
+  crm.forEach(x => { if (!have.has(x.title.toLowerCase() + '|' + x.start)) items.push(x); });
+  items.sort((a, b) => a.start.localeCompare(b.start));
+  res.json({ configured: true, items, errors });
 }));
 
 r.get('/events', auth.authRequired, wrap(async (req, res) => {
@@ -3640,7 +3669,7 @@ const OFFICE_SETTINGS = {
   booksAuto: 'on', booksPayee: 'rep', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
   supportName: 'Ashish Raj', supportPhone: '540-212-9403',
   registrationApprovers: '', exitInterviewNotify: '', exitInterviewFolder: '', emailLinks: 'app',
-  calendarFeeds: '', calendarKeywords: 'L10, Facilitator, Forum',
+  calendarFeeds: '', calendarKeywords: 'L10, Facilitator, Forum', calendarZoho: 'on',
 };
 
 /** Who to ring for help — shown on the sign-in screen, so no sign-in needed. */
@@ -3672,6 +3701,7 @@ r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
       return res.status(400).json({ error: 'That accounting address does not look like an email' });
     }
     if (k === 'emailLinks' && !['app', 'gmail'].includes(val)) continue;
+    if (k === 'calendarZoho' && !['on', 'off'].includes(val)) continue;
     if (k === 'calendarFeeds' && val && !icalUrls(val).length) {
       return res.status(400).json({ error: 'Paste the calendar\'s iCal link: it starts https:// (Google: Settings → the calendar → Secret address in iCal format)' });
     }

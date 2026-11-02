@@ -4768,7 +4768,7 @@ function ACCESS_SECTIONS(){
     owner && { key:'signin', icon:'check', title:'Sign-in security', sub:`"I'm not a robot" ${on(a.captcha && a.captcha.siteKey)} · 2-step for ${['admin','staff','rep'].filter(k => ts[k]).map(k => ({admin:'directors',staff:'office',rep:'reps'})[k]).join(', ') || 'nobody'}` },
     owner && { key:'people', icon:'users', title:'People with office access', sub:`${(a.people || []).length} ${(a.people || []).length === 1 ? 'person' : 'people'} · directors and office staff` },
     can('settings') && { key:'registrations', icon:'check', title:'Office notifications', sub:`Registrations: ${s.registrationApprovers || 'nobody'} · Exit interviews: ${s.exitInterviewNotify || 'nobody'}` },
-    can('settings') && { key:'calendar', icon:'calendar', title:'Symbiz calendar', sub: s.calendarFeeds ? `Showing ${s.calendarKeywords || 'every'} calls on the calendar` : 'Not connected: weekly L10, facilitator and forum calls' },
+    can('settings') && { key:'calendar', icon:'calendar', title:'Symbiz calendar', sub: (s.calendarFeeds || s.calendarZoho !== 'off') ? `Showing ${s.calendarKeywords || 'every'} calls from ${[s.calendarZoho !== 'off' && 'Zoho Meetings', s.calendarFeeds && 'the calendar link'].filter(Boolean).join(' and ')}` : 'Off: weekly L10, facilitator and forum calls' },
     can('settings') && { key:'emaillinks', icon:'user', title:'Email buttons', sub: s.emailLinks === 'gmail' ? 'Open Gmail in the account each person signs in with' : "Open each computer's own email app" },
     can('books') && { key:'accounting', icon:'calendar', title:'Accounting', sub:`To ${s.accountingEmail || 'not set'} · ${String(s.accountingDay || '1') === 'Off' ? 'manual only' : 'automatically on day ' + (s.accountingDay || '1')}` },
     can('books') && { key:'books', icon:'folder', title:'Zoho Books', sub: booksInfo ? (booksInfo.connected ? `Connected · bills to the rep, hours weekly${booksInfo.failed && booksInfo.failed.length ? ` · ${booksInfo.failed.length} need attention` : ''}` : 'Not connected') : 'Bills, hourly rates and accounts' },
@@ -4819,14 +4819,17 @@ function accessSectionBody(sec){
         from Backup: update it to the latest copy, and share this folder with the Google account it runs as (Editor).</div>
     </div>`;
   if(sec === 'calendar') return `<div class="card">
-      <div class="field"><label>The calendar's private iCal link</label>
+      <label class="row" style="gap:10px;cursor:pointer;flex-wrap:nowrap"><input type="checkbox" style="width:auto" ${s.calendarZoho !== 'off' ? 'checked' : ''}
+        onchange="setSetting('calendarZoho', this.checked ? 'on' : 'off').then(checkSymbizCalendar)">
+        <span><strong>Show the calls booked as Meetings in Zoho</strong><br><span class="row-sub">Zoho CRM → Activities → Meetings. The Zoom or Zoho Meeting link is taken from the meeting's location or description.</span></span></label>
+      <div class="field" style="margin-top:14px"><label>Also read this calendar's private iCal link (optional)</label>
         <textarea rows="2" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" onchange="setSetting('calendarFeeds', this.value.trim()).then(checkSymbizCalendar)">${esc(s.calendarFeeds || '')}</textarea></div>
       <div class="row-sub">Google Calendar: Settings → the Symbiz calendar → <strong>Secret address in iCal format</strong> → copy.
         Zoho Calendar: the calendar's ⋮ menu → Share → <strong>Private iCal URL</strong>. One link per line for more than one calendar.
         The Zoom or Zoho Meeting link is taken from each event, so no Zoom sign-in is needed.</div>
       <div class="field" style="margin-top:14px"><label>Show events whose title has any of these words</label>
         <input value="${esc(s.calendarKeywords ?? 'L10, Facilitator, Forum')}" onchange="setSetting('calendarKeywords', this.value.trim()).then(checkSymbizCalendar)"></div>
-      <div class="row-sub">Separate with commas. Leave empty to show every event on that calendar.</div>
+      <div class="row-sub">Separate with commas. Leave empty to show every meeting.</div>
       <div id="calCheck" style="margin-top:12px"></div>
     </div>`;
   if(sec === 'emaillinks') return `<div class="card">
@@ -5013,7 +5016,7 @@ async function retryBooks(btn){
 // Settings the server acts on. These used to be kept only in this browser,
 // so the server never saw (for one) the accounting address typed in here.
 const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount',
-  'supportName','supportPhone','registrationApprovers','exitInterviewNotify','exitInterviewFolder','emailLinks','calendarFeeds','calendarKeywords'];
+  'supportName','supportPhone','registrationApprovers','exitInterviewNotify','exitInterviewFolder','emailLinks','calendarFeeds','calendarKeywords','calendarZoho'];
 async function setSetting(k,v){
   S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`);
   if(k === 'supportName' || k === 'supportPhone'){
