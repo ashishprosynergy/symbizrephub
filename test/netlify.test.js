@@ -96,7 +96,8 @@ const fakeZoho = http.createServer((req, res) => {
       }
       if (p === '/invoices') return json({ code: 0, invoices: booksStore.invoices || [], page_context: { has_more_page: false } });
       if (p === '/bills' && req.method === 'GET') {
-        return json({ code: 0, bills: booksStore.bills.filter(b => b.bill_number === qs.get('bill_number')) });
+        return json({ code: 0, bills: booksStore.bills.filter(b => b.bill_number === qs.get('bill_number'))
+          .map(b => ({ ...b, vendor_name: b.vendor_name || (booksStore.contacts.find(c => c.contact_id === b.vendor_id) || {}).contact_name })) });
       }
       if (p === '/bills' && req.method === 'POST') {
         const b = { bill_id: 'B' + (booksStore.bills.length + 1), ...JSON.parse(body) };
@@ -1000,6 +1001,13 @@ describe('hours and expenses', () => {
       const rows = JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body);
       assert.ok(rows.filter(x => x.books_bill_id).length >= 2);
       assert.ok(rows.some(x => x.vendor === 'SHEETZ #0421'));
+
+      // A bill typed by hand with the same number, for another rep, is not taken as this one's
+      booksStore.bills.push({ bill_id: 'HAND1', bill_number: 'RH-990', vendor_name: 'Dave Mullet', line_items: [{}] });
+      await assert.rejects(books.billFor({ id: 990, rep_name: 'Lewis Yoder', category: 'Other', amount: 65.09, entry_date: '2026-11-05' },
+        { fallbackAccount: 'Rep Reimbursements' }), /already has a bill RH-990 for Dave Mullet, not Lewis Yoder/);
+      assert.equal((await books.billFor({ id: 990, rep_name: 'Dave Mullet #1405', category: 'Other', amount: 1, entry_date: '2026-11-05' },
+        { fallbackAccount: 'Rep Reimbursements' })).billId, 'HAND1', 'the same rep: it is the bill already made');
     } finally {
       cfg.books.orgId = ''; cfg.books.refreshToken = ''; reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
     }

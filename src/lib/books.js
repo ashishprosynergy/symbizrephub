@@ -171,15 +171,28 @@ const ATTACHABLE = /^(image\/(jpe?g|png|gif|bmp)|application\/pdf)$/i;
    Books vendor is just the name, and an existing one is used when there is. */
 const repName = n => String(n || '').replace(/\s*#\s*\d+\s*$/, '').trim();
 
-async function billFor(x, { payee = 'rep', fallbackAccount = '', accountMap = {}, approvedBy = '', receipt = null } = {}) {
-  const number = `RH-${x.id}`;
+/* The bill Rep Hub already made under this number, so a retry never makes it
+   twice. A bill someone typed by hand can carry the same number for someone
+   else (RH-7 for Dave while Rep Hub's expense 7 is Lewis's): that is not ours,
+   and taking it would mark this one paid on another rep's bill. */
+async function sameNumber(number, payeeName) {
   const existing = await call('/bills', { query: { bill_number: number } });
   const already = (existing.bills || []).find(b => b.bill_number === number);
-  if (already) return { billId: already.bill_id, note: 'already in Zoho Books' };
+  if (!already) return null;
+  const a = norm(repName(already.vendor_name)), b = norm(payeeName);
+  if (!a || a === b || a.startsWith(b + ' ') || b.startsWith(a + ' ')) return already;
+  throw new Error(`Zoho Books already has a bill ${number} for ${already.vendor_name}, not ${payeeName}. ` +
+    `Rename that bill's number in Zoho Books (it was not made by Rep Hub), then press Make bills now.`);
+}
 
+async function billFor(x, { payee = 'rep', fallbackAccount = '', accountMap = {}, approvedBy = '', receipt = null } = {}) {
+  const number = `RH-${x.id}`;
   const merchant = String(x.vendor || '').trim();
   const payeeName = payee === 'vendor' && merchant ? merchant : (repName(x.rep_name) || merchant);
   if (!payeeName) throw new Error('No rep name or vendor to bill');
+
+  const already = await sameNumber(number, payeeName);
+  if (already) return { billId: already.bill_id, note: 'already in Zoho Books' };
 
   const mapped = accountMap[x.category];
   const acct = (mapped && await accountId(mapped)) || (await accountId(x.category))
@@ -262,10 +275,9 @@ async function hoursBillFor(g, { rate, accountMap = {}, approvedBy = '' }) {
   // Numbered by the first entry in it, so a retry finds the bill it already made
   const ids = g.rows.map(r => Number(r.id)).sort((a, b) => a - b);
   const number = `RH-H${ids[0]}`;
-  const existing = await call('/bills', { query: { bill_number: number } });
-  const already = (existing.bills || []).find(b => b.bill_number === number);
-  if (already) return { billId: already.bill_id };
   const name = repName(g.rep);
+  const already = await sameNumber(number, name);
+  if (already) return { billId: already.bill_id };
   if (!(rate > 0)) throw new Error(`No hourly rate set for ${name || 'this rep'}. Set it in Access & security → Zoho Books → Hourly rates, then press Make bills now.`);
   const wanted = accountMap.Hours || DEFAULT_HOURS_ACCOUNT;
   const acct = (await accountId(wanted)) || (await accountId(DEFAULT_HOURS_ACCOUNT));
