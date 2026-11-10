@@ -820,7 +820,7 @@ r.post('/auth/elevate', auth.authRequired, wrap(async (req, res) => {
 
 r.get('/auth/me', auth.authRequired, wrap(async (req, res) => {
   const pending = (await q.pendingFor(req.user.id))?.c || 0;
-  res.json({ user: req.user, pendingSync: pending, prefs: { emailLinks: await setting('emailLinks', 'app') } });
+  res.json({ user: req.user, pendingSync: pending, prefs: { emailLinks: await setting('emailLinks', 'app'), mileageRate: await setting('mileageRate', '') } });
 }));
 
 r.post('/auth/password', auth.authRequired, wrap(async (req, res) => {
@@ -2648,7 +2648,14 @@ r.get('/expenses', auth.authRequired, wrap(async (req, res) => {
 
 r.post('/expenses', auth.authRequired, wrap(async (req, res) => {
   const b = req.body || {};
-  const amount = parseFloat(b.amount);
+  let amount = parseFloat(b.amount);
+  // Mileage at the office's rate: worked out here from the miles, so the
+  // amount on the claim is always miles × rate
+  const miles = parseFloat(b.miles), rate = parseFloat(await setting('mileageRate', ''));
+  if (b.category === 'Mileage' && miles > 0) {
+    if (miles > 5000) return res.status(400).json({ error: 'That is a lot of miles: please check the number' });
+    if (rate > 0) amount = Math.round(miles * rate * 100) / 100;
+  }
   if (!b.date || !amount || amount <= 0) return res.status(400).json({ error: 'A date and amount are required' });
   // A receipt is a data URI; cap it so one claim cannot fill the database
   if (b.receiptData && String(b.receiptData).length > 3_000_000) {
@@ -2686,7 +2693,7 @@ r.get('/accounting/pending', auth.authRequired, access.requirePerm('accounting')
   res.json({
     hours: approvedTime.reduce((s, t) => s + Number(t.hours), 0),
     amount: approvedExp.reduce((s, x) => s + Number(x.amount), 0),
-    missingReceipts: approvedExp.filter(x => !x.receipt_name).length,
+    missingReceipts: approvedExp.filter(x => !x.receipt_name && x.category !== 'Mileage').length,
     time: approvedTime, expenses: approvedExp,
   });
 }));
@@ -2752,6 +2759,8 @@ async function deliverToAccounting({ timeIds, expenseIds, actor, ip, site } = {}
   for (const [i, x] of e.entries()) {
     const ref = `E${i + 1}`;
     x.ref = ref;
+    // Mileage on their own car has no receipt to give: the miles are the proof
+    if (!x.receipt_name && x.category === 'Mileage') { x.receiptNote = 'Not needed (mileage)'; continue; }
     if (!x.receipt_name) { x.receiptNote = 'MISSING'; continue; }
     const row = await q.receiptFor(x.id).catch(() => null);
     const m = row && String(row.receipt_data || '').match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
@@ -3809,7 +3818,7 @@ const OFFICE_SETTINGS = {
   booksAuto: 'on', booksPayee: 'rep', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
   supportName: 'Ashish Raj', supportPhone: '540-212-9403',
   registrationApprovers: '', exitInterviewNotify: '', exitInterviewFolder: '', emailLinks: 'app',
-  calendarFeeds: '', calendarKeywords: 'L10, Facilitator, Forum', calendarZoho: 'on',
+  calendarFeeds: '', calendarKeywords: 'L10, Facilitator, Forum', calendarZoho: 'on', mileageRate: '',
 };
 
 /** Who to ring for help — shown on the sign-in screen, so no sign-in needed. */
@@ -3826,7 +3835,7 @@ r.get('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
 }));
 
 // Accounting and Books settings need the "books" capability; the rest need "settings"
-const BOOKS_SETTINGS = ['accountingEmail', 'accountingDay', 'booksAuto', 'booksPayee', 'booksAccount', 'booksAccountMap'];
+const BOOKS_SETTINGS = ['accountingEmail', 'accountingDay', 'booksAuto', 'booksPayee', 'booksAccount', 'booksAccountMap', 'mileageRate'];
 
 r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req, res) => {
   const saved = {};
@@ -3842,6 +3851,7 @@ r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
     }
     if (k === 'emailLinks' && !['app', 'gmail'].includes(val)) continue;
     if (k === 'calendarZoho' && !['on', 'off'].includes(val)) continue;
+    if (k === 'mileageRate' && val && !(Number(val) > 0 && Number(val) < 5)) return res.status(400).json({ error: 'The mileage rate is dollars a mile, like 0.70' });
     if (k === 'calendarFeeds' && val && !icalUrls(val).length) {
       return res.status(400).json({ error: 'Paste the calendar\'s iCal link: it starts https:// (Google: Settings → the calendar → Secret address in iCal format)' });
     }

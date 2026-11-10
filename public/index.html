@@ -1725,7 +1725,7 @@ function togglePassword(id, btn){
   try{ el.setSelectionRange(pos, pos); }catch(e){}
 }
 
-const EXPENSE_CATEGORIES = ['Mileage','Meals','Lodging','Event supplies','Printing','Other'];
+const EXPENSE_CATEGORIES = ['Mileage','Driver','Meals','Lodging','Event supplies','Printing','Other'];
 const EXPENSE_STATUS = ['Draft','Submitted','Approved','Reimbursed'];
 const REGIONS = ['Lancaster PA','Holmes County OH','Shenandoah VA'];
 /* Forms and documents reps need to hand. Replace url with the real Drive links. */
@@ -2273,7 +2273,7 @@ function openQuickAdd(){
   openModal(`<h3>Add</h3><p class="lead">What would you like to record?</p>
     <div class="quick-grid">
       <button class="quick" onclick="closeModal();openLog({})">${icon('phone',22)}<strong>Log a call</strong><span>or a meeting</span></button>
-      <button class="quick" onclick="closeModal();openExpense()">${icon('receipt',22)}<strong>Expense</strong><span>with receipt</span></button>
+      <button class="quick" onclick="closeModal();openExpense()">${icon('receipt',22)}<strong>Expense</strong><span>mileage, driver, receipt</span></button>
       <button class="quick" onclick="closeModal();openTime()">${icon('clock',22)}<strong>Hours</strong><span>time worked</span></button>
       <button class="quick" onclick="closeModal();openVisit()">${icon('pin',22)}<strong>Visit</strong><span>schedule one</span></button>
       <button class="quick wide" onclick="closeModal();${t?'stopTimer()':'openTimerStart()'}">${icon('timer',22)}
@@ -4803,6 +4803,10 @@ function accessMenu(){
 function accessSectionBody(sec){
   const s = S.settings;
   if(sec === 'accounting') return `<div class="card">
+      <div class="field"><label>Mileage rate (dollars a mile, on a rep's own car)</label>
+        <input type="number" step="0.01" min="0" max="5" placeholder="e.g. 0.70" value="${esc(s.mileageRate || '')}"
+          onchange="setSetting('mileageRate', this.value.trim())">
+        <div class="hint">The Mileage form multiplies the miles by this, so reps only enter where they drove. Leave empty to let them type the amount.</div></div>
       <div class="two">
         <div class="field"><label>Send hours and expenses to</label>
           <input value="${esc(s.accountingEmail || '')}" onchange="setSetting('accountingEmail', this.value)"></div>
@@ -5097,7 +5101,7 @@ async function retryBooks(btn){
 // Settings the server acts on. These used to be kept only in this browser,
 // so the server never saw (for one) the accounting address typed in here.
 const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount',
-  'supportName','supportPhone','registrationApprovers','exitInterviewNotify','exitInterviewFolder','emailLinks','calendarFeeds','calendarKeywords','calendarZoho'];
+  'supportName','supportPhone','registrationApprovers','exitInterviewNotify','exitInterviewFolder','emailLinks','calendarFeeds','calendarKeywords','calendarZoho','mileageRate'];
 async function setSetting(k,v){
   S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`);
   if(k === 'supportName' || k === 'supportPhone'){
@@ -10430,7 +10434,8 @@ function vTimesheet() {
           <button class="btn sm" onclick="repPDF(timesheetPDF)">Timesheet PDF</button>
           <button class="btn sm" onclick="repPDF(expenseReportPDF)">Expense claim PDF</button>
           <button class="btn sm" onclick="exportAccounting()">Spreadsheet (CSV)</button>
-          <button class="btn sm" onclick="exportAccountingPDF()">Full list PDF</button></div></details>
+          <button class="btn sm" onclick="exportAccountingPDF()">Full list PDF</button>
+          <button class="btn sm" onclick="printBlankClaimSheet()">Blank mileage &amp; driver sheet</button></div></details>
     </div>
     ${isOffice() ? (() => {
       const approved = [...S.timeEntries.filter(t => t.status === 'Approved'), ...S.expenses.filter(x => x.status === 'Approved')];
@@ -10707,10 +10712,64 @@ async function submitTime(e) {
   save(); queueWrite('time'); logAudit('Submitted hours'); closeModal(); toast('Hours submitted'); render();
 }
 
-function openExpense() {
+/* Mileage and drivers have their own short forms: the office asked for one
+   place reps fill these in, rather than a paper sheet. Mileage needs no receipt
+   and is worked out at the office's rate; a driver is paid back with their
+   name, the trip and what was paid. Everything else is the receipt form. */
+const mileRate = () => Number(S.settings && S.settings.mileageRate) || 0;
+function openExpense(kind) {
   pendingReceipt = null;
+  if(!kind) return openModal(`<h3>What are you claiming?</h3>
+    <div class="quick-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:8px">
+      <button class="quick" onclick="openExpense('mileage')">${icon('pin',22)}<strong>Mileage</strong><span>your own car, no receipt needed</span></button>
+      <button class="quick" onclick="openExpense('driver')">${icon('users',22)}<strong>Driver</strong><span>someone you paid to drive you</span></button>
+      <button class="quick" onclick="openExpense('receipt')">${icon('receipt',22)}<strong>Receipt</strong><span>meals, lodging, supplies, printing</span></button>
+    </div>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button></div>`);
+  const trip = `<div class="two">
+        <div class="field"><label>From</label><input name="from" required maxlength="80" placeholder="Town you left from"></div>
+        <div class="field"><label>To</label><input name="to" required maxlength="80" placeholder="Where you went"></div></div>
+      <label style="display:flex;align-items:center;justify-content:flex-start;gap:8px;padding:0 0 12px;font-weight:500;cursor:pointer"><input type="checkbox" name="round" style="width:auto;margin:0" checked> Round trip (there and back)</label>`;
+  const purpose = `<div class="field"><label>What was it for?</label><input name="purpose" required maxlength="200" placeholder="Visit to Group 12, IA/MO Summit set-up…"></div>`;
+  const receiptPick = (label, hint) => `<div class="field"><label>${label}</label>
+        <div class="btnrow">
+          <button type="button" class="btn" onclick="document.getElementById('receiptCamera').click()">Take a photo</button>
+          <button type="button" class="btn" onclick="document.getElementById('receiptInput').click()">Choose a PDF or file</button></div>
+        <input type="file" id="receiptCamera" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" onchange="handleReceiptPick(this)">
+        <input type="file" id="receiptInput" accept="application/pdf,image/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" onchange="handleReceiptPick(this)">
+        <div class="hint">${hint}</div><div id="receiptSlot"></div></div>`;
+  const actions = label => `<div class="m-actions"><button type="button" class="btn" onclick="openExpense()">Back</button>
+      <button type="submit" class="btn primary">${label}</button></div>`;
+  if(kind === 'mileage'){
+    const rate = mileRate();
+    return openModal(`<h3>Mileage</h3>
+      <p class="lead">Miles driven on your own car. No receipt needed.</p>
+      <form onsubmit="submitExpense(event,'mileage')">
+        <div class="field"><label>Date</label><input type="date" name="date" value="${TODAY_S}" required></div>
+        ${trip}
+        <div class="two">
+          <div class="field"><label>Total miles</label><input type="number" name="miles" step="0.1" min="0.1" max="5000" inputmode="decimal" required oninput="mileageTotal(this.form)"></div>
+          <div class="field"><label>Amount</label>${rate ? `<input name="amount" readonly tabindex="-1" style="background:var(--surface-2,#f4f3ef)" value="$0.00">
+            <div class="hint">At $${rate.toFixed(2)} a mile</div>` : `<input type="number" name="amount" step="0.01" min="0" placeholder="0.00" required>`}</div></div>
+        ${purpose}
+        ${actions('Submit mileage')}</form>`);
+  }
+  if(kind === 'driver'){
+    return openModal(`<h3>Driver</h3>
+      <p class="lead">Someone you paid to drive you. Add their bill or a photo of what you paid, if you have one.</p>
+      <form onsubmit="submitExpense(event,'driver')">
+        <div class="two">
+          <div class="field"><label>Date</label><input type="date" name="date" value="${TODAY_S}" required></div>
+          <div class="field"><label>Amount paid</label><input type="number" name="amount" step="0.01" min="0.01" placeholder="0.00" required></div></div>
+        <div class="field"><label>Driver's name</label><input name="vendor" required maxlength="120" placeholder="Who drove you (or their company)"></div>
+        ${trip}
+        <div class="field"><label>Miles (if you know them)</label><input type="number" name="miles" step="0.1" min="0" inputmode="decimal"></div>
+        ${purpose}
+        ${receiptPick("Driver's bill (optional)", "A photo of the bill or note from the driver helps the office, but isn't required.")}
+        ${actions('Submit driver')}</form>`);
+  }
   loadVendorSuggestions();
-  openModal(`<h3>Add an expense</h3>
+  openModal(`<h3>Receipt</h3>
     <p class="lead">Take a photo of the receipt or attach the PDF below. That's all the office needs.</p>
     <form onsubmit="submitExpense(event)">
       <div class="two">
@@ -10718,7 +10777,7 @@ function openExpense() {
         <div class="field"><label>Amount</label><input type="number" name="amount" step="0.01" min="0" placeholder="0.00" required></div>
       </div>
       <div class="two">
-        <div class="field"><label>Category</label><select name="category">${EXPENSE_CATEGORIES.map(c => `<option>${c}</option>`).join('')}</select></div>
+        <div class="field"><label>Category</label><select name="category">${EXPENSE_CATEGORIES.filter(c => c !== 'Mileage' && c !== 'Driver').map(c => `<option>${c}</option>`).join('')}</select></div>
         <div class="field"><label>Vendor / paid to</label>
           <input name="vendor" required maxlength="120" placeholder="e.g. Sheetz, Staples, Hampton Inn" autocomplete="off" list="vendorList">
           <datalist id="vendorList">${(booksVendors||[]).map(n => `<option value="${esc(n)}">`).join('')}</datalist></div>
@@ -10740,12 +10799,54 @@ function openExpense() {
                onchange="handleReceiptPick(this)">
         <div class="hint">A PDF, or a photo of the paper receipt. Photos are shrunk automatically; PDFs are kept as they are.</div>
         <div id="receiptSlot"></div></div>
-      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+      <div class="m-actions"><button type="button" class="btn" onclick="openExpense()">Back</button>
       <button type="submit" class="btn primary">Submit expense</button></div></form>`);
 }
-async function submitExpense(e) {
+/* For reps without the app: a page to print, fill in by hand and mail or
+   photograph back, with the same columns as the Mileage and Driver forms. */
+function printBlankClaimSheet(){
+  const rate = mileRate(), s = S.settings || {};
+  const rows = Array.from({ length: 14 }, () => '<tr>' + '<td>&nbsp;</td>'.repeat(8) + '</tr>').join('');
+  const w = window.open('', '_blank');
+  if(!w) return toast('Allow pop-ups to print the sheet');
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Mileage and driver claim</title>
+    <style>body{font-family:Arial,sans-serif;margin:24px;color:#111}h1{font-size:20px;margin:0 0 4px}.sub{color:#444;font-size:13px;margin-bottom:14px}
+      .who{display:flex;gap:24px;margin:10px 0 14px;font-size:14px}.who span{flex:1;border-bottom:1px solid #333;padding-bottom:16px}
+      table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{border:1px solid #555;padding:7px 5px;text-align:left;vertical-align:top}
+      th{background:#eee}td{height:26px}.note{font-size:12.5px;color:#333;margin-top:12px;line-height:1.5}
+      @page{size:letter landscape;margin:12mm}</style></head><body>
+    <h1>Symbiz Network: mileage and driver claim</h1>
+    <div class="sub">One line per trip. Mileage is your own car${rate ? `, paid at $${rate.toFixed(2)} a mile` : ''}; "Driver" is someone you paid to drive you.</div>
+    <div class="who"><span>Rep name:</span><span>Month:</span><span>Phone:</span></div>
+    <table><thead><tr><th style="width:9%">Date</th><th style="width:13%">From</th><th style="width:13%">To</th><th style="width:7%">Round trip?</th>
+      <th style="width:7%">Miles</th><th style="width:14%">Driver's name (if paid a driver)</th><th style="width:9%">Amount paid to driver</th><th>What was it for</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    <div class="note">Attach the driver's bill if you have one. Send this sheet to the office${s.accountingEmail ? ` (${esc(s.accountingEmail)})` : ''}, mail it, or photograph it and email it in.
+      Signed: ______________________ &nbsp; Date: __________</div>
+    <script>window.onload=()=>window.print()<\/script></body></html>`);
+  w.document.close();
+}
+function mileageTotal(f){
+  const rate = mileRate(), out = f.elements.namedItem('amount');
+  if(rate && out) out.value = money((parseFloat(f.elements.namedItem('miles').value) || 0) * rate);
+}
+async function submitExpense(e, kind) {
   e.preventDefault(); const f = e.target;
-  const base = {
+  let base;
+  if(kind === 'mileage' || kind === 'driver'){
+    const miles = parseFloat(fv(f, 'miles')) || 0, round = f.elements.namedItem('round').checked;
+    const route = `${fv(f, 'from').trim()} → ${fv(f, 'to').trim()}${round ? ' and back' : ''}`;
+    const rate = mileRate();
+    if(kind === 'mileage'){
+      base = { date: fv(f, 'date'), category: 'Mileage', miles, vendor: splitRepName(me().name || '').name,
+        amount: rate ? Math.round(miles * rate * 100) / 100 : (parseFloat(fv(f, 'amount')) || 0),
+        description: `${miles} miles, on personal vehicle: ${route}. ${fv(f, 'purpose').trim()}${rate ? ` (at $${rate.toFixed(2)} a mile)` : ''}` };
+    } else {
+      base = { date: fv(f, 'date'), category: 'Driver', miles, vendor: fv(f, 'vendor').trim(), amount: parseFloat(fv(f, 'amount')) || 0,
+        description: `Driver ${fv(f, 'vendor').trim()}: ${route}${miles ? `, ${miles} miles` : ''}. ${fv(f, 'purpose').trim()}` };
+    }
+    if(!(base.amount > 0)) return toast(kind === 'mileage' ? 'Enter the miles' : 'Enter what you paid');
+  } else base = {
     date: fv(f, 'date'), amount: parseFloat(fv(f, 'amount')) || 0,
     category: fv(f, 'category'), description: fv(f, 'description'),
     vendor: (fv(f, 'vendor') || '').trim(),

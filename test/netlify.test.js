@@ -1014,6 +1014,25 @@ describe('hours and expenses', () => {
     assert.ok(/Lunch with facilitator/.test(mail.html) && /23\.50/.test(mail.html));
   });
 
+  test('mileage is worked out from the miles at the office rate; reps see the rate; drivers are their own category', async () => {
+    assert.equal((await invoke('PUT', '/admin/settings', { token: officeToken, body: { mileageRate: 'abc' } })).statusCode, 400);
+    assert.equal((await invoke('PUT', '/admin/settings', { token: officeToken, body: { mileageRate: '0.70' } })).statusCode, 200);
+    try {
+      assert.equal(JSON.parse((await invoke('GET', '/auth/me', { token: repToken })).body).prefs.mileageRate, '0.70');
+      // Whatever amount the phone sent, the claim is miles × rate
+      const res = await invoke('POST', '/expenses', { token: repToken, body: { date: '2026-11-03', category: 'Mileage', miles: 170, amount: 999,
+        vendor: 'Test Rep', description: '170 miles, on personal vehicle: Arthur → Kalona and back. Summit set-up' } });
+      assert.equal(res.statusCode, 201, res.body);
+      const drv = await invoke('POST', '/expenses', { token: repToken, body: { date: '2026-11-05', category: 'Driver', amount: 65.09, vendor: 'TruLink', description: 'Driver TruLink' } });
+      assert.equal(drv.statusCode, 201);
+      const mine = JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body);
+      assert.equal(Number(mine.find(x => x.id === JSON.parse(res.body).id).amount), 119);
+      assert.equal(mine.find(x => x.id === JSON.parse(drv.body).id).category, 'Driver');
+      assert.equal((await invoke('POST', '/expenses', { token: repToken, body: { date: '2026-11-03', category: 'Mileage', miles: 99999, amount: 1 } })).statusCode, 400);
+      await db.query("DELETE FROM expenses WHERE id IN ($1, $2)", [JSON.parse(res.body).id, JSON.parse(drv.body).id]);
+    } finally { await db.q.setSetting('mileageRate', ''); }
+  });
+
   test('with Zoho Books connected, sent expenses become bills with receipts, once each', async () => {
     const cfg = require('../src/config');
     const books = require('../src/lib/books');

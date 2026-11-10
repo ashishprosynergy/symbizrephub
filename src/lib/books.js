@@ -388,7 +388,7 @@ const DEFAULT_FALLBACK = '5310 Contractor Reimbursements - Other';
 const DEFAULT_ACCOUNTS = {
   Mileage: '5300 Contractor Reimbursements - Mileage',
   Meals: DEFAULT_FALLBACK, Lodging: DEFAULT_FALLBACK, 'Event supplies': DEFAULT_FALLBACK,
-  Printing: DEFAULT_FALLBACK, Other: DEFAULT_FALLBACK,
+  Printing: DEFAULT_FALLBACK, Other: DEFAULT_FALLBACK, Driver: DEFAULT_FALLBACK,
   Hours: '5200 Regional Representatives',
 };
 async function accountMapSetting() {
