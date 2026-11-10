@@ -546,6 +546,25 @@ describe('netlify function handler', () => {
     }
   });
 
+  test('a lead registrant (Registrant_Lead) is the registrant, and a spouse sharing their details stays a guest', async () => {
+    // As Zoho holds it: Brad Nisly registered as a lead; Rosa, his wife, is ticked "Same as main registrant"
+    store.Event_Registrations = [{ id: 'REG2', Name: '1340', Event: { id: '998', name: 'KS Regional Summit' }, Registrant: 'Lead',
+      Registrant_Name: null, Registrant_Name1: null, Registrant_Lead: { id: 'L2392', name: 'Brad Nisly #2392' },
+      Email: 'brad.rosa.nisly@example.test', Bringing_Guest: 'Yes', Registration_Status: 'Attending' }];
+    store.Guests = [{ id: 'G3', Parent_Id: { id: 'REG2', name: '1340' }, Guest_First_Name: 'Rosa', Guest_Last_Name: 'Nisly',
+      Guest_Type: 'Spouse', Same_As_Main_Registrant: true, Guest_Email: 'brad.rosa.nisly@example.test' }];
+    try {
+      const res = await invoke('GET', '/events/998/registrations', { token: repToken });
+      assert.equal(res.statusCode, 200, res.body);
+      const [reg] = JSON.parse(res.body);
+      assert.equal(reg.name, 'Brad Nisly #2392');
+      assert.equal(reg.leadId, 'L2392');
+      assert.deepEqual(reg.guests.map(g => [g.name, g.type]), [['Rosa Nisly', 'Spouse']]);
+    } finally {
+      delete store.Event_Registrations; delete store.Guests;
+    }
+  });
+
   test('sync push is idempotent through the handler', async () => {
     const payload = { items: [{ clientUuid: 'fn-1', module: 'Rep_Activities', op: 'insert', payload: { type: 'Member Call', who: 'Z', date: '2026-09-18' } }] };
     const first = JSON.parse((await invoke('POST', '/sync/push', { token: repToken, body: payload })).body);

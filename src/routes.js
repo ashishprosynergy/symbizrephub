@@ -1281,8 +1281,14 @@ r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
     // on the guest list with the name left blank. Shown as a nameless guest, it
     // looked like the registrant was missing. Use it for their name if the
     // registration has none, and don't list them a second time as a guest.
+    // But the tick also marks a guest who shares the registrant's address and
+    // email (Rosa Nisly, Brad's wife, on his registration): a guest with their
+    // own name and type stays a guest.
+    const bare = s => String(s || '').replace(/\s*#\s*\d+\s*$/, '').trim().toLowerCase();
+    const isSelf = g => g.Same_As_Main_Registrant === true
+      && (!nameOf(g) || (base.name ? bare(nameOf(g)) === bare(base.name) : !g.Guest_Type));
     if (!base.name) {
-      const self = sub.find(g => g.Same_As_Main_Registrant === true && nameOf(g)) || null;
+      const self = sub.find(g => isSelf(g) && nameOf(g)) || null;
       if (self) base.name = nameOf(self);
     }
     // Still no name: say which record it is, so it can be found and fixed in Zoho
@@ -1291,7 +1297,7 @@ r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
     // it showed as "Guest name not in Zoho" under the registrant
     const blank = g => ![nameOf(g), g.Guest_Type, g.Guest_Organization, g.Guest_Email, g.Guest_Phone, g.Guest_Street, g.Guest_City]
       .some(v => String(v || '').trim());
-    const guests = sub.filter(g => !(g.Same_As_Main_Registrant === true) && !blank(g)).map(g => ({
+    const guests = sub.filter(g => !isSelf(g) && !blank(g)).map(g => ({
       name: nameOf(g),
       type: g.Guest_Type || 'Guest',
       business: g.Guest_Organization || '',
@@ -2255,7 +2261,7 @@ async function registrationDuplicates(eventId, p, { exceptPendingId } = {}) {
   ]);
   const inZoho = regs.filter(z => !/cancel/i.test(z.Registration_Status || '')).map(z => {
     const them = { contactId: z.Registrant_Name?.id || null, email: z.Guest_Email || '', phone: z.Phone || '',
-      name: z.Registrant_Name?.name || z.Registrant_Name1 || '' };
+      name: z.Registrant_Name?.name || z.Registrant_Lead?.name || z.Registrant_Name1 || '' };
     const why = samePerson(me, them);
     return why.length ? { where: 'zoho', id: z.id, name: them.name, date: z.Registration_Date || null, status: z.Registration_Status || '', why } : null;
   }).filter(Boolean);

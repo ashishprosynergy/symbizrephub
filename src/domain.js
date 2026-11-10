@@ -320,11 +320,13 @@ const fromZoho = {
     ref: z.Name,
     eventId: z.Event?.id || null,
     eventName: z.Event?.name || '',
-    name: z.Registrant_Name?.name || z.Registrant_Name1 || '',
+    // A member registers through Registrant_Name; someone not a member yet through Registrant_Lead
+    name: z.Registrant_Name?.name || z.Registrant_Lead?.name || z.Registrant_Name1 || '',
     contactId: z.Registrant_Name?.id || null,
+    leadId: z.Registrant_Lead?.id || null,
     business: z.Organization_Name?.name || z.Lead_Registrant_Organization || '',
     phone: z.Phone || '',
-    email: z.Guest_Email || '',
+    email: z.Email || '',
     status: z.Registration_Status || '',
     attended: z.Attended || '',
     bringingGuest: z.Bringing_Guest === 'Yes',
@@ -441,7 +443,7 @@ const queries = {
    * Guest_Type says whether it is a spouse or another guest.
    */
   registrationsFor: eventId =>
-    `select id, Name, Event, Registrant_Name, Registrant_Name1, Organization_Name,
+    `select id, Name, Event, Registrant_Name, Registrant_Lead, Registrant_Name1, Organization_Name, Email,
             Lead_Registrant_Organization, Phone, Guest_Email, Registration_Status, Attended,
             Bringing_Guest, Guest_First_Name, Guest_Last_Name, Guest_Organization, Guest_Phone,
             Guest_Email, Guest_Type, Guest_Attended, Guest_City,
