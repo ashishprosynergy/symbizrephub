@@ -1967,7 +1967,9 @@ function canView(v){
   if(!isOffice()) return true;
   if(v === 'settings') return can('settings') || can('books');
   // Office staff with accounting settings reach them here too (moved from Settings)
-  if(v === 'access') return API.live && (isOwner() || isAdmin() || can('books'));
+  // Everyone: each section inside checks its own permission (Mel needs the weekly
+  // rep email and Connect Claude; only the owner changes who can do what)
+  if(v === 'access') return !!API.live;
   return !VIEW_CAP[v] || can(VIEW_CAP[v]);
 }
 // The owner's password re-typed, for Access & security. Kept for this browser
@@ -4681,7 +4683,8 @@ function vAccess(){
     const sec = ui.accSec, item = ACCESS_SECTIONS().find(s => s.key === sec);
     if(item) return `<button class="back" onclick="ui.accSec=null;renderContent()">← Access &amp; security</button>
       <div class="section-head"><div><h2>${esc(item.title)}</h2></div></div>${accessSectionBody(sec)}`;
-    return head + `<div class="row-sub" style="margin:-4px 0 12px">${accessStatus.claimed ? esc(accessStatus.ownerName) + ' is the owner and decides what each role can do.' :
+    return head + `<div class="row-sub" style="margin:-4px 0 12px">${isRep() ? 'Your Email button, connecting Claude, and the devices you stay signed in on.'
+          : accessStatus.claimed ? esc(accessStatus.ownerName) + ' is the owner and decides what each role can do.' :
           'No owner yet: a director needs to claim ownership here.'}</div>
       ${accessMenu()}`;
   }
@@ -4811,6 +4814,7 @@ function ACCESS_SECTIONS(){
       : 'Copy of Zoho, Google Drive, email and downloads' },
     can('settings') && { key:'teamaccess', icon:'users', title:'Member Development and rep candidates', sub:'Who sees the Member Development dashboard and the rep candidates list' },
     !owner && { key:'mine', icon:'user', title:'What your account can do', sub:'The screens and areas open to you' },
+    API.live && { key:'claude', icon:'key', title:'Connect Claude', sub: Array.isArray(claudeLinks) ? (claudeLinks.length ? `${claudeLinks.length} link${claudeLinks.length === 1 ? '' : 's'} on · read only` : 'Let your Claude read Rep Hub as you') : 'Let your Claude read Rep Hub as you' },
     { key:'myemail', icon:'user', title:'Your Email button', sub: (s.myEmailLinks || s.emailLinks) === 'gmail' ? `Opens Gmail as ${s.emailFrom || (realMe() || {}).email || 'you'}` : "Opens your computer's own email app" },
     { key:'devices', icon:'pin', title:'Your trusted devices', sub: Array.isArray(myDevices) ? `${myDevices.length} device${myDevices.length===1?'':'s'} skip the emailed code` : 'Devices that skip the emailed code' },
   ].filter(Boolean);
@@ -4888,6 +4892,7 @@ function accessSectionBody(sec){
   if(sec === 'books') return `<div class="card" id="booksCard">${booksCard()}</div>`;
   if(sec === 'backup') return `<div class="card" id="backupCard">${backupCard()}</div>`;
   if(sec === 'mine') return myAccessSummary().replace(/<h3 class="sub-h">[^<]*<\/h3>/, '');
+  if(sec === 'claude') return claudeBox();
   if(sec === 'myemail'){
     const mode = s.emailLinksOwn || '', mine = (realMe() || {}).email || '';
     return `<div class="card">
@@ -4909,6 +4914,44 @@ function accessSectionBody(sec){
   return '';
 }
 
+/* Claude connector: each person's private link (Jeremy: "give my Claude access
+   to the Rep Hub"). Claude reads Rep Hub as them, never more, and can't change anything. */
+var claudeLinks = null, claudeNew = null;
+function loadClaudeLinks(){ API.call('/me/claude-links').then(v => { claudeLinks = v; if(ui.view === 'access') renderContent(); }).catch(() => { claudeLinks = []; }); }
+function claudeBox(){
+  if(!Array.isArray(claudeLinks)){ loadClaudeLinks(); return `<div class="card">${skeleton(3)}</div>`; }
+  return `<div class="card">
+    <div class="row-sub" style="line-height:1.6;margin-bottom:12px">Connect Claude and you can ask it things like <em>"Which of my members haven't been called in 60 days?"</em>,
+      <em>"Who is registered for the KS summit?"</em> or <em>"Summarise how each rep is doing this month"</em>.
+      Claude sees exactly what you see in Rep Hub, and nothing else. It can only read; it can't change anything.</div>
+    ${claudeNew ? `<div class="callout ok" style="margin:0 0 12px"><strong>Your link (copy it now, it's only shown once)</strong>
+        <div class="copyline" style="margin:8px 0"><code style="word-break:break-all">${esc(claudeNew)}</code>
+          <button class="btn sm" type="button" onclick="copyText(${esc(JSON.stringify(claudeNew))}, this)">Copy</button></div>
+        Keep it private, like a password: anyone with it can read Rep Hub as you.</div>` : ''}
+    <ol class="books-steps" style="margin:0 0 12px 18px;line-height:1.7">
+      <li>Press <strong>Make my Claude link</strong> below and copy the link.</li>
+      <li>In Claude (claude.ai or the Claude app), open <strong>Settings → Connectors</strong> and choose <strong>Add custom connector</strong>.</li>
+      <li>Name it <strong>Symbiz Rep Hub</strong>, paste the link into the URL box and press <strong>Add</strong>.</li>
+      <li>In a new chat, ask Claude about Rep Hub. The first time, it may ask you to allow the Rep Hub tools.</li></ol>
+    <div class="btnrow"><button class="btn primary" onclick="makeClaudeLink(this)">Make my Claude link</button></div>
+    ${claudeLinks.length ? `<h3 class="sub-h">Your links</h3>${claudeLinks.map(l => `<div class="row" style="background:none;padding:8px 0;border-top:1px solid var(--line)">
+        <div class="row-main"><div class="row-title">${esc(l.label || 'Claude')}</div>
+          <div class="row-sub">Made ${fmt(String(l.created_at).slice(0,10))} · ${l.last_used ? `last used ${fmt(String(l.last_used).slice(0,10))} (${l.uses} questions)` : 'not used yet'}</div></div>
+        <div class="row-actions"><button class="btn sm danger" onclick="claudeLinkOff(${l.id})">Switch off</button></div></div>`).join('')}` : ''}
+  </div>`;
+}
+async function makeClaudeLink(btn){
+  btn.disabled = true;
+  try{ const v = await API.call('/me/claude-links', { method:'POST', body: JSON.stringify({ label: 'Claude' }) }); claudeNew = v.url; claudeLinks = null; }
+  catch(e){ toast(e.message || 'Could not make the link'); }
+  btn.disabled = false; renderContent();
+}
+async function claudeLinkOff(id){
+  if(!confirm('Switch this link off? Claude will stop being able to read Rep Hub with it.')) return;
+  try{ await API.call('/me/claude-links/' + id, { method:'DELETE' }); claudeLinks = null; claudeNew = null; toast('Switched off'); }
+  catch(e){ toast(e.message || 'Could not switch it off'); }
+  renderContent();
+}
 async function saveMyEmail(btn){
   const mode = document.getElementById('myEmailMode').value, from = (document.getElementById('myEmailFrom') || {}).value || '';
   btn.disabled = true;
@@ -7970,7 +8013,7 @@ function navItems(){
 function navGroups(){
   if(isRep()) return [
     ['', [['today','Today'],['rings','My Rings'],['people','People'],['onboarding','Onboarding'],['ar','A/R over 60 days'],['map','Member map'],['calendar','Calendar'],['events','Events & summits']]],
-    ['Your work', [['timesheet','Hours & expenses'],['resources','Forms'],['callsheet','Call sheet'],
+    ['Your work', [['timesheet','Hours & expenses'],['resources','Forms'],['callsheet','Call sheet'],['access','Your account & Claude'],
       ...(teamCan('devel') ? [['devel','Member Development']] : []), ...(teamCan('candidates') ? [['candidates','Rep candidates']] : [])]],
   ];
   const office = [

@@ -4628,5 +4628,30 @@ r.put('/coaches/:id', auth.authRequired, needAccess('devel'), wrap(async (req, r
   res.json({ id, willing: b.willing === true, strengths });
 }));
 
+/* ═══════════ CLAUDE CONNECTOR: each person's private link ═══════════
+ * The link is shown once when made; only its hash is kept, so it can't be
+ * read back. Switching it off stops Claude at once. */
+const mcp = require('./mcp');
+r.get('/me/claude-links', auth.authRequired, wrap(async (req, res) => {
+  const rows = await query('SELECT id, label, created_at, last_used, uses FROM claude_links WHERE user_id = $1 AND revoked_at IS NULL ORDER BY id DESC', [req.user.id]);
+  res.json(rows);
+}));
+r.post('/me/claude-links', auth.authRequired, wrap(async (req, res) => {
+  const live = await query('SELECT id FROM claude_links WHERE user_id = $1 AND revoked_at IS NULL', [req.user.id]);
+  if (live.length >= 5) return res.status(400).json({ error: 'You already have 5 links. Switch one off first.' });
+  const key = mcp.newKey();
+  const label = String((req.body || {}).label || 'Claude').trim().slice(0, 60) || 'Claude';
+  const row = await one('INSERT INTO claude_links (key_hash, user_id, label) VALUES ($1,$2,$3) RETURNING id, label, created_at',
+    [mcp.hashKey(key), req.user.id, label]);
+  await audit(req.user.id, 'claude.link.made', { id: row.id }, req.ip);
+  res.status(201).json({ ...row, url: `${siteUrl(req)}/api/mcp/${key}` });
+}));
+r.delete('/me/claude-links/:id', auth.authRequired, wrap(async (req, res) => {
+  const out = await query('UPDATE claude_links SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL RETURNING id',
+    [parseInt(req.params.id, 10), req.user.id]);
+  await audit(req.user.id, 'claude.link.off', { id: req.params.id }, req.ip);
+  res.json({ ok: out.length > 0 });
+}));
+
 r._checklistFromCsv = checklistFromCsv;      // for the tests
 module.exports = r;

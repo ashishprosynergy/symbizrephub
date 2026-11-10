@@ -398,6 +398,18 @@ CREATE TABLE IF NOT EXISTS coaches (
   updated_by  TEXT
 );
 
+-- Private links that let a person's Claude read Rep Hub as them (only the key's hash is kept)
+CREATE TABLE IF NOT EXISTS claude_links (
+  id          SERIAL PRIMARY KEY,
+  key_hash    TEXT NOT NULL UNIQUE,
+  user_id     TEXT NOT NULL,
+  label       TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used   TIMESTAMPTZ,
+  uses        INTEGER NOT NULL DEFAULT 0,
+  revoked_at  TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS mail_outbox (
   id         SERIAL PRIMARY KEY,
   to_addr    TEXT NOT NULL,

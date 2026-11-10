@@ -599,6 +599,33 @@ describe('netlify function handler', () => {
     }
   });
 
+  test('Claude connector: a private link answers MCP as that person, read only, until switched off', async () => {
+    const made = J(await invoke('POST', '/me/claude-links', { token: repToken, body: { label: 'My Claude' } }));
+    const key = made.url.split('/api/mcp/')[1];
+    assert.match(key, /^[a-f0-9]{48}$/);
+    assert.equal(J(await invoke('GET', '/me/claude-links', { token: repToken }))[0].label, 'My Claude');
+    const rpc = async (method, params, id = 1) => invoke('POST', `/mcp/${key}`, { body: { jsonrpc: '2.0', id, method, params } });
+    const init = J(await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'claude' } }));
+    assert.equal(init.result.serverInfo.title, 'Symbiz Rep Hub');
+    assert.match(init.result.instructions, /Test Rep/);
+    assert.equal((await invoke('POST', `/mcp/${key}`, { body: { jsonrpc: '2.0', method: 'notifications/initialized' } })).statusCode, 202);
+    const tools = J(await rpc('tools/list', {})).result.tools;
+    assert.ok(tools.length >= 15 && tools.every(t => t.annotations.readOnlyHint === true));
+    assert.deepEqual(tools.find(t => t.name === 'event_registrations').inputSchema.required, ['event_id']);
+    const rings = J(await rpc('tools/call', { name: 'list_rings', arguments: { limit: 2 } }));
+    assert.ok(!rings.result.isError, JSON.stringify(rings));
+    const parsed = JSON.parse(rings.result.content[0].text);
+    assert.ok(parsed.returned <= 2 && 'total' in parsed);
+    // What the rep cannot see in the app, Claude cannot see either
+    const denied = J(await rpc('tools/call', { name: 'rep_candidates', arguments: {} }));
+    assert.equal(denied.result.isError, true);
+    assert.equal(J(await rpc('tools/call', { name: 'nope', arguments: {} })).error.code, -32602);
+    // Switched off: the link stops working at once
+    await invoke('DELETE', `/me/claude-links/${made.id}`, { token: repToken });
+    assert.equal((await rpc('ping', {})).statusCode, 404);
+    assert.equal((await invoke('POST', '/mcp/not-a-key', { body: { jsonrpc: '2.0', id: 1, method: 'ping' } })).statusCode, 404);
+  });
+
   test("Jeremy's requests: onboarding stages, rep candidates, hand-offs, offboarding and coaches", async () => {
     const keepContacts = store.Contacts;
     store.Contacts = [{ id: '8801', Full_Name: 'Amos Zook #0901', Status: 'Active', Active: true, Life_Stage: 'Mighty Oak', Phone: '555' }];

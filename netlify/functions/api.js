@@ -82,6 +82,43 @@ app.get('/healthz', async (req, res) => {
   res.status(out.ok ? 200 : 503).json(out);
 });
 
+/*
+ * Claude's connector: /api/mcp/<key> (see src/mcp.js). The key is a person's
+ * private link; each tool call is answered by this same API, in-process,
+ * signed in as them, so Claude never sees more than they do in the app.
+ */
+const mcp = require('../../src/mcp');
+const auth = require('../../src/auth');
+const { one: dbOne, query: dbQuery } = require('../../src/db');
+app.get('/mcp/:key', (req, res) => res.status(405).set('Allow', 'POST').json({ error: 'Use POST (MCP Streamable HTTP)' }));
+app.post('/mcp/:key', async (req, res) => {
+  const key = String(req.params.key || '');
+  const link = /^[a-f0-9]{48}$/.test(key)
+    ? await dbOne(`SELECT l.id, u.id AS user_id, u.role, u.name, u.email, u.active FROM claude_links l JOIN users u ON u.id = l.user_id
+        WHERE l.key_hash = $1 AND l.revoked_at IS NULL`, [mcp.hashKey(key)]).catch(() => null)
+    : null;
+  if (!link || link.active === false) return res.status(404).json({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'This Rep Hub link is not valid or has been switched off' } });
+  dbQuery('UPDATE claude_links SET last_used = now(), uses = uses + 1 WHERE id = $1', [link.id]).catch(() => {});
+  const token = auth.issue({ id: link.user_id, role: link.role, name: link.name });
+  const callApi = async path => {
+    const [p, qs] = String(path).split('?');
+    const out = await module.exports.handler({ httpMethod: 'GET', path: '/api' + p, rawUrl: `https://rephub.local/api${path}`,
+      headers: { authorization: `Bearer ${token}`, 'x-via': 'claude' }, multiValueHeaders: {},
+      queryStringParameters: qs ? Object.fromEntries(new URLSearchParams(qs)) : null, body: null, isBase64Encoded: false }, {});
+    let data = null; try { data = JSON.parse(out.body || 'null'); } catch (_) { data = out.body; }
+    return { status: out.statusCode, data };
+  };
+  const ctx = { callApi, who: `${link.name || 'a Rep Hub user'} (${link.role === 'rep' ? 'rep' : 'office'})` };
+  const body = req.body;
+  if (Array.isArray(body)) {
+    const answers = (await Promise.all(body.map(m => mcp.handleMessage(m, ctx)))).filter(Boolean);
+    return answers.length ? res.json(answers) : res.status(202).end();
+  }
+  const answer = await mcp.handleMessage(body, ctx);
+  if (!answer) return res.status(202).end();
+  res.json(answer);
+});
+
 app.use('/', routes);
 
 // eslint-disable-next-line no-unused-vars
