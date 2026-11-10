@@ -203,6 +203,10 @@ ALTER TABLE login_tokens ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE;
 
+-- Each person's own Email button: their computer's app, or Gmail as a chosen address
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_links TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_from TEXT;
+
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS vendor TEXT;
 
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS books_bill_id TEXT;

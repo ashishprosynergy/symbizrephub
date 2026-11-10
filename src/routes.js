@@ -819,8 +819,32 @@ r.post('/auth/elevate', auth.authRequired, wrap(async (req, res) => {
 }));
 
 r.get('/auth/me', auth.authRequired, wrap(async (req, res) => {
-  const pending = (await q.pendingFor(req.user.id))?.c || 0;
-  res.json({ user: req.user, pendingSync: pending, prefs: { emailLinks: await setting('emailLinks', 'app'), mileageRate: await setting('mileageRate', '') } });
+  const [pendingRow, u, office, mileageRate] = await Promise.all([q.pendingFor(req.user.id), q.userById(req.user.id).catch(() => null),
+    setting('emailLinks', 'app'), setting('mileageRate', '')]);
+  res.json({ user: req.user, pendingSync: pendingRow?.c || 0, prefs: { ...emailPrefs(u, office), mileageRate } });
+}));
+
+/**
+ * Where a person's Email buttons go (Dave, 29 Oct and 10 Nov: his computer's
+ * mail handler is Gmail in his fencing account, so replies went there).
+ * Their own choice first; then anyone signed in with a Symbiz address gets
+ * Gmail in that account, since Symbiz mail is Google; then the office default.
+ */
+function emailPrefs(u, office) {
+  const own = u && u.email_links;
+  const from = String((u && u.email_from) || '').trim();
+  const symbiz = /@symbiz\.org$/i.test(String((u && u.email) || ''));
+  return { myEmailLinks: own || (symbiz ? 'gmail' : office), emailFrom: from, emailLinksOwn: own || '' };
+}
+r.put('/auth/email-prefs', auth.authRequired, wrap(async (req, res) => {
+  const b = req.body || {};
+  const mode = ['app', 'gmail', ''].includes(b.mode) ? b.mode : null;
+  if (mode === null) return res.status(400).json({ error: 'Pick how the Email buttons should open' });
+  const from = String(b.from || '').trim().toLowerCase();
+  if (from && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from)) return res.status(400).json({ error: 'That email address does not look right' });
+  await query('UPDATE users SET email_links = $2, email_from = $3 WHERE id = $1', [req.user.id, mode || null, from || null]);
+  const [u, office] = await Promise.all([q.userById(req.user.id), setting('emailLinks', 'app')]);
+  res.json(emailPrefs(u, office));
 }));
 
 r.post('/auth/password', auth.authRequired, wrap(async (req, res) => {

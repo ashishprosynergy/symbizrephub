@@ -4786,6 +4786,7 @@ function ACCESS_SECTIONS(){
       ? `${backupStatus.drive && backupStatus.drive.connected ? 'Google Drive nightly' : 'Google Drive not set up'} · email ${backupStatus.frequency === 'daily' ? 'daily' : 'weekly'}${backupStatus.mirror && backupStatus.mirror.live && backupStatus.mirror.live.connected ? ' · live copy on' : ''}`
       : 'Copy of Zoho, Google Drive, email and downloads' },
     !owner && { key:'mine', icon:'user', title:'What your account can do', sub:'The screens and areas open to you' },
+    { key:'myemail', icon:'user', title:'Your Email button', sub: (s.myEmailLinks || s.emailLinks) === 'gmail' ? `Opens Gmail as ${s.emailFrom || (realMe() || {}).email || 'you'}` : "Opens your computer's own email app" },
     { key:'devices', icon:'pin', title:'Your trusted devices', sub: Array.isArray(myDevices) ? `${myDevices.length} device${myDevices.length===1?'':'s'} skip the emailed code` : 'Devices that skip the emailed code' },
   ].filter(Boolean);
 }
@@ -4861,10 +4862,36 @@ function accessSectionBody(sec){
   if(sec === 'books') return `<div class="card" id="booksCard">${booksCard()}</div>`;
   if(sec === 'backup') return `<div class="card" id="backupCard">${backupCard()}</div>`;
   if(sec === 'mine') return myAccessSummary().replace(/<h3 class="sub-h">[^<]*<\/h3>/, '');
+  if(sec === 'myemail'){
+    const mode = s.emailLinksOwn || '', mine = (realMe() || {}).email || '';
+    return `<div class="card">
+      <div class="row-sub" style="margin-bottom:12px;line-height:1.6">When you press <strong>Email</strong> next to a member or rep, the new email opens here.
+        If replies are going to the wrong inbox, choose Gmail and the address you want to send from.</div>
+      <div class="field"><label>When I press Email</label>
+        <select id="myEmailMode" onchange="document.getElementById('myEmailFromBox').style.display = this.value === 'gmail' ? '' : 'none'">
+          <option value="" ${!mode ? 'selected' : ''}>Use the usual setting (${(s.myEmailLinks || s.emailLinks) === 'gmail' && !mode ? 'Gmail' : "my computer's email app"})</option>
+          <option value="gmail" ${mode === 'gmail' ? 'selected' : ''}>Open Gmail</option>
+          <option value="app" ${mode === 'app' ? 'selected' : ''}>Open my computer's own email app</option></select></div>
+      <div class="field" id="myEmailFromBox" style="${mode === 'gmail' ? '' : 'display:none'}"><label>Send from this Gmail address</label>
+        <input id="myEmailFrom" type="email" placeholder="${esc(mine)}" value="${esc(s.emailFrom || '')}">
+        <div class="hint">Leave empty to use ${esc(mine || 'the address you sign in with')}. If Gmail asks you to sign in, sign in with this address once; it remembers.</div></div>
+      <div class="btnrow"><button class="btn primary" onclick="saveMyEmail(this)">Save</button>
+        <a class="btn" target="_blank" rel="noopener" href="${esc(mailHref(mine || 'test@example.com'))}">Try it</a></div>
+    </div>`;
+  }
   if(sec === 'devices') return devicesCard().replace(/<h3 class="sub-h">[^<]*<\/h3>/, '');
   return '';
 }
 
+async function saveMyEmail(btn){
+  const mode = document.getElementById('myEmailMode').value, from = (document.getElementById('myEmailFrom') || {}).value || '';
+  btn.disabled = true;
+  try{
+    const v = await API.call('/auth/email-prefs', { method:'PUT', body: JSON.stringify({ mode, from: mode === 'gmail' ? from.trim() : '' }) });
+    Object.assign(S.settings, v); save(); toast('Saved: try an Email button');
+  }catch(e){ toast(e.message || 'Could not save'); }
+  btn.disabled = false; renderContent();
+}
 /** After the calendar link changes: what Rep Hub now sees in the next two weeks */
 /* Weekly email for reps without the app (Mel: Michael Beiler and Larry Weaver have
    email but no internet). Each Monday the reps ticked here get their numbers,
@@ -7588,8 +7615,9 @@ async function submitMeeting(e,ringId){
    Email buttons) Gmail in the account the person signs in to Rep Hub with,
    so a rep whose computer opens a business Gmail writes from Symbiz. */
 function mailHref(to){
-  const mine = (realMe() || {}).email;   // the person at the keyboard, even while previewing a rep
-  if(S.settings.emailLinks === 'gmail' && mine)
+  // The person at the keyboard (even while previewing a rep), or the address they chose to send from
+  const mine = S.settings.emailFrom || (realMe() || {}).email;
+  if((S.settings.myEmailLinks || S.settings.emailLinks) === 'gmail' && mine)
     return 'https://mail.google.com/mail/?authuser=' + encodeURIComponent(mine) + '&view=cm&fs=1&to=' + encodeURIComponent(to);
   return 'mailto:' + to;
 }

@@ -452,13 +452,28 @@ describe('netlify function handler', () => {
   });
 
   test('Email buttons: everyone, reps too, learns whether to open Gmail', async () => {
-    assert.equal(J(await invoke('GET', '/auth/me', { token: repToken })).prefs.emailLinks, 'app');
+    const prefs = async () => J(await invoke('GET', '/auth/me', { token: repToken })).prefs;
+    assert.equal((await prefs()).myEmailLinks, 'app');
     assert.equal((await invoke('PUT', '/admin/settings', { token: repToken, body: { emailLinks: 'gmail' } })).statusCode, 403);
     await invoke('PUT', '/admin/settings', { token: officeToken, body: { emailLinks: 'nonsense' } });
-    assert.equal(J(await invoke('GET', '/auth/me', { token: repToken })).prefs.emailLinks, 'app', 'only app or gmail');
+    assert.equal((await prefs()).myEmailLinks, 'app', 'only app or gmail');
     await db.q.setSetting('emailLinks', 'gmail');
-    assert.equal(J(await invoke('GET', '/auth/me', { token: repToken })).prefs.emailLinks, 'gmail');
+    assert.equal((await prefs()).myEmailLinks, 'gmail');
     await db.q.setSetting('emailLinks', 'app');
+    // Dave: his own choice, Gmail as his Symbiz address, whatever the office default
+    assert.equal((await invoke('PUT', '/auth/email-prefs', { token: repToken, body: { mode: 'gmail', from: 'not an email' } })).statusCode, 400);
+    const saved = J(await invoke('PUT', '/auth/email-prefs', { token: repToken, body: { mode: 'gmail', from: 'DaveM@symbiz.org' } }));
+    assert.deepEqual([saved.myEmailLinks, saved.emailFrom], ['gmail', 'davem@symbiz.org']);
+    assert.deepEqual([(await prefs()).myEmailLinks, (await prefs()).emailFrom], ['gmail', 'davem@symbiz.org']);
+    await invoke('PUT', '/auth/email-prefs', { token: repToken, body: { mode: '' } });
+    assert.equal((await prefs()).myEmailLinks, 'app', 'back to the usual setting');
+    // Signed in with a Symbiz address: Gmail in that account without anyone setting it
+    const u = await db.q.userByEmail('rep@test.org').catch(() => null);
+    if (u) {
+      await db.query('UPDATE users SET email = $2 WHERE id = $1', [u.id, 'rep@symbiz.org']);
+      try { assert.equal((await prefs()).myEmailLinks, 'gmail'); }
+      finally { await db.query('UPDATE users SET email = $2 WHERE id = $1', [u.id, 'rep@test.org']); }
+    }
   });
 
   test('a field removed in Zoho is left out, not the whole screen (Meeting_Date_Time, 29 Oct)', async () => {
