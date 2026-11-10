@@ -4666,8 +4666,8 @@ function vAccess(){
   // The owner goes straight to the password box; the rest loads behind it
   if(!accessStatus || myDevices === null) loadAccessBits();
   if(!accessStatus && !isOwner()) return `<div class="section-head"><div><h2>Access &amp; security</h2></div></div>${skeleton(4)}`;
-  const head = `<div class="section-head"><div><h2>Access &amp; security</h2>
-    <div class="sub">Who can do what in Rep Hub, and how people sign in.</div></div>
+  const head = `<div class="section-head"><div><h2>${isRep() ? 'Your account &amp; Claude' : 'Access &amp; security'}</h2>
+    ${isRep() ? '' : '<div class="sub">Who can do what in Rep Hub, and how people sign in.</div>'}</div>
     ${isOwner() && elevated() ? `<button class="btn sm" onclick="lockAccess()">${icon('key',15)} Lock</button>` : ''}</div>`;
 
   if(!isOwner()){
@@ -4681,7 +4681,7 @@ function vAccess(){
           <button class="btn primary" type="submit">Make me the owner</button></form></div>`
       + devicesCard();
     const sec = ui.accSec, item = ACCESS_SECTIONS().find(s => s.key === sec);
-    if(item) return `<button class="back" onclick="ui.accSec=null;renderContent()">← Access &amp; security</button>
+    if(item) return `<button class="back" onclick="ui.accSec=null;renderContent()">← ${isRep() ? 'Your account' : 'Access &amp; security'}</button>
       <div class="section-head"><div><h2>${esc(item.title)}</h2></div></div>${accessSectionBody(sec)}`;
     return head + `<div class="row-sub" style="margin:-4px 0 12px">${isRep() ? 'Your Email button, connecting Claude, and the devices you stay signed in on.'
           : accessStatus.claimed ? esc(accessStatus.ownerName) + ' is the owner and decides what each role can do.' :
@@ -9491,6 +9491,8 @@ function renderContentInner(el){
   if(v==='ar'){ el.innerHTML=vAR(); return; }
   if(isRep()){
     if(v==='map'){ el.innerHTML=vMemberMap(); return; }
+    // Their Email button, Connect Claude and devices (it fell through to Today)
+    if(v==='access'){ el.innerHTML=vAccess(); return; }
     el.innerHTML=v==='rings'?vMyRings():v==='people'?vPeople():v==='requests'?vRequests():v==='progress'?vMyProgress():vToday();
     return;
   }
