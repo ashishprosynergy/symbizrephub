@@ -3,7 +3,7 @@ const express = require('express');
 const crypto = require('crypto');
 const zoho = require('./lib/zoho');
 const cfg = require('./config');
-const { q, audit, setting, query } = require('./db');
+const { q, audit, setting, query, one } = require('./db');
 const auth = require('./auth');
 const access = require('./access');
 const { enqueue, flushQueue } = require('./sync');
@@ -4415,6 +4415,217 @@ r.post('/reminders/run', auth.authRequired, auth.requireOffice, access.requirePe
   const out = await fn({ dryRun });
   await audit(req.user.id, 'reminder.manual', { kind, dryRun }, req.ip);
   res.json({ kind, dryRun, results: out });
+}));
+
+/* ═══════════ JEREMY'S REQUESTS (28 Oct) ═══════════
+ * 1. Onboarding: where each member without a ring is, from first call to a
+ *    group deciding. Reps see their own; the office sees everyone.
+ * 2. Rep candidates: people who might become reps. Mel, Jeremy and Member
+ *    Development only (the people ticked in Access & security).
+ * 3. Member Development (Elvin): members handed off by reps for a follow-up
+ *    call, with call notes saved to Zoho; offboarding; Oak Tree coaches.
+ * All of it is kept in Rep Hub's database; only call notes and offboarding
+ * write to Zoho. */
+const ONBOARD_STAGES = ['Not started', 'First call completed', 'Prospecting', 'Visiting a group', 'Group deciding', 'Joined a ring', 'Not interested'];
+const CANDIDATE_STAGES = ['Lead', 'First conversation', 'Interviewing', 'Training', 'Ready to start', 'Active rep', 'Not a fit'];
+const ids = v => { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a.map(String) : []; } catch (_) { return []; } };
+const jsonList = v => { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a : []; } catch (_) { return []; } };
+/** What this person may open: Member Development, rep candidates */
+async function teamAccess(user) {
+  const [dev, cand] = await Promise.all([setting('devPeople', '[]'), setting('candidatePeople', '[]')]);
+  const devIds = ids(dev), candIds = ids(cand);
+  const isDev = devIds.includes(String(user.id));
+  return {
+    devel: !!(user.owner || isDev || (user.perms && user.perms.manager)),
+    develOwn: isDev,
+    candidates: !!(user.owner || isDev || candIds.includes(String(user.id))),
+  };
+}
+const needAccess = key => async (req, res, next) => {
+  try { if ((await teamAccess(req.user))[key]) return next(); } catch (e) { return next(e); }
+  res.status(403).json({ error: key === 'candidates' ? 'Rep candidates are only open to the people the office has chosen' : 'Member Development is only open to the people the office has chosen' });
+};
+r.get('/team-access', auth.authRequired, wrap(async (req, res) => res.json(await teamAccess(req.user))));
+
+/** Who has Member Development and rep candidates (Access & security) */
+r.get('/admin/team-access', auth.authRequired, auth.requireOffice, access.requirePerm('settings'), wrap(async (req, res) => {
+  const [people, dev, cand] = await Promise.all([q.allUsers(), setting('devPeople', '[]'), setting('candidatePeople', '[]')]);
+  res.json({ people: people.filter(u => u.active !== false).map(u => ({ id: u.id, name: u.name, email: u.email, role: u.role })),
+    devPeople: ids(dev), candidatePeople: ids(cand) });
+}));
+r.put('/admin/team-access', auth.authRequired, auth.requireOffice, access.requirePerm('settings'), wrap(async (req, res) => {
+  const b = req.body || {};
+  const known = new Set((await q.allUsers()).map(u => String(u.id)));
+  const clean = list => [...new Set((Array.isArray(list) ? list : []).map(String).filter(id => known.has(id)))].slice(0, 50);
+  if (b.devPeople) await q.setSetting('devPeople', JSON.stringify(clean(b.devPeople)));
+  if (b.candidatePeople) await q.setSetting('candidatePeople', JSON.stringify(clean(b.candidatePeople)));
+  await audit(req.user.id, 'team.access', { dev: b.devPeople && clean(b.devPeople).length, cand: b.candidatePeople && clean(b.candidatePeople).length }, req.ip);
+  res.json({ devPeople: ids(await setting('devPeople', '[]')), candidatePeople: ids(await setting('candidatePeople', '[]')) });
+}));
+
+/* ── 1. Onboarding ── */
+r.get('/onboarding', auth.authRequired, wrap(async (req, res) => {
+  // A rep asks for the members on their own list; the office gets everyone
+  const want = String(req.query.ids || '').split(',').map(s => s.replace(/[^0-9]/g, '')).filter(Boolean).slice(0, 2000);
+  if (req.user.role === 'rep' && !want.length) return res.json({ stages: ONBOARD_STAGES, rows: [] });
+  const rows = req.user.role === 'rep'
+    ? await query(`SELECT member_id, stage, note, history, updated_at, updated_by FROM member_onboarding WHERE member_id IN (${want.map((_, i) => '$' + (i + 1)).join(',')})`, want)
+    : await query('SELECT member_id, member_name, stage, note, history, updated_at, updated_by FROM member_onboarding');
+  res.json({ stages: ONBOARD_STAGES, rows: rows.map(r0 => ({ ...r0, history: jsonList(r0.history).slice(-10) })) });
+}));
+r.put('/onboarding/:memberId', auth.authRequired, wrap(async (req, res) => {
+  const id = String(req.params.memberId).replace(/[^0-9]/g, '');
+  const b = req.body || {};
+  if (!id) return res.status(400).json({ error: 'Which member?' });
+  if (!ONBOARD_STAGES.includes(b.stage)) return res.status(400).json({ error: 'Pick a stage from the list' });
+  const note = String(b.note || '').trim().slice(0, 1000);
+  const old = await one('SELECT stage, history FROM member_onboarding WHERE member_id = $1', [id]);
+  const history = jsonList(old && old.history);
+  history.push({ at: new Date().toISOString(), by: req.user.name || req.user.email, stage: b.stage, note });
+  await query(`INSERT INTO member_onboarding (member_id, member_name, stage, note, history, updated_at, updated_by) VALUES ($1,$2,$3,$4,$5,now(),$6)
+    ON CONFLICT (member_id) DO UPDATE SET member_name = COALESCE(EXCLUDED.member_name, member_onboarding.member_name), stage = EXCLUDED.stage,
+      note = EXCLUDED.note, history = EXCLUDED.history, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+    [id, String(b.memberName || '').slice(0, 160) || null, b.stage, note || null, JSON.stringify(history.slice(-50)), req.user.name || req.user.email]);
+  await audit(req.user.id, 'onboarding.stage', { member: id, from: old && old.stage, to: b.stage }, req.ip);
+  res.json({ member_id: id, stage: b.stage, note, updated_by: req.user.name || req.user.email, updated_at: new Date().toISOString(), history: history.slice(-10) });
+}));
+
+/* ── 2. Rep candidates ── */
+const candidateOut = c => ({ ...c, notes: jsonList(c.notes) });
+r.get('/candidates', auth.authRequired, needAccess('candidates'), wrap(async (req, res) => {
+  const rows = await query('SELECT * FROM rep_candidates WHERE archived = FALSE ORDER BY updated_at DESC');
+  res.json({ stages: CANDIDATE_STAGES, rows: rows.map(candidateOut) });
+}));
+r.post('/candidates', auth.authRequired, needAccess('candidates'), wrap(async (req, res) => {
+  const b = req.body || {}, s = (v, n = 160) => String(v || '').trim().slice(0, n) || null;
+  if (!s(b.name)) return res.status(400).json({ error: 'A name is needed' });
+  const stage = CANDIDATE_STAGES.includes(b.stage) ? b.stage : 'Lead';
+  const notes = s(b.note, 2000) ? [{ at: new Date().toISOString(), by: req.user.name, text: s(b.note, 2000) }] : [];
+  const row = await one(`INSERT INTO rep_candidates (name, phone, email, region, source, stage, notes, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [s(b.name), s(b.phone, 40), s(b.email, 200), s(b.region, 80), s(b.source, 160), stage, JSON.stringify(notes), req.user.name]);
+  await audit(req.user.id, 'candidate.add', { id: row.id }, req.ip);
+  res.status(201).json(candidateOut(row));
+}));
+r.patch('/candidates/:id', auth.authRequired, needAccess('candidates'), wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10), b = req.body || {};
+  const c = await one('SELECT * FROM rep_candidates WHERE id = $1', [id]);
+  if (!c) return res.status(404).json({ error: 'Not found' });
+  const s = (v, n = 160) => String(v == null ? '' : v).trim().slice(0, n) || null;
+  if (b.stage !== undefined && !CANDIDATE_STAGES.includes(b.stage)) return res.status(400).json({ error: 'Pick a stage from the list' });
+  const notes = jsonList(c.notes);
+  if (b.stage && b.stage !== c.stage) notes.push({ at: new Date().toISOString(), by: req.user.name, text: `Moved to ${b.stage}` });
+  if (s(b.note, 2000)) notes.push({ at: new Date().toISOString(), by: req.user.name, text: s(b.note, 2000) });
+  const row = await one(`UPDATE rep_candidates SET name = $2, phone = $3, email = $4, region = $5, source = $6, stage = $7, notes = $8, archived = $9,
+      updated_at = now(), updated_by = $10 WHERE id = $1 RETURNING *`,
+    [id, b.name !== undefined ? s(b.name) || c.name : c.name, b.phone !== undefined ? s(b.phone, 40) : c.phone, b.email !== undefined ? s(b.email, 200) : c.email,
+      b.region !== undefined ? s(b.region, 80) : c.region, b.source !== undefined ? s(b.source) : c.source, b.stage || c.stage,
+      JSON.stringify(notes.slice(-100)), b.archived === true, req.user.name]);
+  await audit(req.user.id, 'candidate.edit', { id, stage: b.stage, archived: b.archived === true }, req.ip);
+  res.json(candidateOut(row));
+}));
+
+/* ── 3. Member Development ── */
+const handoffOut = h => ({ ...h, notes: jsonList(h.notes) });
+/** A rep (or anyone) hands a member to Member Development */
+r.post('/handoffs', auth.authRequired, wrap(async (req, res) => {
+  const b = req.body || {}, s = (v, n = 160) => String(v || '').trim().slice(0, n) || null;
+  const memberId = String(b.memberId || '').replace(/[^0-9]/g, '');
+  if (!memberId) return res.status(400).json({ error: 'Which member?' });
+  if (!s(b.reason, 1000)) return res.status(400).json({ error: 'Say why they need a call from Member Development' });
+  const open = await one("SELECT id FROM handoffs WHERE member_id = $1 AND status IN ('open','in progress')", [memberId]);
+  if (open) return res.status(409).json({ error: 'This member is already with Member Development', id: open.id });
+  const row = await one(`INSERT INTO handoffs (member_id, member_name, ring_name, phone, rep_user_id, rep_name, reason) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [memberId, s(b.memberName), s(b.ringName), s(b.phone, 40), req.user.id, req.user.name, s(b.reason, 1000)]);
+  await audit(req.user.id, 'handoff.add', { id: row.id, member: memberId }, req.ip);
+  // Member Development hears about it at once
+  const devIds = ids(await setting('devPeople', '[]'));
+  const people = (await q.allUsers()).filter(u => devIds.includes(String(u.id)) && u.email);
+  if (people.length) {
+    const html = `<p><strong>${esc(req.user.name)}</strong> handed <strong>${esc(b.memberName || 'a member')}</strong>${b.ringName ? ` (${esc(b.ringName)})` : ''} to Member Development.</p>
+      <p style="background:#f6f5f1;padding:10px;border-radius:6px">${esc(b.reason)}</p>${b.phone ? `<p>Phone: ${esc(b.phone)}</p>` : ''}
+      <p><a href="${siteUrl(req)}/?view=devel">Open Member Development in Rep Hub</a></p>`;
+    for (const u of people) await reminders.queueEmail(u.email, `Hand-off: ${b.memberName || 'a member'} needs a follow-up call`, html, { kind: 'handoff', replyTo: req.user.email });
+    await sendQueuedMail(req);
+  }
+  res.status(201).json(handoffOut(row));
+}));
+/** A rep sees what they handed off; Member Development sees everything */
+r.get('/handoffs', auth.authRequired, wrap(async (req, res) => {
+  const a = await teamAccess(req.user);
+  const rows = a.devel ? await query('SELECT * FROM handoffs ORDER BY (status IN (\'open\',\'in progress\')) DESC, created_at DESC LIMIT 300')
+    : await query('SELECT * FROM handoffs WHERE rep_user_id = $1 ORDER BY created_at DESC LIMIT 100', [req.user.id]);
+  res.json(rows.map(handoffOut));
+}));
+/** A call note (also saved on the member in Zoho), or a change of status */
+r.patch('/handoffs/:id', auth.authRequired, needAccess('devel'), wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10), b = req.body || {};
+  const h = await one('SELECT * FROM handoffs WHERE id = $1', [id]);
+  if (!h) return res.status(404).json({ error: 'Not found' });
+  if (b.status !== undefined && !['open', 'in progress', 'done'].includes(b.status)) return res.status(400).json({ error: 'Pick open, in progress or done' });
+  const notes = jsonList(h.notes), text = String(b.note || '').trim().slice(0, 4000);
+  let zohoNote = null;
+  if (text) {
+    notes.push({ at: new Date().toISOString(), by: req.user.name, text });
+    // Into "the system": a note on the member in Zoho, so their history is in one place
+    zohoNote = await zoho.request(`/${M.CONTACT}/${h.member_id}/Notes`, { method: 'POST',
+      body: { data: [{ Note_Title: `Member Development call (${req.user.name})`, Note_Content: text }] } })
+      .then(() => 'saved').catch(e => { console.error('[handoff] Zoho note:', e.message); return 'not saved: ' + e.message.slice(0, 120); });
+  }
+  const status = b.status || (text && h.status === 'open' ? 'in progress' : h.status);
+  const row = await one(`UPDATE handoffs SET notes = $2, status = $3, updated_at = now(), closed_at = CASE WHEN $3 = 'done' THEN now() ELSE NULL END
+    WHERE id = $1 RETURNING *`, [id, JSON.stringify(notes.slice(-200)), status]);
+  await audit(req.user.id, 'handoff.edit', { id, status, note: !!text }, req.ip);
+  res.json({ ...handoffOut(row), zohoNote });
+}));
+/** Elvin ends a membership: Status in Zoho, a note why, and the office told to stop the invoices */
+r.post('/members/:id/offboard', auth.authRequired, needAccess('devel'), wrap(async (req, res) => {
+  const id = String(req.params.id).replace(/[^0-9]/g, ''), b = req.body || {};
+  const status = ['Inactive', 'Inactive - Continuing Lead'].includes(b.status) ? b.status : null;
+  const reason = String(b.reason || '').trim().slice(0, 2000);
+  if (!status) return res.status(400).json({ error: 'Pick Inactive or Inactive - Continuing Lead' });
+  if (!reason) return res.status(400).json({ error: 'Say why they are leaving' });
+  const c = await zoho.getRecord(M.CONTACT, id);
+  if (!c) return res.status(404).json({ error: 'That member is not in Zoho' });
+  const out = await zoho.updateRecords(M.CONTACT, [{ id, Status: status }]);
+  const r0 = out && out[0];
+  if (!r0 || (r0.code && r0.code !== 'SUCCESS')) return res.status(502).json({ error: (r0 && r0.message) || 'Zoho did not accept the change' });
+  await zoho.request(`/${M.CONTACT}/${id}/Notes`, { method: 'POST', body: { data: [{ Note_Title: `Offboarded: ${status}`,
+    Note_Content: `${reason}\n\n${req.user.name}, Rep Hub, ${new Date().toISOString().slice(0, 10)}` }] } }).catch(e => console.error('[offboard] Zoho note:', e.message));
+  await query("UPDATE handoffs SET status = 'done', closed_at = now(), updated_at = now() WHERE member_id = $1 AND status <> 'done'", [id]);
+  await audit(req.user.id, 'member.offboard', { id, status, from: c.Status }, req.ip);
+  const to = await emailList('exitInterviewNotify');
+  if (to.length) {
+    const html = `<p><strong>${esc(req.user.name)}</strong> offboarded <strong>${esc(c.Full_Name || 'a member')}</strong> in Rep Hub. Zoho now shows them as <strong>${esc(status)}</strong>.</p>
+      <p style="background:#f6f5f1;padding:10px;border-radius:6px">${esc(reason)}</p>
+      <p>Please end the membership and recurring invoices in Zoho if that hasn't been done.</p>`;
+    for (const t of to) await reminders.queueEmail(t, `Offboarded: ${c.Full_Name || 'a member'}`, html, { kind: 'offboard', replyTo: req.user.email });
+    await sendQueuedMail(req);
+  }
+  res.json({ ok: true, status });
+}));
+/** Oak Tree (Mighty Oak) members, with who is willing to coach and their strengths */
+r.get('/coaches', auth.authRequired, needAccess('devel'), wrap(async (req, res) => {
+  const [rows, saved] = await Promise.all([
+    zoho.coql(`select id, Full_Name, Account_Name, Email, Phone, Mobile, Mailing_City, Mailing_State, Life_Stage from ${M.CONTACT}
+      where Life_Stage = 'Mighty Oak' and Active = true limit 200`),
+    query('SELECT * FROM coaches'),
+  ]);
+  const by = new Map(saved.map(c => [String(c.member_id), c]));
+  res.json(rows.map(c => { const s0 = by.get(String(c.id)) || {};
+    return { id: c.id, name: c.Full_Name, business: c.Account_Name?.name || '', phone: c.Mobile || c.Phone || '', email: c.Email || '',
+      place: [c.Mailing_City, c.Mailing_State].filter(Boolean).join(', '), willing: !!s0.willing, strengths: s0.strengths || '',
+      updatedBy: s0.updated_by || null, updatedAt: s0.updated_at || null }; })
+    .sort((a, b) => (b.willing - a.willing) || String(a.name).localeCompare(String(b.name))));
+}));
+r.put('/coaches/:id', auth.authRequired, needAccess('devel'), wrap(async (req, res) => {
+  const id = String(req.params.id).replace(/[^0-9]/g, ''), b = req.body || {};
+  if (!id) return res.status(400).json({ error: 'Which member?' });
+  const strengths = String(b.strengths || '').trim().slice(0, 500);
+  await query(`INSERT INTO coaches (member_id, member_name, willing, strengths, updated_at, updated_by) VALUES ($1,$2,$3,$4,now(),$5)
+    ON CONFLICT (member_id) DO UPDATE SET member_name = COALESCE(EXCLUDED.member_name, coaches.member_name), willing = EXCLUDED.willing,
+      strengths = EXCLUDED.strengths, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+    [id, String(b.name || '').slice(0, 160) || null, b.willing === true, strengths || null, req.user.name]);
+  res.json({ id, willing: b.willing === true, strengths });
 }));
 
 r._checklistFromCsv = checklistFromCsv;      // for the tests

@@ -460,6 +460,28 @@
   .menu-tile.on{background:var(--primary-soft);border-color:var(--primary);}
   .menu-tile .pill{position:absolute;top:6px;right:6px;}
   .quick-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px;}
+  /* Onboarding status bar, rep candidates board, Member Development */
+  .onb-bar{display:flex;height:14px;border-radius:7px;overflow:hidden;gap:2px;background:var(--line);margin-bottom:10px;}
+  .onb-bar span{min-width:6px;}
+  .onb-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
+  .onb-chips .onb-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface,#fff);border-radius:999px;padding:5px 10px;font-size:13px;cursor:pointer;color:inherit;}
+  .onb-chips .onb-chip.on{border-color:var(--primary);background:var(--primary-soft);font-weight:600;}
+  .onb-chips i,.cand-h i{display:inline-block;width:9px;height:9px;border-radius:50%;}
+  .onb-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .onb-tools input[type=search]{flex:1 1 200px;min-width:0;}
+  .onb-tools select{flex:0 1 220px;}
+  .onb-tools input,.onb-tools select,select.onb-sel{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px;background:var(--surface,#fff);color:inherit;min-height:38px;}
+  select.onb-sel{max-width:190px;}
+  .cand-board{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;}
+  .cand-col{background:var(--surface-2,#f4f3ef);border-radius:10px;padding:8px;min-width:0;}
+  .cand-h{display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;margin:2px 2px 8px;}
+  .cand-card{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;background:var(--surface,#fff);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer;font:inherit;color:inherit;font-size:13px;}
+  .cand-card:hover{border-color:var(--primary);}
+  .cand-empty{color:var(--ink-muted);font-size:13px;padding:4px;}
+  .cand-notes{max-height:200px;overflow:auto;border-top:1px solid var(--line);margin:8px 0;padding-top:6px;font-size:13px;display:flex;flex-direction:column;gap:8px;}
+  .ho-card{margin-bottom:10px;}
+  .ho-reason{background:var(--surface-2,#f4f3ef);border-radius:8px;padding:8px 10px;margin-top:8px;font-size:14px;white-space:pre-wrap;}
+  .muted{color:var(--ink-muted);}
   .quick{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:14px;border:1px solid var(--line);
     border-radius:14px;background:var(--surface);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
   .quick .ico{color:var(--primary);margin-bottom:6px;}
@@ -2189,6 +2211,7 @@ const ICON_PATHS = {
 const VIEW_ICONS = { today:'home', dash:'grid', rings:'ring', allrings:'ring', people:'users', members:'users',
   calendar:'calendar', timesheet:'clock', resources:'folder', callsheet:'printer', manager:'briefcase',
   approvals:'check', ar:'receipt', events:'flag', visits:'pin', unaffiliated:'userplus', reports:'chart', coverage:'map', insights:'trend',
+  onboarding:'trend', devel:'users', candidates:'userplus',
   progress:'trend', team:'user', reminders:'bell', settings:'sliders', checks:'pulse', requests:'inbox', access:'shield', map:'pin', summits:'flag' };
 function icon(name, size){
   const p = ICON_PATHS[VIEW_ICONS[name] || name] || ICON_PATHS.grid;
@@ -2832,6 +2855,7 @@ function vMemberDetail(){
       <a class="btn" target="_blank" rel="noopener" href="${esc(mailHref(m.email))}">Email</a>
       <button class="btn primary" onclick='openLog(${JSON.stringify({ringId:m.ringId,who:m.name,type:"Member Call",memberId:m.id})})'>Log a call</button>
       <button class="btn danger" onclick="openExit('${m.id}')">Exit interview</button></div>`:''}
+    ${API.live && m.status==='active' ? `<div class="btnrow" style="margin-bottom:8px"><button class="btn" onclick="openHandoff('${m.id}')">Hand off to Member Development</button></div>` : ''}
     <h3 class="sub-h">Conversation history</h3>
     ${hist.map(a=>`<div class="row"><div class="row-main">
       <div class="row-title">${a.type}${a.outcome&&a.outcome!=='Connected'?' — '+a.outcome:''}</div>
@@ -4785,6 +4809,7 @@ function ACCESS_SECTIONS(){
     (owner || isAdmin()) && { key:'backup', icon:'check', title:'Backup', sub: backupStatus && !backupStatus.error
       ? `${backupStatus.drive && backupStatus.drive.connected ? 'Google Drive nightly' : 'Google Drive not set up'} · email ${backupStatus.frequency === 'daily' ? 'daily' : 'weekly'}${backupStatus.mirror && backupStatus.mirror.live && backupStatus.mirror.live.connected ? ' · live copy on' : ''}`
       : 'Copy of Zoho, Google Drive, email and downloads' },
+    can('settings') && { key:'teamaccess', icon:'users', title:'Member Development and rep candidates', sub:'Who sees the Member Development dashboard and the rep candidates list' },
     !owner && { key:'mine', icon:'user', title:'What your account can do', sub:'The screens and areas open to you' },
     { key:'myemail', icon:'user', title:'Your Email button', sub: (s.myEmailLinks || s.emailLinks) === 'gmail' ? `Opens Gmail as ${s.emailFrom || (realMe() || {}).email || 'you'}` : "Opens your computer's own email app" },
     { key:'devices', icon:'pin', title:'Your trusted devices', sub: Array.isArray(myDevices) ? `${myDevices.length} device${myDevices.length===1?'':'s'} skip the emailed code` : 'Devices that skip the emailed code' },
@@ -4849,6 +4874,7 @@ function accessSectionBody(sec){
       <div id="calCheck" style="margin-top:12px"></div>
     </div>`;
   if(sec === 'snapshot') return snapshotBox();
+  if(sec === 'teamaccess') return teamAccessBox();
   if(sec === 'emaillinks') return `<div class="card">
       <div class="field"><label>When someone presses Email on a member or rep</label>
         <select onchange="setSetting('emailLinks', this.value)">
@@ -6785,6 +6811,9 @@ function prefetchView(id){
   else if(id === 'insights' && can('reports')) loadRetention();
   else if(id === 'summits' && can('summits')) loadSummits();
   else if(id === 'ar') loadAR();
+  else if(id === 'onboarding') loadOnboarding();
+  else if(id === 'devel' && teamCan('devel')) teamLoad('handoffs', '/handoffs');
+  else if(id === 'candidates' && teamCan('candidates')) teamLoad('candidates', '/candidates');
 }
 /* Pointing at "Member map" starts loading it, so it is ready by the click */
 const mapAllowed = () => API.live && (isRep() || can('members'));
@@ -7940,12 +7969,14 @@ function navItems(){
 
 function navGroups(){
   if(isRep()) return [
-    ['', [['today','Today'],['rings','My Rings'],['people','People'],['ar','A/R over 60 days'],['map','Member map'],['calendar','Calendar'],['events','Events & summits']]],
-    ['Your work', [['timesheet','Hours & expenses'],['resources','Forms'],['callsheet','Call sheet']]],
+    ['', [['today','Today'],['rings','My Rings'],['people','People'],['onboarding','Onboarding'],['ar','A/R over 60 days'],['map','Member map'],['calendar','Calendar'],['events','Events & summits']]],
+    ['Your work', [['timesheet','Hours & expenses'],['resources','Forms'],['callsheet','Call sheet'],
+      ...(teamCan('devel') ? [['devel','Member Development']] : []), ...(teamCan('candidates') ? [['candidates','Rep candidates']] : [])]],
   ];
   const office = [
     ['', [['dash','Overview'],['manager','Rep manager'],['approvals','Approvals'],['calendar','Calendar'],['summits','Summits']]],
-    ['Records', [['members','Members'],['ar','A/R over 60 days'],['map','Member map'],['allrings','Rings'],['visits','Visits'],['unaffiliated','Not in a Growth Ring']]],
+    ['Records', [['members','Members'],['ar','A/R over 60 days'],['map','Member map'],['allrings','Rings'],['visits','Visits'],['unaffiliated','Not in a Growth Ring'],['onboarding','Onboarding']]],
+    ['Member Development', [...(teamCan('devel') ? [['devel','Hand-offs & coaches']] : []), ...(teamCan('candidates') ? [['candidates','Rep candidates']] : [])]],
     ['Reporting', [['reports','Reports'],['coverage','Coverage'],['insights','Retention'],['timesheet','Hours & expenses']]],
     ['Setup', [['team','Reps'],['reminders','Reminders'],['settings','Settings'],
       ...(isAdmin() ? [['checks','System check']] : []), ['access','Access & security']]],
@@ -9252,6 +9283,7 @@ let loadError = null;
  */
 async function loadSecondary(){
   if(!API.live) return;
+  loadTeamAccess();
   const [facs, events, visits, time, exp, noRing] = await Promise.all([
     API.facilitators().catch(()=>[]),
     API.events().catch(()=>[]),
@@ -9391,10 +9423,15 @@ function renderContentSafe(el){
 }
 const VIEW_TITLE = { manager:'Rep manager', approvals:'Approvals', calendar:'Calendar', members:'Members', map:'Member map', summits:'Summits', summitDetail:'Summits', allrings:'Rings',
   visits:'Visits', unaffiliated:'Not in a Growth Ring', reports:'Reports', coverage:'Coverage', insights:'Retention', team:'Reps', repAccount:'Reps',
-  reminders:'Reminders', ar:'A/R over 60 days', events:'Events & summits', timesheet:'Hours and expenses', checks:'System check', settings:'Settings', access:'Access & security' };
+  reminders:'Reminders', ar:'A/R over 60 days', events:'Events & summits', timesheet:'Hours and expenses', checks:'System check', settings:'Settings', access:'Access & security',
+  onboarding:'Onboarding', devel:'Member Development', candidates:'Rep candidates' };
 function renderContentInner(el){
   const v=ui.view;
   // A screen switched off by the owner can't be reached by a stale tab or link either
+  // Jeremy's screens carry their own access (per person, not per role)
+  if(v==='onboarding'){ el.innerHTML=vOnboarding(); return; }
+  if(v==='devel'){ el.innerHTML=vDevel(); return; }
+  if(v==='candidates'){ el.innerHTML=vCandidates(); return; }
   if(!canView(v)){ el.innerHTML = noAccess(VIEW_TITLE[v] || 'This screen'); return; }
   if(v==='ringDetail'){ el.innerHTML=vRingDetail(); return; }
   if(v==='memberDetail'){ el.innerHTML=vMemberDetail(); return; }
@@ -10342,6 +10379,257 @@ function vUnaffiliated() {
 }
 
 /* ══════════════════ RESOURCES ══════════════════ */
+/* ═══════════ JEREMY'S REQUESTS (28 Oct) ═══════════
+   Onboarding (everyone, reps see their own), Rep candidates (Mel, Jeremy and
+   Member Development) and the Member Development dashboard (Elvin). Each loads
+   once when first opened and is kept, so moving between screens is instant. */
+var team = { access: null, onboarding: null, candidates: null, handoffs: null, coaches: null, err: {} };
+function loadTeamAccess(){
+  if(!API.live || team.accessP) return team.accessP;
+  team.accessP = API.call('/team-access').then(a => { team.access = a; if(ui.me) fillShell(); if(['onboarding','devel','candidates','access'].includes(ui.view)) renderContent(); })
+    .catch(() => { team.access = { devel:false, candidates:false }; }).finally(() => { team.accessP = null; });
+  return team.accessP;
+}
+const teamCan = k => !!(team.access && team.access[k]);
+function teamLoad(key, url, after){
+  if(team[key] || team['_' + key]) return;
+  team['_' + key] = true;
+  API.call(url).then(v => { team[key] = after ? after(v) : v; delete team.err[key]; })
+    .catch(e => { team.err[key] = e.message || 'Could not load'; })
+    .finally(() => { team['_' + key] = false; if(['onboarding','candidates','devel'].includes(ui.view)) renderContent(); });
+}
+const onboardList = () => ((S.membersNoRing && S.membersNoRing.length) ? S.membersNoRing : S.members.filter(m => !m.ringId)).filter(m => m.status === 'active');
+function loadOnboarding(force){
+  if(force){ team.onboarding = null; }
+  const list = onboardList();
+  teamLoad('onboarding', '/onboarding' + (isRep() ? '?ids=' + encodeURIComponent(list.map(m => m.id).join(',')) : ''),
+    v => ({ stages: v.stages, by: Object.fromEntries((v.rows || []).map(r => [String(r.member_id), r])) }));
+}
+const STAGE_COL = { 'Not started':'#9AA39A', 'First call completed':'#7FB24F', 'Prospecting':'#C9A227', 'Visiting a group':'#2C5A6E', 'Group deciding':'#AD7E21', 'Joined a ring':'#2E5132', 'Not interested':'#B3261E' };
+
+/* 1. Onboarding: a status bar of where every member without a ring is */
+function vOnboarding(){
+  if(!team.onboarding){ loadOnboarding(); return `<div class="section-head"><div><h2>Onboarding</h2></div></div>${team.err.onboarding ? `<div class="callout rust">${esc(team.err.onboarding)}</div>` : skeleton(6)}`; }
+  const { stages, by } = team.onboarding;
+  const office = !isRep();
+  const rows = onboardList().map(m => ({ m, s: by[String(m.id)] || { stage: 'Not started' } }));
+  const counts = Object.fromEntries(stages.map(s => [s, rows.filter(r => r.s.stage === s).length]));
+  const f = ui.onbStage || '', repF = ui.onbRep || '', qtext = (ui.onbQ || '').toLowerCase();
+  const shown = rows.filter(r => (!f || r.s.stage === f) && (!repF || r.m.repId === repF) && (!qtext || (r.m.name + ' ' + (r.m.business || '')).toLowerCase().includes(qtext)));
+  const total = rows.length || 1;
+  const reps = office ? [...new Set(rows.map(r => r.m.repId).filter(Boolean))].map(id => [id, pname(id)]).sort((a, b) => a[1].localeCompare(b[1])) : [];
+  return `<div class="section-head"><div><h2>Onboarding</h2>
+      <div class="sub">${office ? 'Every member not yet in a Growth Ring, with their rep' : 'Your members not yet in a Growth Ring'}: where each one is, from the first call to a group deciding.</div></div></div>
+    <div class="card" style="padding:12px">
+      <div class="onb-bar" role="img" aria-label="How many members are at each stage">${stages.filter(s => counts[s]).map(s =>
+        `<span title="${esc(s)}: ${counts[s]}" style="flex:${counts[s]};background:${STAGE_COL[s]}"></span>`).join('') || '<span style="flex:1;background:var(--line)"></span>'}</div>
+      <div class="onb-chips">${['', ...stages].map(s => `<button class="onb-chip ${f === s ? 'on' : ''}" onclick="ui.onbStage='${esc(s)}';renderContent()">
+        ${s ? `<i style="background:${STAGE_COL[s]}"></i>${esc(s)} · ${counts[s]}` : `All · ${rows.length}`}</button>`).join('')}</div>
+      <div class="onb-tools"><input type="search" placeholder="Search name or business" value="${esc(ui.onbQ || '')}" oninput="ui.onbQ=this.value;clearTimeout(window.__onbT);window.__onbT=setTimeout(renderContent,250)">
+        ${office ? `<select onchange="ui.onbRep=this.value;renderContent()"><option value="">Every rep</option>${reps.map(([id, n]) => `<option value="${esc(id)}" ${repF === id ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>` : ''}</div>
+    </div>
+    ${shown.length ? `<div class="card" style="padding:2px 14px">${shown.slice(0, 300).map(({ m, s }) => `<div class="row">
+      <div class="row-main clicky" style="min-width:0" onclick="openMember('${esc(m.id)}')">
+        <div class="row-title">${esc(m.name)}</div>
+        <div class="row-sub">${esc([m.business, office ? pname(m.repId) : '', m.region].filter(Boolean).join(' · '))}${s.updated_at ? ` · ${esc(s.updated_by || '')} ${fmt(String(s.updated_at).slice(0,10))}` : ''}${s.note ? ` · “${esc(s.note)}”` : ''}</div></div>
+      <div class="row-actions">
+        <select class="onb-sel" aria-label="Stage for ${esc(m.name)}" onchange="setOnbStage('${esc(m.id)}', this.value, this)" style="border-left:4px solid ${STAGE_COL[s.stage] || '#999'}">
+          ${stages.map(st => `<option ${st === s.stage ? 'selected' : ''}>${esc(st)}</option>`).join('')}</select>
+        <button class="btn sm" onclick="openHandoff('${esc(m.id)}')" title="Hand off to Member Development">Hand off</button></div></div>`).join('')}</div>
+      ${shown.length > 300 ? `<div class="row-sub">Showing 300 of ${shown.length}: search to narrow it.</div>` : ''}`
+      : `<div class="empty">${rows.length ? 'Nobody at this stage.' : 'Every member is in a Growth Ring.'}</div>`}`;
+}
+async function setOnbStage(id, stage, sel){
+  const m = onboardList().find(x => String(x.id) === String(id)) || member(id) || {};
+  const note = ['Not interested', 'Group deciding', 'Joined a ring'].includes(stage) ? (prompt(`A short note for "${stage}" (optional)`) || '') : '';
+  sel.disabled = true;
+  try{
+    const v = await API.call('/onboarding/' + id, { method:'PUT', body: JSON.stringify({ stage, note, memberName: m.name }) });
+    team.onboarding.by[String(id)] = v; toast(`${m.name || 'Member'}: ${stage}`);
+  }catch(e){ toast(e.message || 'Could not save'); }
+  renderContent();
+}
+
+/* Hand a member to Member Development (from the member page or Onboarding) */
+function openHandoff(id){
+  const m = onboardList().find(x => String(x.id) === String(id)) || member(id);
+  if(!m) return toast('That member is not loaded');
+  const g = m.ringId ? ring(m.ringId) : null;
+  openModal(`<h3>Hand off ${esc(m.name)}</h3>
+    <p class="lead">Member Development gets an email and calls them. You'll see it in their list until it's done.</p>
+    <form onsubmit="submitHandoff(event,'${esc(m.id)}')">
+      <div class="field"><label>Why do they need a call from Member Development?</label>
+        <textarea name="reason" rows="3" required placeholder="Thinking of leaving, business struggling, wants a coach…"></textarea></div>
+      <div id="hoErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn primary">Hand off</button></div></form>`);
+  window.__hoMember = { id: m.id, name: m.name, ring: g ? g.name : '', phone: m.phone || m.mobile || '' };
+}
+async function submitHandoff(ev, id){
+  ev.preventDefault();
+  const m = window.__hoMember || {}, err = document.getElementById('hoErr'), btn = ev.target.querySelector('[type=submit]');
+  btn.disabled = true;
+  try{
+    await API.call('/handoffs', { method:'POST', body: JSON.stringify({ memberId: id, memberName: m.name, ringName: m.ring, phone: m.phone, reason: ev.target.elements.namedItem('reason').value }) });
+    team.handoffs = null; closeModal(); toast('Handed off to Member Development');
+  }catch(e){ err.style.display = 'block'; err.textContent = e.message || 'Could not hand off'; btn.disabled = false; }
+}
+
+/* 2. Rep candidates: Mel, Jeremy and Member Development only */
+function vCandidates(){
+  if(!teamCan('candidates')) return noAccess('Rep candidates');
+  if(!team.candidates){ teamLoad('candidates', '/candidates'); return `<div class="section-head"><div><h2>Rep candidates</h2></div></div>${team.err.candidates ? `<div class="callout rust">${esc(team.err.candidates)}</div>` : skeleton(5)}`; }
+  const { stages, rows } = team.candidates;
+  return `<div class="section-head"><div><h2>Rep candidates</h2>
+      <div class="sub">People who might become reps, and where each one stands. Only you, Mel, Jeremy and Member Development see this.</div></div>
+      <button class="btn primary" onclick="openCandidate()">Add a candidate</button></div>
+    <div class="cand-board">${stages.map(st => { const list = rows.filter(c => c.stage === st);
+      return `<div class="cand-col"><div class="cand-h"><i style="background:${['#9AA39A','#7FB24F','#C9A227','#2C5A6E','#AD7E21','#2E5132','#B3261E'][stages.indexOf(st)]}"></i>${esc(st)} <span class="muted">${list.length}</span></div>
+        ${list.map(c => `<button class="cand-card" onclick="openCandidate(${c.id})"><strong>${esc(c.name)}</strong>
+          <span>${esc([c.region, c.phone].filter(Boolean).join(' · ') || '—')}</span>
+          ${c.notes.length ? `<span class="muted">${esc(String(c.notes[c.notes.length - 1].text).slice(0, 70))}</span>` : ''}</button>`).join('') || '<div class="cand-empty">—</div>'}</div>`; }).join('')}</div>`;
+}
+function openCandidate(id){
+  const c = id ? team.candidates.rows.find(x => x.id === id) : {};
+  const { stages } = team.candidates;
+  openModal(`<h3>${id ? esc(c.name) : 'Add a candidate'}</h3>
+    <form onsubmit="saveCandidate(event, ${id || 'null'})">
+      <div class="two"><div class="field"><label>Name</label><input name="name" required value="${esc(c.name || '')}"></div>
+        <div class="field"><label>Stage</label><select name="stage">${stages.map(s => `<option ${s === (c.stage || 'Lead') ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div></div>
+      <div class="two"><div class="field"><label>Phone</label><input name="phone" type="tel" value="${esc(c.phone || '')}"></div>
+        <div class="field"><label>Email</label><input name="email" type="email" value="${esc(c.email || '')}"></div></div>
+      <div class="two"><div class="field"><label>Area or state</label><input name="region" value="${esc(c.region || '')}"></div>
+        <div class="field"><label>Who suggested them</label><input name="source" value="${esc(c.source || '')}"></div></div>
+      <div class="field"><label>${id ? 'Add a note' : 'Note'}</label><textarea name="note" rows="2" placeholder="What was said, what happens next"></textarea></div>
+      ${id && c.notes.length ? `<div class="cand-notes">${c.notes.slice().reverse().map(n => `<div><span class="muted">${fmt(String(n.at).slice(0,10))} · ${esc(n.by || '')}</span><br>${esc(n.text)}</div>`).join('')}</div>` : ''}
+      <div id="candErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
+      <div class="m-actions">${id ? `<button type="button" class="btn danger" onclick="archiveCandidate(${id})">Remove</button>` : ''}
+        <button type="button" class="btn" onclick="closeModal()">Close</button><button type="submit" class="btn primary">Save</button></div></form>`);
+}
+async function saveCandidate(ev, id){
+  ev.preventDefault();
+  const f = ev.target.elements, body = Object.fromEntries(['name','stage','phone','email','region','source','note'].map(k => [k, f.namedItem(k).value]));
+  try{
+    const row = await API.call('/candidates' + (id ? '/' + id : ''), { method: id ? 'PATCH' : 'POST', body: JSON.stringify(body) });
+    const rows = team.candidates.rows.filter(c => c.id !== row.id); rows.unshift(row); team.candidates.rows = rows;
+    closeModal(); toast('Saved'); renderContent();
+  }catch(e){ const el = document.getElementById('candErr'); el.style.display = 'block'; el.textContent = e.message || 'Could not save'; }
+}
+async function archiveCandidate(id){
+  if(!confirm('Remove this candidate from the list? Their notes are kept.')) return;
+  try{ await API.call('/candidates/' + id, { method:'PATCH', body: JSON.stringify({ archived: true }) });
+    team.candidates.rows = team.candidates.rows.filter(c => c.id !== id); closeModal(); renderContent(); }
+  catch(e){ toast(e.message || 'Could not remove'); }
+}
+
+/* 3. Member Development: hand-offs with call notes, offboarding, Oak Tree coaches */
+function vDevel(){
+  if(!teamCan('devel')) return noAccess('Member Development');
+  const tab = ui.devTab || 'handoffs';
+  if(!team.handoffs) teamLoad('handoffs', '/handoffs');
+  if(tab === 'coaches' && !team.coaches) teamLoad('coaches', '/coaches');
+  const open = (team.handoffs || []).filter(h => h.status !== 'done'), done = (team.handoffs || []).filter(h => h.status === 'done');
+  const head = `<div class="section-head"><div><h2>Member Development</h2>
+      <div class="sub">Members reps have handed off for a follow-up call, offboarding, and Oak Tree members who can coach.</div></div></div>
+    <div class="seg-toggle" style="margin-bottom:12px">${[['handoffs', `Hand-offs${open.length ? ' · ' + open.length : ''}`], ['coaches', 'Oak Tree coaches'], ['done', 'Finished']].map(([k, l]) =>
+      `<button class="${tab === k ? 'on' : ''}" onclick="ui.devTab='${k}';renderContent()">${l}</button>`).join('')}</div>`;
+  if(tab === 'coaches'){
+    if(!team.coaches) return head + (team.err.coaches ? `<div class="callout rust">${esc(team.err.coaches)}</div>` : skeleton(6));
+    const only = ui.devWilling, q2 = (ui.devQ || '').toLowerCase();
+    const list = team.coaches.filter(c => (!only || c.willing) && (!q2 || (c.name + ' ' + c.strengths + ' ' + c.business + ' ' + c.place).toLowerCase().includes(q2)));
+    return head + `<div class="onb-tools" style="margin-bottom:10px"><input type="search" placeholder="Search name, strength, place" value="${esc(ui.devQ || '')}" oninput="ui.devQ=this.value;clearTimeout(window.__devT);window.__devT=setTimeout(renderContent,250)">
+        <label style="display:flex;gap:6px;align-items:center;white-space:nowrap"><input type="checkbox" style="width:auto" ${only ? 'checked' : ''} onchange="ui.devWilling=this.checked;renderContent()"> Willing to coach only</label></div>
+      <div class="row-sub" style="margin-bottom:8px">${team.coaches.filter(c => c.willing).length} of ${team.coaches.length} Mighty Oak members are willing to coach.</div>
+      <div class="card" style="padding:2px 14px">${list.map(c => `<div class="row">
+        <div class="row-main" style="min-width:0"><div class="row-title">${esc(c.name)} ${c.willing ? '<span class="tag ok">Willing to coach</span>' : ''}</div>
+          <div class="row-sub">${esc([c.business, c.place, c.phone].filter(Boolean).join(' · '))}${c.strengths ? `<br><strong>Strengths:</strong> ${esc(c.strengths)}` : ''}</div></div>
+        <div class="row-actions"><button class="btn sm" onclick="openCoach('${esc(c.id)}')">Edit</button></div></div>`).join('') || '<div class="empty">Nobody matches.</div>'}</div>`;
+  }
+  if(!team.handoffs) return head + (team.err.handoffs ? `<div class="callout rust">${esc(team.err.handoffs)}</div>` : skeleton(5));
+  const list = tab === 'done' ? done : open;
+  return head + (list.length ? list.map(h => `<div class="card ho-card">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div style="min-width:0"><div class="row-title clicky" onclick="openMember('${esc(h.member_id)}')">${esc(h.member_name || 'Member')}</div>
+          <div class="row-sub">${esc([h.ring_name, h.phone, 'handed off by ' + (h.rep_name || '?') + ' ' + fmt(String(h.created_at).slice(0,10))].filter(Boolean).join(' · '))}</div></div>
+        <span class="tag ${h.status === 'open' ? 'warn' : h.status === 'done' ? 'ok' : 'info'}">${esc(h.status)}</span></div>
+      <div class="ho-reason">${esc(h.reason || '')}</div>
+      ${h.notes.length ? `<div class="cand-notes">${h.notes.slice().reverse().map(n => `<div><span class="muted">${fmt(String(n.at).slice(0,10))} · ${esc(n.by || '')}</span><br>${esc(n.text)}</div>`).join('')}</div>` : ''}
+      ${h.status !== 'done' ? `<div class="btnrow" style="margin-top:8px">
+        ${h.phone ? `<a class="btn sm" href="tel:${esc(String(h.phone).replace(/[^0-9+]/g, ''))}">Call</a>` : ''}
+        <button class="btn sm primary" onclick="openHoNote(${h.id})">Add call notes</button>
+        <button class="btn sm" onclick="setHoStatus(${h.id},'done')">Mark done</button>
+        <button class="btn sm danger" onclick="openOffboard('${esc(h.member_id)}', ${esc(JSON.stringify(h.member_name || ''))})">Offboard</button></div>` : ''}
+    </div>`).join('') : `<div class="empty">${tab === 'done' ? 'Nothing finished yet.' : 'No hand-offs waiting. Reps hand members off from the member page or Onboarding.'}</div>`);
+}
+function openHoNote(id){
+  openModal(`<h3>Call notes</h3><p class="lead">Saved here and as a note on the member in Zoho.</p>
+    <form onsubmit="saveHoNote(event, ${id})"><div class="field"><textarea name="note" rows="5" required placeholder="What you talked about, what happens next"></textarea></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button type="submit" class="btn primary">Save notes</button></div></form>`);
+}
+async function saveHoNote(ev, id){
+  ev.preventDefault(); const btn = ev.target.querySelector('[type=submit]'); btn.disabled = true;
+  try{
+    const v = await API.call('/handoffs/' + id, { method:'PATCH', body: JSON.stringify({ note: ev.target.elements.namedItem('note').value }) });
+    team.handoffs = team.handoffs.map(h => h.id === id ? v : h); closeModal();
+    toast(v.zohoNote === 'saved' ? 'Notes saved, and added to the member in Zoho' : `Notes saved in Rep Hub (Zoho ${v.zohoNote || 'not updated'})`); renderContent();
+  }catch(e){ toast(e.message || 'Could not save'); btn.disabled = false; }
+}
+async function setHoStatus(id, status){
+  try{ const v = await API.call('/handoffs/' + id, { method:'PATCH', body: JSON.stringify({ status }) });
+    team.handoffs = team.handoffs.map(h => h.id === id ? v : h); toast('Marked ' + status); renderContent(); }
+  catch(e){ toast(e.message || 'Could not save'); }
+}
+function openOffboard(id, name){
+  openModal(`<h3>Offboard ${esc(name)}?</h3>
+    <p class="lead">Their Status in Zoho changes, a note says why, and the office is emailed to end the membership and invoices.</p>
+    <form onsubmit="submitOffboard(event,'${esc(id)}')">
+      <div class="field"><label>Zoho status</label><select name="status"><option>Inactive - Continuing Lead</option><option>Inactive</option></select>
+        <div class="hint">"Continuing Lead" keeps them as someone to stay in touch with.</div></div>
+      <div class="field"><label>Why are they leaving?</label><textarea name="reason" rows="3" required></textarea></div>
+      <div id="offErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Keep them</button><button type="submit" class="btn danger">Offboard</button></div></form>`);
+}
+async function submitOffboard(ev, id){
+  ev.preventDefault(); const f = ev.target.elements, btn = ev.target.querySelector('[type=submit]'); btn.disabled = true;
+  try{
+    await API.call(`/members/${id}/offboard`, { method:'POST', body: JSON.stringify({ status: f.namedItem('status').value, reason: f.namedItem('reason').value }) });
+    team.handoffs = null; closeModal(); toast('Offboarded. The office has been told.'); renderContent();
+  }catch(e){ const el = document.getElementById('offErr'); el.style.display = 'block'; el.textContent = e.message || 'Could not offboard'; btn.disabled = false; }
+}
+function openCoach(id){
+  const c = team.coaches.find(x => String(x.id) === String(id)); if(!c) return;
+  openModal(`<h3>${esc(c.name)}</h3><form onsubmit="saveCoach(event,'${esc(c.id)}')">
+    <label style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input type="checkbox" name="willing" style="width:auto" ${c.willing ? 'checked' : ''}> Willing to coach other members</label>
+    <div class="field"><label>Areas of strength</label><textarea name="strengths" rows="3" placeholder="Hiring, family business succession, bookkeeping, sales…">${esc(c.strengths)}</textarea></div>
+    <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button type="submit" class="btn primary">Save</button></div></form>`);
+}
+async function saveCoach(ev, id){
+  ev.preventDefault(); const f = ev.target.elements, c = team.coaches.find(x => String(x.id) === String(id));
+  try{
+    const v = await API.call('/coaches/' + id, { method:'PUT', body: JSON.stringify({ name: c.name, willing: f.namedItem('willing').checked, strengths: f.namedItem('strengths').value }) });
+    Object.assign(c, { willing: v.willing, strengths: v.strengths }); closeModal(); toast('Saved'); renderContent();
+  }catch(e){ toast(e.message || 'Could not save'); }
+}
+
+/* Access & security: who has Member Development and rep candidates */
+var teamAccessData = null;
+function teamAccessBox(){
+  if(!teamAccessData){ API.call('/admin/team-access').then(v => { teamAccessData = v; renderContent(); }).catch(e => { teamAccessData = { error: e.message }; renderContent(); }); return `<div class="card">${skeleton(4)}</div>`; }
+  if(teamAccessData.error) return `<div class="callout rust">${esc(teamAccessData.error)}</div>`;
+  const pick = (key, label, hint) => `<label style="display:block;font-weight:600;margin:4px 0">${label}</label><div class="row-sub" style="margin-bottom:6px">${hint}</div>
+    <div class="pick-list" style="max-height:30vh;overflow:auto;margin-bottom:14px">${teamAccessData.people.map(p => `<label class="pick" style="display:flex;gap:8px;align-items:center;padding:4px 0">
+      <input type="checkbox" class="ta-${key}" value="${esc(p.id)}" style="width:auto" ${teamAccessData[key].includes(String(p.id)) ? 'checked' : ''} onchange="saveTeamAccess('${key}')">
+      <span>${esc(p.name)} <span class="muted">${esc(p.email || '')} · ${p.role === 'rep' ? 'rep' : 'office'}</span></span></label>`).join('')}</div>`;
+  return `<div class="card">
+    ${pick('devPeople', 'Member Development', 'Get the Member Development dashboard, an email for each hand-off, and can offboard members. (Elvin.) People who manage reps can see it too.')}
+    ${pick('candidatePeople', 'Rep candidates', 'Can see and edit the rep candidates list. Member Development can always see it. (Mel and Jeremy.)')}</div>`;
+}
+async function saveTeamAccess(key){
+  const list = [...document.querySelectorAll('.ta-' + key + ':checked')].map(c => c.value);
+  try{ const v = await API.call('/admin/team-access', { method:'PUT', body: JSON.stringify({ [key]: list }) }); Object.assign(teamAccessData, v); toast('Saved'); team.accessP = null; loadTeamAccess(); }
+  catch(e){ toast(e.message || 'Could not save'); }
+}
+
 function vResources() {
   const stored = id => ((S.settings.links || {})[id] || '').trim();
   const link = (r, kind) => {

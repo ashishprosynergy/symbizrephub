@@ -344,6 +344,60 @@ CREATE TABLE IF NOT EXISTS exit_forms (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Jeremy (28 Oct): where each member without a ring is in onboarding
+CREATE TABLE IF NOT EXISTS member_onboarding (
+  member_id   TEXT PRIMARY KEY,
+  member_name TEXT,
+  stage       TEXT NOT NULL,
+  note        TEXT,
+  history     TEXT NOT NULL DEFAULT '[]',
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_by  TEXT
+);
+
+-- People who might become reps, and where each one stands
+CREATE TABLE IF NOT EXISTS rep_candidates (
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL,
+  phone       TEXT,
+  email       TEXT,
+  region      TEXT,
+  source      TEXT,
+  stage       TEXT NOT NULL DEFAULT 'Lead',
+  notes       TEXT NOT NULL DEFAULT '[]',
+  archived    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_by  TEXT
+);
+
+-- A rep hands a member to Member Development (Elvin) for a follow-up call
+CREATE TABLE IF NOT EXISTS handoffs (
+  id          SERIAL PRIMARY KEY,
+  member_id   TEXT NOT NULL,
+  member_name TEXT,
+  ring_name   TEXT,
+  phone       TEXT,
+  rep_user_id TEXT,
+  rep_name    TEXT,
+  reason      TEXT,
+  status      TEXT NOT NULL DEFAULT 'open',
+  notes       TEXT NOT NULL DEFAULT '[]',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  closed_at   TIMESTAMPTZ
+);
+
+-- Mighty Oak (Oak Tree) members willing to coach, and what they are good at
+CREATE TABLE IF NOT EXISTS coaches (
+  member_id   TEXT PRIMARY KEY,
+  member_name TEXT,
+  willing     BOOLEAN NOT NULL DEFAULT FALSE,
+  strengths   TEXT,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_by  TEXT
+);
+
 CREATE TABLE IF NOT EXISTS mail_outbox (
   id         SERIAL PRIMARY KEY,
   to_addr    TEXT NOT NULL,

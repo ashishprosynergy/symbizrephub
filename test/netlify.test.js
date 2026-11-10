@@ -109,6 +109,12 @@ const fakeZoho = http.createServer((req, res) => {
       res.writeHead(404); return res.end('{}');
     }
     if (url.pathname === '/crm/v8/org') return json({ org: [{ company_name: 'Symbiz Network (test)' }] });
+    // A note on a record (Member Development call notes, offboarding)
+    const znote = url.pathname.match(/^\/crm\/v8\/([A-Za-z_]+)\/([^/]+)\/Notes$/);
+    if (znote && req.method === 'POST') {
+      (store.notes = store.notes || []).push({ module: znote[1], id: znote[2], ...(JSON.parse(body).data || [])[0] });
+      return json({ data: [{ code: 'SUCCESS', details: { id: 'N' + store.notes.length } }] });
+    }
     // A file on a record's Attachments list
     const zatt = url.pathname.match(/^\/crm\/v8\/([A-Za-z_]+)\/([^/]+)\/Attachments$/);
     if (zatt && req.method === 'POST') {
@@ -590,6 +596,62 @@ describe('netlify function handler', () => {
       assert.ok(zohoCalls.some(c => c.path === '/crm/v8/coql'), 'read through COQL on the subform');
     } finally {
       delete store.Event_Registrations; delete store.Guests;
+    }
+  });
+
+  test("Jeremy's requests: onboarding stages, rep candidates, hand-offs, offboarding and coaches", async () => {
+    const keepContacts = store.Contacts;
+    store.Contacts = [{ id: '8801', Full_Name: 'Amos Zook #0901', Status: 'Active', Active: true, Life_Stage: 'Mighty Oak', Phone: '555' }];
+    store.notes = [];
+    try {
+      // 1. Onboarding: a rep moves their member along; they only get back what they ask for
+      assert.equal((await invoke('PUT', '/onboarding/8801', { token: repToken, body: { stage: 'Somewhere' } })).statusCode, 400);
+      const st = J(await invoke('PUT', '/onboarding/8801', { token: repToken, body: { stage: 'Visiting a group', memberName: 'Amos Zook #0901', note: 'Group 12 on Tuesday' } }));
+      assert.equal(st.stage, 'Visiting a group');
+      assert.deepEqual(J(await invoke('GET', '/onboarding', { token: repToken })).rows, [], 'a rep must say which members');
+      const mine = J(await handler({ httpMethod: 'GET', path: '/.netlify/functions/api/onboarding', rawUrl: 'https://example.netlify.app/.netlify/functions/api/onboarding',
+        headers: { authorization: `Bearer ${repToken}` }, queryStringParameters: { ids: '8801' }, body: null, isBase64Encoded: false }, {}));
+      assert.equal(mine.rows[0].stage, 'Visiting a group');
+      assert.equal(mine.rows[0].history.length, 1);
+      assert.equal(J(await invoke('GET', '/onboarding', { token: officeToken })).rows.length >= 1, true, 'the office sees everyone');
+
+      // 2. Rep candidates: only the people chosen
+      assert.equal((await invoke('GET', '/candidates', { token: repToken })).statusCode, 403);
+      const people = J(await invoke('GET', '/admin/team-access', { token: officeToken })).people;
+      const office = J(await invoke('GET', '/auth/me', { token: officeToken })).user, rep = J(await invoke('GET', '/auth/me', { token: repToken })).user;
+      assert.ok(people.some(p => p.id === rep.id), 'reps can be chosen too (Elvin may be a rep)');
+      await invoke('PUT', '/admin/team-access', { token: officeToken, body: { candidatePeople: [office.id], devPeople: [rep.id] } });
+      assert.equal(J(await invoke('GET', '/team-access', { token: repToken })).candidates, true, 'Member Development sees candidates too');
+      const c = J(await invoke('POST', '/candidates', { token: officeToken, body: { name: 'Levi Stoltzfus', region: 'PA', note: 'Met at summit' } }));
+      assert.equal(c.stage, 'Lead');
+      const c2 = J(await invoke('PATCH', `/candidates/${c.id}`, { token: officeToken, body: { stage: 'Interviewing', note: 'Call Friday' } }));
+      assert.deepEqual(c2.notes.map(n => n.text), ['Met at summit', 'Moved to Interviewing', 'Call Friday']);
+      await invoke('PATCH', `/candidates/${c.id}`, { token: officeToken, body: { archived: true } });
+      assert.equal(J(await invoke('GET', '/candidates', { token: officeToken })).rows.some(x => x.id === c.id), false);
+
+      // 3. Hand-off from a rep, call notes into Zoho, offboarding
+      assert.equal((await invoke('POST', '/handoffs', { token: repToken, body: { memberId: '8801' } })).statusCode, 400, 'a reason is needed');
+      const h = J(await invoke('POST', '/handoffs', { token: repToken, body: { memberId: '8801', memberName: 'Amos Zook #0901', reason: 'Thinking of leaving' } }));
+      assert.equal((await invoke('POST', '/handoffs', { token: repToken, body: { memberId: '8801', reason: 'again' } })).statusCode, 409, 'not twice');
+      const noted = J(await invoke('PATCH', `/handoffs/${h.id}`, { token: repToken, body: { note: 'Spoke for 20 minutes, staying for now' } }));
+      assert.equal(noted.status, 'in progress');
+      assert.equal(noted.zohoNote, 'saved');
+      assert.match(store.notes[0].Note_Content, /staying for now/);
+      assert.equal((await invoke('POST', '/members/8801/offboard', { token: repToken, body: { status: 'Gone' , reason: 'x' } })).statusCode, 400);
+      assert.equal(J(await invoke('POST', '/members/8801/offboard', { token: repToken, body: { status: 'Inactive - Continuing Lead', reason: 'Business closed' } })).ok, true);
+      assert.equal(store.Contacts[0].Status, 'Inactive - Continuing Lead');
+      assert.equal(J(await invoke('GET', '/handoffs', { token: repToken })).find(x => x.id === h.id).status, 'done');
+
+      // Coaches: Mighty Oak members, with willingness and strengths kept in Rep Hub
+      await invoke('PUT', '/coaches/8801', { token: repToken, body: { name: 'Amos Zook #0901', willing: true, strengths: 'Hiring, succession' } });
+      const coaches = J(await invoke('GET', '/coaches', { token: repToken }));
+      assert.deepEqual([coaches[0].willing, coaches[0].strengths], [true, 'Hiring, succession']);
+      // Someone not chosen cannot reach Member Development
+      await invoke('PUT', '/admin/team-access', { token: officeToken, body: { devPeople: [], candidatePeople: [] } });
+      assert.equal((await invoke('GET', '/coaches', { token: repToken })).statusCode, 403);
+    } finally {
+      store.Contacts = keepContacts;
+      await db.query('DELETE FROM handoffs'); await db.query('DELETE FROM member_onboarding'); await db.query('DELETE FROM coaches');
     }
   });
 
