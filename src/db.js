@@ -653,9 +653,6 @@ const q = {
   queueTimeBills: ids => ids.length ? query(
     `UPDATE time_entries SET books_queued = TRUE WHERE id IN (${ids.map((_, i) => '$' + (i + 1)).join(',')})`,
     ids.map(Number)) : Promise.resolve([]),
-  // Hours already sent to accounting that never got a bill (before hours were billed)
-  queueSentTimeWithoutBill: () => query(
-    "UPDATE time_entries SET books_queued = TRUE WHERE status = 'Reimbursed' AND books_bill_id IS NULL AND books_queued = FALSE RETURNING id"),
   timeBillsToMake: (limit, includeFailed) => query(
     `SELECT id,user_id,rep_name,entry_date,hours,category,description,approved_by,books_error
      FROM time_entries WHERE books_queued = TRUE AND books_bill_id IS NULL

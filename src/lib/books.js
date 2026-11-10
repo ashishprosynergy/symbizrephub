@@ -132,7 +132,10 @@ async function listVendors() {
   const all = [];
   for (let page = 1; page <= 10; page++) {
     const out = await call('/contacts', { query: { contact_type: 'vendor', filter_by: 'Status.Active', per_page: 200, page } });
-    (out.contacts || []).forEach(c => all.push({ id: c.contact_id, name: String(c.contact_name || '').trim() }));
+    // Books sends its customers too ("David Mullet #1405", a member): a bill to one is refused
+    // with "Please enter a valid vendor ID", so only real vendors are kept
+    (out.contacts || []).filter(c => !c.contact_type || c.contact_type === 'vendor')
+      .forEach(c => all.push({ id: c.contact_id, name: String(c.contact_name || '').trim(), email: String(c.email || '').trim().toLowerCase() }));
     if (!(out.page_context && out.page_context.has_more_page)) break;
   }
   vendorList = all.filter(v => v.name); vendorListAt = Date.now();
@@ -150,12 +153,20 @@ function matchVendor(list, name) {
            .sort((a, b) => norm(b.name).length - norm(a.name).length)[0]
     || null;
 }
-async function vendorId(name) {
+/* "David Mullet" in Rep Hub is "Dave Mullet" in Books */
+const NICK = { dave: 'david', dan: 'daniel', danny: 'daniel', tim: 'timothy', mike: 'michael', jim: 'james', joe: 'joseph',
+  steve: 'steven', sam: 'samuel', ben: 'benjamin', andy: 'andrew', matt: 'matthew', nate: 'nathan', jon: 'jonathan',
+  eli: 'elias', abe: 'abraham', ike: 'isaac', jake: 'jacob', josh: 'joshua', mel: 'melvin', ken: 'kenneth', ed: 'edward', rob: 'robert', bob: 'robert' };
+const fullFirst = s => norm(s).split(' ').map((w, i) => i === 0 ? (NICK[w] || w) : w).join(' ');
+/** The rep's vendor: their email first, then their name, then the same name with a nickname */
+async function vendorId(name, email = '') {
   const list = await listVendors();
-  const hit = matchVendor(list, name);
+  const em = String(email || '').trim().toLowerCase();
+  const hit = (em && list.find(v => v.email === em)) || matchVendor(list, name)
+    || (fullFirst(name) && list.find(v => fullFirst(v.name) === fullFirst(name)));
   if (hit) return hit.id;
   const made = await call('/contacts', { method: 'POST', json: { contact_name: String(name).trim(), contact_type: 'vendor' } });
-  list.push({ id: made.contact.contact_id, name: String(name).trim() });
+  list.push({ id: made.contact.contact_id, name: String(name).trim(), email: '' });
   return made.contact.contact_id;
 }
 
@@ -185,7 +196,7 @@ async function sameNumber(number, payeeName) {
     `Rename that bill's number in Zoho Books (it was not made by Rep Hub), then press Make bills now.`);
 }
 
-async function billFor(x, { payee = 'rep', fallbackAccount = '', accountMap = {}, approvedBy = '', receipt = null } = {}) {
+async function billFor(x, { payee = 'rep', fallbackAccount = '', accountMap = {}, approvedBy = '', receipt = null, email = '' } = {}) {
   const number = `RH-${x.id}`;
   const merchant = String(x.vendor || '').trim();
   const payeeName = payee === 'vendor' && merchant ? merchant : (repName(x.rep_name) || merchant);
@@ -205,7 +216,7 @@ async function billFor(x, { payee = 'rep', fallbackAccount = '', accountMap = {}
   const day = d => (d instanceof Date ? d.toISOString() : String(d || '')).slice(0, 10);
   const line = [x.category, merchant, x.description].filter(Boolean).join(' — ');
   const made = await call('/bills', { method: 'POST', json: {
-    vendor_id: await vendorId(payeeName),
+    vendor_id: await vendorId(payeeName, payee === 'rep' ? email : ''),
     bill_number: number,
     reference_number: `Rep Hub E${x.id}`,
     date: day(x.entry_date),
@@ -271,7 +282,7 @@ function hourWeeks(rows) {
   });
   return [...by.values()];
 }
-async function hoursBillFor(g, { rate, accountMap = {}, approvedBy = '' }) {
+async function hoursBillFor(g, { rate, accountMap = {}, approvedBy = '', email = '' }) {
   // Numbered by the first entry in it, so a retry finds the bill it already made
   const ids = g.rows.map(r => Number(r.id)).sort((a, b) => a - b);
   const number = `RH-H${ids[0]}`;
@@ -286,7 +297,7 @@ async function hoursBillFor(g, { rate, accountMap = {}, approvedBy = '' }) {
   const nice = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
   const last = g.rows.map(r => day10(r.entry_date)).sort().pop();
   const made = await call('/bills', { method: 'POST', json: {
-    vendor_id: await vendorId(name),
+    vendor_id: await vendorId(name, email),
     bill_number: number,
     reference_number: `Rep Hub hours, week of ${g.week.start}`,
     date: last,
@@ -299,6 +310,17 @@ async function hoursBillFor(g, { rate, accountMap = {}, approvedBy = '' }) {
   return { billId: made.bill.bill_id, hours };
 }
 
+/** The office says this one was paid by hand: never bill it */
+async function skip(kind, ids) {
+  const { query } = require('../db');
+  const list = [].concat(ids).map(Number).filter(n => Number.isInteger(n) && n > 0);
+  if (!list.length) return 0;
+  const table = kind === 'time' ? 'time_entries' : 'expenses';
+  const rows = await query(`UPDATE ${table} SET books_bill_id = 'paid-by-hand', books_error = NULL
+    WHERE books_bill_id IS NULL AND id IN (${list.join(',')}) RETURNING id`);
+  return rows.length;
+}
+
 async function makeBills({ budgetMs = 7000, limit = 25, includeFailed = false } = {}) {
   if (!(await configured())) return { configured: false, made: 0, failed: 0, left: 0 };
   const { q, setting } = require('../db');
@@ -309,6 +331,7 @@ async function makeBills({ budgetMs = 7000, limit = 25, includeFailed = false } 
   const accountMap = await accountMapSetting();
   const users = await q.everyUser();
   const nameOf = id => (users.find(u => u.id === id) || {}).name || '';
+  const emailOf = id => (users.find(u => u.id === id) || {}).email || '';
 
   const todo = await q.billsToMake(limit, includeFailed);
   let made = 0, failed = 0;
@@ -316,7 +339,7 @@ async function makeBills({ budgetMs = 7000, limit = 25, includeFailed = false } 
     if (Date.now() - started > budgetMs) break;
     try {
       const receipt = x.receipt_name ? receiptFrom(await q.receiptFor(x.id), x) : null;
-      const out = await billFor(x, { payee, fallbackAccount, accountMap, approvedBy: nameOf(x.approved_by), receipt });
+      const out = await billFor(x, { payee, fallbackAccount, accountMap, approvedBy: nameOf(x.approved_by), receipt, email: emailOf(x.user_id) });
       await q.setExpenseBill(x.id, out.billId, out.note && /did not attach|will not take/.test(out.note) ? out.note : null);
       made++;
     } catch (e) {
@@ -331,7 +354,7 @@ async function makeBills({ budgetMs = 7000, limit = 25, includeFailed = false } 
     if (Date.now() - started > budgetMs) break;
     const ids = g.rows.map(r => r.id);
     try {
-      const out = await hoursBillFor(g, { rate: rates.rateFor(g.userId), accountMap, approvedBy: nameOf(g.rows[0].approved_by) });
+      const out = await hoursBillFor(g, { rate: rates.rateFor(g.userId), accountMap, approvedBy: nameOf(g.rows[0].approved_by), email: emailOf(g.userId) });
       await q.setTimeBill(ids, out.billId, null);
       made++; hoursMade++;
     } catch (e) {
@@ -397,6 +420,6 @@ async function overdueInvoices() {
   return out;
 }
 
-module.exports = { configured, overdueInvoices, connect, disconnect, makeBills, status, billFor, vendorNames, matchVendor, DEFAULT_FALLBACK,
+module.exports = { configured, overdueInvoices, connect, disconnect, makeBills, status, billFor, vendorNames, matchVendor, skip, DEFAULT_FALLBACK,
   DEFAULT_HOURS_ACCOUNT, hourlyRates, weekOf, hourWeeks,
   _resetForTests: () => { token = { access: null, expiresAt: 0 }; accounts = null; vendorList = null; } };

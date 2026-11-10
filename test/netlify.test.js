@@ -529,7 +529,9 @@ describe('netlify function handler', () => {
       Registrant_Name: { id: 'C1', name: 'James Zimmerman #0535' }, Bringing_Guest: 'Yes',
       Guest_First_Name: null, Guest_Last_Name: null, Registration_Status: 'Attending' }];
     store.Guests = [{ id: 'G1', Parent_Id: { id: 'REG1', name: '1193' }, Guest_First_Name: 'Mrs. James',
-      Guest_Last_Name: 'Zimmerman', Guest_Type: 'Spouse', Guest_Organization: 'J&M Doorcraft LLC', Guest_City: 'Newville' }];
+      Guest_Last_Name: 'Zimmerman', Guest_Type: 'Spouse', Guest_Organization: 'J&M Doorcraft LLC', Guest_City: 'Newville' },
+      // A blank line left on the guest list is not a guest
+      { id: 'G2', Parent_Id: { id: 'REG1', name: '1193' }, Guest_First_Name: null, Guest_Last_Name: '', Guest_Type: null }];
     try {
       const res = await invoke('GET', '/events/999/registrations', { token: repToken });
       assert.equal(res.statusCode, 200, res.body);
@@ -1008,6 +1010,32 @@ describe('hours and expenses', () => {
         { fallbackAccount: 'Rep Reimbursements' }), /already has a bill RH-990 for Dave Mullet, not Lewis Yoder/);
       assert.equal((await books.billFor({ id: 990, rep_name: 'Dave Mullet #1405', category: 'Other', amount: 1, entry_date: '2026-11-05' },
         { fallbackAccount: 'Rep Reimbursements' })).billId, 'HAND1', 'the same rep: it is the bill already made');
+
+      // Books also sends customers; a member with the rep's name is not the rep's vendor.
+      // "David Mullet" in Rep Hub is the vendor "Dave Mullet", found by email or by nickname.
+      books._resetForTests();
+      booksStore.contacts.push({ contact_id: 'CUST1', contact_name: 'David Mullet #1405', contact_type: 'customer', email: 'davem@symbiz.org' },
+        { contact_id: 'VDAVE', contact_name: 'Dave Mullet', contact_type: 'vendor', email: 'davem@symbiz.org' },
+        { contact_id: 'CUST2', contact_name: 'Lewis Yoder #1911', contact_type: 'customer' });
+      const one = await books.billFor({ id: 991, rep_name: 'David Mullet #1405', category: 'Other', amount: 5, entry_date: '2026-11-05' },
+        { fallbackAccount: 'Rep Reimbursements', email: 'DaveM@symbiz.org' });
+      assert.equal(booksStore.bills.find(b => b.bill_id === one.billId).vendor_id, 'VDAVE', 'by email');
+      const two = await books.billFor({ id: 992, rep_name: 'David Mullet', category: 'Other', amount: 5, entry_date: '2026-11-05' },
+        { fallbackAccount: 'Rep Reimbursements', email: 'wana@gmail.test' });
+      assert.equal(booksStore.bills.find(b => b.bill_id === two.billId).vendor_id, 'VDAVE', 'by nickname');
+      const lewis = await books.billFor({ id: 993, rep_name: 'Lewis Yoder', category: 'Other', amount: 65.09, entry_date: '2026-11-05' },
+        { fallbackAccount: 'Rep Reimbursements' });
+      const lv = booksStore.contacts.find(c => c.contact_id === booksStore.bills.find(b => b.bill_id === lewis.billId).vendor_id);
+      assert.equal(lv.contact_type, 'vendor', 'a new vendor, not the member');
+      assert.equal(lv.contact_name, 'Lewis Yoder');
+
+      // Paid on a bill made by hand: the office skips it and it is never billed
+      const xs = JSON.parse((await invoke('GET', '/expenses', { token: officeToken })).body);
+      await db.query("UPDATE expenses SET books_bill_id = NULL, books_error = 'test', books_queued = TRUE WHERE id = $1", [xs[0].id]);
+      assert.equal((await invoke('POST', '/accounting/books-skip', { token: repToken, body: { kind: 'expense', ids: [xs[0].id] } })).statusCode, 403);
+      assert.equal(JSON.parse((await invoke('POST', '/accounting/books-skip', { token: officeToken, body: { kind: 'expense', ids: [xs[0].id] } })).body).skipped, 1);
+      const st = JSON.parse((await invoke('GET', '/admin/books-status', { token: officeToken })).body);
+      assert.ok(!st.failed.some(f => f.id === 'E' + xs[0].id), 'no longer listed');
     } finally {
       cfg.books.orgId = ''; cfg.books.refreshToken = ''; reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
     }

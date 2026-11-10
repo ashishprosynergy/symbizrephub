@@ -1287,7 +1287,11 @@ r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
     }
     // Still no name: say which record it is, so it can be found and fixed in Zoho
     if (!base.name) base.name = base.ref ? `No name in Zoho (registration ${base.ref})` : 'No name in Zoho';
-    const guests = sub.filter(g => !(g.Same_As_Main_Registrant === true)).map(g => ({
+    // A blank line left on the guest list (nothing typed in it) is not a guest:
+    // it showed as "Guest name not in Zoho" under the registrant
+    const blank = g => ![nameOf(g), g.Guest_Type, g.Guest_Organization, g.Guest_Email, g.Guest_Phone, g.Guest_Street, g.Guest_City]
+      .some(v => String(v || '').trim());
+    const guests = sub.filter(g => !(g.Same_As_Main_Registrant === true) && !blank(g)).map(g => ({
       name: nameOf(g),
       type: g.Guest_Type || 'Guest',
       business: g.Guest_Organization || '',
@@ -1311,7 +1315,7 @@ r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
     }
     // Someone marked as bringing a guest with no detail recorded anywhere
     if (!guests.length && base.bringingGuest) {
-      guests.push({ name: '', type: base.guestType || 'Guest', business: '',
+      guests.push({ name: '', type: base.guestType || 'Guest', business: '', unnamed: true,
                     email: '', phone: '', city: '', address: '', attended: '', status: '' });
     }
 
@@ -3825,17 +3829,23 @@ r.get('/admin/books-status', auth.authRequired, access.requirePerm('books'), wra
   const st = await books.status();
   const pending = st.configured ? (await q.billsToMake(500, true)) : [];
   const weeks = st.configured ? books.hourWeeks(await q.timeBillsToMake(1000, true)) : [];
-  // Hours sent to accounting before hours were billed: offered to bill now
-  const unbilled = st.configured ? (await query("SELECT COUNT(*)::int AS n FROM time_entries WHERE status = 'Reimbursed' AND books_bill_id IS NULL AND books_queued = FALSE").catch(() => [{ n: 0 }]))[0].n : 0;
   res.json({ ...st,
     waiting: pending.filter(x => !x.books_error).length + weeks.filter(g => !g.rows.some(r => r.books_error)).length,
     failed: [
-      ...pending.filter(x => x.books_error).map(x => ({ id: 'E' + x.id, rep: x.rep_name, amount: Number(x.amount), error: x.books_error })),
-      ...weeks.filter(g => g.rows.some(r => r.books_error)).map(g => ({ id: 'Hours ' + g.week.start, rep: g.rep,
+      ...pending.filter(x => x.books_error).map(x => ({ id: 'E' + x.id, kind: 'expense', ids: [x.id], rep: x.rep_name, amount: Number(x.amount), error: x.books_error })),
+      ...weeks.filter(g => g.rows.some(r => r.books_error)).map(g => ({ id: 'Hours ' + g.week.start, kind: 'time', ids: g.rows.map(r => r.id), rep: g.rep,
         hours: g.rows.reduce((s, r) => s + Number(r.hours), 0), error: g.rows.find(r => r.books_error).books_error })),
     ],
-    unbilledHours: unbilled,
   });
+}));
+
+/** Already paid on a bill made by hand: Rep Hub stops trying to bill it */
+r.post('/accounting/books-skip', auth.authRequired, access.requirePerm('books'), wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!['time', 'expense'].includes(b.kind) || !Array.isArray(b.ids)) return res.status(400).json({ error: 'Which item?' });
+  const n = await books.skip(b.kind, b.ids.slice(0, 200));
+  await audit(req.user.id, 'books.skip', { kind: b.kind, ids: b.ids.slice(0, 200), skipped: n }, req.ip);
+  res.json({ skipped: n });
 }));
 
 /* Each rep's hourly rate, for the hours bills */
@@ -3862,10 +3872,9 @@ r.put('/admin/books/rates', auth.authRequired, access.requirePerm('books'), wrap
 /** Try again, including ones that failed — after fixing an account name, say. */
 r.post('/accounting/books-retry', auth.authRequired, access.requirePerm('books'), wrap(async (req, res) => {
   if (!(await books.configured())) return res.status(400).json({ error: 'Zoho Books is not connected yet' });
-  // Hours already sent to accounting that never got a bill are billed now too
-  const backfilled = await q.queueSentTimeWithoutBill();
+  // Only what was sent to accounting with Books on. Older hours were paid on
+  // bills made by hand; queueing them here billed them a second time.
   const out = await books.makeBills({ includeFailed: true, budgetMs: 8000 });
-  out.backfilledHours = backfilled.length;
   await audit(req.user.id, 'books.retry', out, req.ip);
   res.json(out);
 }));

@@ -4541,9 +4541,6 @@ function booksCard(){
       <select onchange="setSetting('booksAuto', this.value)">
         <option value="on" ${(s.booksAuto||'on')==='on'?'selected':''}>Yes — when sent to accounting</option>
         <option value="off" ${s.booksAuto==='off'?'selected':''}>No — email only</option></select></div>
-    ${b.unbilledHours ? `<div class="callout" style="margin:0 0 12px"><strong>${b.unbilledHours} hours entr${b.unbilledHours===1?'y was':'ies were'} sent to accounting without a bill</strong>
-      Set each rep's hourly rate below, then press <strong>Make bills now</strong>: they become one bill per rep per week.
-      <div class="btnrow" style="margin-top:9px"><button class="btn sm primary" onclick="retryBooks(this)">Make bills now</button></div></div>` : ''}
     <div class="field" style="margin-bottom:6px"><label>Hourly rates</label>
       <div class="hint" style="margin-top:0">What each rep is paid an hour. Hours are billed at this rate; a rep with no rate uses the standard one.</div></div>
     <div id="ratesBox">${ratesBox()}</div>
@@ -4561,8 +4558,20 @@ function booksCard(){
     ${b.waiting ? `<div class="row-sub">${b.waiting} bill${b.waiting===1?' is':'s are'} queued and will be made within 15 minutes.</div>` : ''}
     ${b.failed && b.failed.length ? `<div class="callout rust" style="margin:10px 0 0">
       <strong>${b.failed.length} bill${b.failed.length===1?'':'s'} could not be made</strong>
-      ${b.failed.slice(0,5).map(f => `${esc(String(f.id))} · ${esc(f.rep)} · ${f.hours != null ? f.hours + ' h' : money(f.amount)} — ${esc(f.error)}`).join('<br>')}
+      ${b.failed.slice(0,12).map((f, i) => `<div class="row" style="padding:7px 0;border-top:1px solid var(--line);background:none">
+        <div class="row-main" style="min-width:0">${esc(String(f.id))} · ${esc(f.rep)} · ${f.hours != null ? f.hours + ' h' : money(f.amount)}
+          <div class="row-sub">${esc(f.error)}</div></div>
+        ${f.kind ? `<div class="row-actions"><button class="btn sm" onclick="skipBooks(${i}, this)" title="Already paid on a bill made by hand in Zoho Books">Paid by hand: skip</button></div>` : ''}</div>`).join('')}
+      ${b.failed.length > 12 ? `<div class="row-sub">and ${b.failed.length - 12} more</div>` : ''}
       <div class="btnrow" style="margin-top:9px"><button class="btn sm primary" onclick="retryBooks(this)">Try again</button></div></div>` : ''}`;
+}
+async function skipBooks(i, btn){
+  const f = booksInfo && booksInfo.failed && booksInfo.failed[i];
+  if(!f || !confirm(`${f.id} · ${f.rep}: already paid on a bill made by hand?\n\nRep Hub will stop trying to make a bill for it.`)) return;
+  btn.disabled = true;
+  try{ await API.call('/accounting/books-skip', { method:'POST', body: JSON.stringify({ kind: f.kind, ids: f.ids }) }); toast('Skipped: it will not be billed'); }
+  catch(e){ toast(e.message || 'Could not skip it'); btn.disabled = false; return; }
+  booksInfo = null; loadBooksStatus(true);
 }
 /* Each rep's hourly rate, saved as you leave each box */
 var ratesData = null;
@@ -9903,11 +9912,12 @@ function vEventDetail() {
       const person = a => `<div class="att">
         <div class="att-av">${a.name?initials(a.name):'?'}</div>
         <div style="flex:1;min-width:0">
-          <div class="att-name">${a.name?esc(a.name):'<span style="color:var(--ink-muted)">Guest name not in Zoho</span>'}
+          <div class="att-name">${a.name?esc(a.name):`<span style="color:var(--ink-muted)">${a.unnamed ? 'Unnamed guest' : 'Guest with no name in Zoho'}</span>`}
             ${a.guestOf?`<span class="pill pill-neutral">${esc(a.kind)}</span>`:''}
             ${a.attended==='Yes'?`<span class="pill pill-green">came</span>`:''}</div>
           <div class="att-sub">${a.guestOf
-            ? [`${esc(a.kind.toLowerCase())} of ${esc(a.guestOf)}`, a.business?esc(a.business):'',
+            ? [a.unnamed ? `${esc(a.guestOf)} said they're bringing a guest, but no guest name was entered in Zoho`
+                 : `${esc(a.kind.toLowerCase())} of ${esc(a.guestOf)}`, a.business?esc(a.business):'',
                a.email?esc(a.email):'', a.address?esc(a.address):''].filter(Boolean).join(' · ')
             : [a.business, a.email].filter(Boolean).map(esc).join(' · ') || '—'}</div>
         </div>
@@ -10046,7 +10056,7 @@ function attendeeList(eventId){
         phone: g.phone || '', email: g.email || '',
         address: g.address || '',
         kind: g.type || 'Guest',               // Spouse | Other Guest
-        guestOf: r.name, attended: g.attended || '',
+        guestOf: r.name, attended: g.attended || '', unnamed: !!g.unnamed,
         city: g.city || '', state: g.state || '',
       });
     });
