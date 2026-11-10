@@ -576,6 +576,15 @@ const q = {
     [id, contactId, phone, region]),
 
   getSetting: key => one('SELECT value FROM settings WHERE key = $1', [key]),
+  /* A scheduled email run, once per day. Netlify can start a scheduled job
+     twice (a retry, a deploy at that minute); the second start finds the row
+     already there and sends nothing, so nobody gets two copies. */
+  claimRun: async name => {
+    const key = `run:${name}:${new Date().toISOString().slice(0, 10)}`;
+    const rows = await query('INSERT INTO settings (key,value) VALUES ($1,$2) ON CONFLICT (key) DO NOTHING RETURNING key',
+      [key, new Date().toISOString()]);
+    return rows.length > 0;
+  },
   setSetting: (key, value) => query(
     'INSERT INTO settings (key,value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
     [key, value]),

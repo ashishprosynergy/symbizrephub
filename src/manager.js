@@ -149,9 +149,13 @@ async function runManagerDigest({ dryRun = false, onlyUserId = null } = {}) {
   // reps named people who had switched it off, so "it goes to me" was wrong.
   if (dryRun) return [{ dryRun: true, to: managers.filter(m => m.digest_email).map(m => m.email),
     off: managers.filter(m => !m.digest_email).map(m => m.email), reps: snap.reps.length, warnings }];
-  const out = [];
+  const out = [], sentTo = new Set();
   for (const u of managers) {
     if (!u.digest_email && !onlyUserId) { out.push({ to: u.email, skipped: 'turned off' }); continue; }
+    // Two accounts on one address (an old sign-up, a second role) get one copy
+    const addr = String(u.email || '').trim().toLowerCase();
+    if (sentTo.has(addr)) { out.push({ to: u.email, skipped: 'already sent to this address' }); continue; }
+    sentTo.add(addr);
     const r = await sendEmail(u.email, `Your reps this week: ${warnings.length ? warnings.length + ' to look at' : 'all on track'}`,
       digestHTML(snap, u.name, cfg.appUrl + '/?view=manager'), { userId: u.id, kind: 'manager-digest' });
     out.push({ to: u.email, ok: !!r.ok, error: r.error });

@@ -487,6 +487,38 @@ describe('netlify function handler', () => {
     await db.q.setSetting('calendarFeeds', '');
   });
 
+  test('reps without the app get the week by email: calls due with phone numbers, a report to reply with', async () => {
+    const keep = {}; ['Growth_Ring_Groups', 'Group_Members', 'Contacts', 'Rep_Visit_Trackings', 'Growth_Ring_Meetings_N'].forEach(k => { keep[k] = store[k]; });
+    await db.q.setSetting('calendarZoho', 'off');
+    store.Growth_Ring_Groups = [{ id: 'R9', Name: 'Group 9', Active: true, Regional_Rep: { id: '555', name: 'Larry Weaver' }, Facilitator: { id: 'F9', name: 'Fac Nine' } }];
+    store.Group_Members = [{ id: 'GM9', Members: { id: 'C9', name: 'Amos Zook #0901' }, Growth_Ring_Groups: { id: 'R9', name: 'Group 9' } }];
+    store.Contacts = [{ id: 'C9', Full_Name: 'Amos Zook #0901', Phone: '717-555-0101', Active: true },
+      { id: '555', Full_Name: 'Larry Weaver', Email: 'larry@example.test' }];
+    store.Rep_Visit_Trackings = [{ id: 'A9', Visit_Type: 'Member Call', Visit_Date: '2026-10-01', Visit_Notes: 'Asked about the summit',
+      Growth_Ring_Group: { id: 'R9', name: 'Group 9' }, Member: { id: 'C9', name: 'Amos Zook #0901' }, Next_Due_Date: '2026-10-20' }];
+    store.Growth_Ring_Meetings_N = [];
+    try {
+      assert.equal((await invoke('GET', '/admin/snapshot', { token: repToken })).statusCode, 403, 'reps cannot see or change it');
+      const got = J(await invoke('GET', '/admin/snapshot', { token: officeToken }));
+      assert.deepEqual(got.reps.map(r => [r.id, r.email]), [['555', 'larry@example.test']]);
+      const put = await invoke('PUT', '/admin/snapshot', { token: officeToken, body: { replyTo: 'mel@office.test', reps: [{ id: '555', name: 'Larry Weaver', email: 'larry@example.test' }] } });
+      assert.equal(put.statusCode, 200, put.body);
+      const m = J(await invoke('POST', '/admin/snapshot/preview', { token: officeToken, body: { id: '555', name: 'Larry Weaver' } }));
+      assert.match(m.subject, /1 call to make, 1 overdue/);
+      assert.match(m.html, /Amos Zook #0901/);
+      assert.match(m.html, /717-555-0101/);
+      assert.match(m.html, /Asked about the summit/);
+      assert.match(m.html, /Press <strong>Reply<\/strong>/);
+      assert.equal(m.replyTo, 'mel@office.test');
+      const sent = J(await invoke('POST', '/admin/snapshot/send', { token: officeToken, body: { toMe: true } }));
+      assert.equal(sent.results.length, 1);
+    } finally {
+      Object.assign(store, keep);
+      await db.q.setSetting('calendarZoho', 'on');
+      await db.q.setSetting('snapshotReps', '[]');
+    }
+  });
+
   test('the Symbiz calendar also shows the calls booked as Meetings in Zoho CRM', async () => {
     store.Events = [
       { id: 'EV1', Event_Title: 'Weekly L10 Call', Start_DateTime: '2026-11-03T09:00:00-05:00', End_DateTime: '2026-11-03T10:00:00-05:00', Venue: 'https://us02web.zoom.us/j/811?pwd=x' },
@@ -543,6 +575,39 @@ describe('netlify function handler', () => {
       assert.ok(zohoCalls.some(c => c.path === '/crm/v8/coql'), 'read through COQL on the subform');
     } finally {
       delete store.Event_Registrations; delete store.Guests;
+    }
+  });
+
+  test('a rep edits a registration straight into Zoho; the change is noted and the approvers are told', async () => {
+    await db.q.setSetting('registrationApprovers', 'jeanetta@office.test');
+    await db.query("DELETE FROM mail_outbox");
+    const cfg = require('../src/config'), reminders = require('../src/reminders');
+    const realMail = { ...cfg.mail }, realSend = reminders.sendEmail;
+    cfg.mail.enabled = true; cfg.mail.host = 'smtp.test'; reminders.sendEmail = async () => ({ ok: true });
+    store.Event_Registrations = [{ id: '7001', Name: '1400', Event: { id: '997', name: 'OH Summit' }, Registrant_Name: { id: 'C1', name: 'Amos Zook #0901' },
+      Registration_Status: 'Attending', Phone: '111', Email: 'amos@example.test', Registration_Notes: null,
+      Guests: [{ id: 'G1', Guest_First_Name: 'Ruth', Guest_Last_Name: 'Zook', Guest_Type: 'Spouse', Registration_Status: 'Attending' }] }];
+    try {
+      assert.equal((await invoke('PATCH', '/events/996/registrations/7001', { token: repToken, body: { status: 'Canceled' } })).statusCode, 404, 'only on its own event');
+      assert.equal((await invoke('PATCH', '/events/997/registrations/7001', { token: repToken, body: { status: 'Maybe' } })).statusCode, 400);
+      const res = await invoke('PATCH', '/events/997/registrations/7001', { token: repToken, body: {
+        status: 'Tentative', phone: '222', guests: [{ id: 'G1', first: 'Ruth', last: 'Zook', type: 'Spouse' }, { first: 'Levi', last: 'Zook', type: 'Other Guest' }] } });
+      assert.equal(res.statusCode, 200, res.body);
+      const z = store.Event_Registrations[0];
+      assert.equal(z.Registration_Status, 'Tentative');
+      assert.equal(z.Phone, '222');
+      assert.deepEqual(z.Guests.map(g => [g.id || 'new', g.Guest_First_Name]), [['G1', 'Ruth'], ['new', 'Levi']]);
+      assert.equal(z.Number_of_Guests, 2);
+      assert.match(z.Registration_Notes, /\(Rep Hub\): Status: Attending → Tentative; Phone: 111 → 222; Guests: Ruth Zook → Levi Zook, Ruth Zook/);
+      const mail = await db.query("SELECT to_addr, subject FROM mail_outbox WHERE subject LIKE 'Registration changed%'");
+      assert.deepEqual(mail.map(m => m.to_addr), ['jeanetta@office.test']);
+      // Nothing changed: nothing written, nobody emailed
+      const again = JSON.parse((await invoke('PATCH', '/events/997/registrations/7001', { token: repToken, body: { status: 'Tentative' } })).body);
+      assert.deepEqual(again.changed, []);
+    } finally {
+      delete store.Event_Registrations;
+      await db.q.setSetting('registrationApprovers', '');
+      Object.assign(cfg.mail, realMail); reminders.sendEmail = realSend;
     }
   });
 

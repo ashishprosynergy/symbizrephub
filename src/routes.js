@@ -1202,11 +1202,60 @@ async function zohoMeetings(fromMs, toMs, wanted) {
 }
 
 r.get('/calendar/symbiz', auth.authRequired, wrap(async (req, res) => {
+  const day = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null;
+  res.json(await symbizCalls(day(req.query.from), day(req.query.to)));
+}));
+/* ═══════════ WEEKLY EMAIL FOR REPS WITHOUT THE APP (Mel, 4 Nov) ═══════════ */
+const repWeek = require('./snapshot');
+r.get('/admin/snapshot', auth.authRequired, auth.requireOffice, access.requirePerm('settings'), wrap(async (req, res) => {
+  const [reps, chosen, replyTo, last] = await Promise.all([repWeek.zohoReps(), repWeek.chosenReps(),
+    setting('snapshotReplyTo', ''), setting('snapshot_last', '')]);
+  let lastRun = null; try { lastRun = last ? JSON.parse(last) : null; } catch (_) {}
+  res.json({ reps, chosen, replyTo, lastRun });
+}));
+r.put('/admin/snapshot', auth.authRequired, auth.requireOffice, access.requirePerm('settings'), wrap(async (req, res) => {
+  const b = req.body || {};
+  const okEmail = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
+  if (b.replyTo !== undefined) {
+    if (b.replyTo && !okEmail(b.replyTo)) return res.status(400).json({ error: 'The reply address does not look like an email' });
+    await q.setSetting('snapshotReplyTo', String(b.replyTo || '').trim().toLowerCase());
+  }
+  if (Array.isArray(b.reps)) {
+    const list = b.reps.slice(0, 100).filter(x => x && /^\d+$/.test(String(x.id)))
+      .map(x => ({ id: String(x.id), name: String(x.name || '').slice(0, 120), email: String(x.email || '').trim().toLowerCase().slice(0, 200) }));
+    const bad = list.find(x => x.email && !okEmail(x.email));
+    if (bad) return res.status(400).json({ error: `${bad.name}'s email does not look right` });
+    await q.setSetting('snapshotReps', JSON.stringify(list));
+  }
+  await audit(req.user.id, 'snapshot.settings', { reps: Array.isArray(b.reps) ? b.reps.length : undefined }, req.ip);
+  res.json({ chosen: await repWeek.chosenReps(), replyTo: await setting('snapshotReplyTo', '') });
+}));
+/** What a rep's email looks like this week, without sending it */
+r.post('/admin/snapshot/preview', auth.authRequired, auth.requireOffice, access.requirePerm('settings'), wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!/^\d+$/.test(String(b.id || ''))) return res.status(400).json({ error: 'Which rep?' });
+  const t = today();
+  const m = await repWeek.emailFor({ id: String(b.id), name: String(b.name || '') }, { calls: await symbizCalls(t, addDays(t, 30)).catch(() => null) });
+  res.json(m);
+}));
+/** Send it now: to the rep, or (toMe) to whoever pressed the button */
+r.post('/admin/snapshot/send', auth.authRequired, auth.requireOffice, access.requirePerm('settings'), wrap(async (req, res) => {
+  const b = req.body || {};
+  const t = today();
+  const out = await repWeek.run({ only: b.id ? String(b.id) : null, to: b.toMe ? req.user.email : null,
+    calls: await symbizCalls(t, addDays(t, 30)).catch(() => null) });
+  await audit(req.user.id, 'snapshot.send', { id: b.id || 'all', toMe: !!b.toMe, results: out.length }, req.ip);
+  res.json({ results: out });
+}));
+/** Monday's run, from the weekly-digest job */
+r.runRepSnapshots = async () => { const t = today(); return repWeek.run({ calls: await symbizCalls(t, addDays(t, 30)).catch(() => null) }); };
+
+/** The Symbiz calls between two days (YYYY-MM-DD), for the calendar and the weekly rep email */
+async function symbizCalls(fromDay, toDay) {
   const urls = icalUrls(await setting('calendarFeeds', ''));
   const fromZohoCrm = (await setting('calendarZoho', 'on')) === 'on';
-  if (!urls.length && !fromZohoCrm) return res.json({ configured: false, items: [] });
-  const day = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null;
-  const from = day(req.query.from) || today(), to = day(req.query.to) || addDays(from, 45);
+  if (!urls.length && !fromZohoCrm) return { configured: false, items: [] };
+  const from = fromDay || today(), to = toDay || addDays(from, 45);
   const fromMs = Date.parse(from + 'T00:00:00Z') - 864e5, toMs = Math.min(Date.parse(to + 'T23:59:59Z') + 864e5, fromMs + 200 * 864e5);
   const keywords = String(await setting('calendarKeywords', 'L10, Facilitator, Forum')).split(',').map(s => s.trim()).filter(Boolean);
   const wanted = t => !keywords.length || keywords.some(k => t.toLowerCase().includes(k.toLowerCase()));
@@ -1223,8 +1272,8 @@ r.get('/calendar/symbiz', auth.authRequired, wrap(async (req, res) => {
   const have = new Set(items.map(x => x.title.toLowerCase() + '|' + x.start));
   crm.forEach(x => { if (!have.has(x.title.toLowerCase() + '|' + x.start)) items.push(x); });
   items.sort((a, b) => a.start.localeCompare(b.start));
-  res.json({ configured: true, items, errors });
-}));
+  return { configured: true, items, errors };
+}
 
 r.get('/events', auth.authRequired, wrap(async (req, res) => {
   const rows = await zoho.coql(queries.portalEvents());
@@ -1298,6 +1347,7 @@ r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
     const blank = g => ![nameOf(g), g.Guest_Type, g.Guest_Organization, g.Guest_Email, g.Guest_Phone, g.Guest_Street, g.Guest_City]
       .some(v => String(v || '').trim());
     const guests = sub.filter(g => !isSelf(g) && !blank(g)).map(g => ({
+      id: g.id || null, first: g.Guest_First_Name || '', last: g.Guest_Last_Name || '',
       name: nameOf(g),
       type: g.Guest_Type || 'Guest',
       business: g.Guest_Organization || '',
@@ -1327,6 +1377,86 @@ r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
 
     return { ...base, guests, guestCount: guests.length };
   }));
+}));
+
+/**
+ * A rep corrects a registration already in Zoho (Keturah, 9 Nov): attending or
+ * not, phone, email, notes and the guest list. It goes straight to Zoho, with
+ * no approval, because the person is already registered. Every change is
+ * stamped on the registration's notes with who made it, and the registration
+ * approvers get an email saying what changed, so nothing happens unseen.
+ */
+const REG_STATUSES = ['Attending', 'Tentative', 'Canceled'];          // Zoho's own picklist
+const GUEST_TYPES = ['Spouse', 'Other Guest'];
+r.patch('/events/:eventId/registrations/:id', auth.authRequired, wrap(async (req, res) => {
+  const eventId = String(req.params.eventId).replace(/[^0-9]/g, ''), id = String(req.params.id).replace(/[^0-9]/g, '');
+  const b = req.body || {};
+  const z = await zoho.getRecord(M.REGISTRATION, id);
+  if (!z || String(z.Event?.id || '') !== eventId) return res.status(404).json({ error: 'That registration is not on this event' });
+  const clean = (v, n = 120) => String(v == null ? '' : v).trim().slice(0, n);
+  const okEmail = v => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  const upd = { id }, changes = [];
+  const set = (field, label, val, before) => { if (val !== undefined && String(val) !== String(before || '')) { upd[field] = val; changes.push(`${label}: ${before || '(blank)'} → ${val || '(blank)'}`); } };
+
+  if (b.status !== undefined) {
+    if (!REG_STATUSES.includes(b.status)) return res.status(400).json({ error: 'Pick Attending, Tentative or Canceled' });
+    set('Registration_Status', 'Status', b.status, z.Registration_Status);
+  }
+  if (b.phone !== undefined) set('Phone', 'Phone', clean(b.phone, 40), z.Phone);
+  if (b.email !== undefined) {
+    const e = clean(b.email, 200).toLowerCase();
+    if (!okEmail(e)) return res.status(400).json({ error: 'That email does not look right' });
+    set('Email', 'Email', e, z.Email);
+  }
+
+  // The guest list: rows kept by id, new rows added, rows left out removed (Zoho replaces the subform)
+  if (Array.isArray(b.guests)) {
+    const old = Array.isArray(z.Guests) ? z.Guests : [];
+    const self = old.filter(g => g.Same_As_Main_Registrant === true && !g.Guest_Type);   // the registrant's own line stays
+    const rows = [];
+    for (const g of b.guests.slice(0, 20)) {
+      const first = clean(g.first, 60), last = clean(g.last, 60);
+      if (!first && !last) continue;
+      const type = GUEST_TYPES.includes(g.type) ? g.type : 'Other Guest';
+      const email = clean(g.email, 200).toLowerCase();
+      if (!okEmail(email)) return res.status(400).json({ error: `${first} ${last}'s email does not look right` });
+      const was = g.id ? old.find(o => o.id === String(g.id)) : null;
+      rows.push({ ...(was ? { id: was.id } : {}), Guest_First_Name: first, Guest_Last_Name: last, Guest_Type: type,
+        Guest_Email: email || (was && was.Guest_Email) || null, Guest_Phone: clean(g.phone, 40) || (was && was.Guest_Phone) || null,
+        Registration_Status: (was && was.Registration_Status) || 'Attending' });
+    }
+    const label = g => [g.Guest_First_Name, g.Guest_Last_Name].filter(Boolean).join(' ');
+    const before = old.filter(g => !self.includes(g)).map(label).filter(Boolean).sort().join(', ');
+    const after = rows.map(label).sort().join(', ');
+    const typesChanged = rows.some(rw => rw.id && (old.find(o => o.id === rw.id) || {}).Guest_Type !== rw.Guest_Type);
+    if (before !== after || typesChanged) {
+      upd.Guests = [...self.map(g => ({ id: g.id })), ...rows];
+      upd.Bringing_Guest = rows.length ? 'Yes' : 'No';
+      upd.Number_of_Guests = rows.length;
+      changes.push(`Guests: ${before || '(none)'} → ${after || '(none)'}`);
+    }
+  }
+  if (b.note !== undefined && clean(b.note, 500)) changes.push(`Note: ${clean(b.note, 500)}`);
+  if (!changes.length) return res.json({ ok: true, changed: [] });
+
+  const stamp = `${new Date().toISOString().slice(0, 10)} ${req.user.name || req.user.email} (Rep Hub): ${changes.join('; ')}`;
+  upd.Registration_Notes = [z.Registration_Notes, stamp].filter(Boolean).join('\n').slice(-1990);   // Zoho holds 2,000
+  const out = await zoho.updateRecords(M.REGISTRATION, [upd]);
+  const r0 = out && out[0];
+  if (!r0 || (r0.code && r0.code !== 'SUCCESS')) return res.status(502).json({ error: (r0 && r0.message) || 'Zoho did not accept the change' });
+  await audit(req.user.id, 'registration.edit', { id, eventId, changes }, req.ip);
+
+  // The office sees every change, without having to approve it
+  const who = z.Registrant_Name?.name || z.Registrant_Lead?.name || z.Registrant_Name1 || `registration ${z.Name || id}`;
+  const to = await emailList('registrationApprovers');
+  if (to.length) {
+    const html = `<p><strong>${esc(req.user.name || req.user.email)}</strong> changed <strong>${esc(who)}</strong>'s registration for
+      <strong>${esc(z.Event?.name || 'an event')}</strong> in Rep Hub:</p><ul>${changes.map(c => `<li>${esc(c)}</li>`).join('')}</ul>
+      <p style="color:#555">It is already saved in Zoho; nothing needs approving. The change is also noted on the registration.</p>`;
+    for (const t of to) await reminders.queueEmail(t, `Registration changed: ${who} for ${z.Event?.name || 'an event'}`, html, { kind: 'registration', replyTo: req.user.email });
+    await sendQueuedMail(req);
+  }
+  res.json({ ok: true, changed: changes });
 }));
 
 /**

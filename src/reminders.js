@@ -200,8 +200,11 @@ async function sendSMS(to, body, { userId } = {}) {
 
 async function runWeeklyDigest({ dryRun = false } = {}) {
   const reps = await q.allReps();
-  const results = [];
+  const results = [], sentTo = new Set();
   for (const rep of reps) {
+    const addr = String(rep.email || '').trim().toLowerCase();
+    if (sentTo.has(addr)) { results.push({ rep: rep.email, skipped: 'already sent to this address' }); continue; }
+    sentTo.add(addr);
     let items = [];
     try { items = await dueForRep(rep.id); }
     catch (err) { console.error(`[digest] ${rep.email}:`, err.message); results.push({ rep: rep.email, error: err.message }); continue; }
@@ -261,7 +264,11 @@ async function runOfficeSummary({ dryRun = false } = {}) {
   }
 
   if (dryRun) return [{ stats, dryRun: true }];
+  const sentTo = new Set();
   for (const u of office) {
+    const addr = String(u.email || '').trim().toLowerCase();
+    if (sentTo.has(addr)) continue;          // one copy per address
+    sentTo.add(addr);
     await sendEmail(u.email, 'Symbiz monthly network summary', renderOfficeSummary(stats), { userId: u.id, kind: 'office' });
   }
   return [{ sent: office.length, stats }];

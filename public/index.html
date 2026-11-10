@@ -4778,6 +4778,7 @@ function ACCESS_SECTIONS(){
     owner && { key:'people', icon:'users', title:'People with office access', sub:`${(a.people || []).length} ${(a.people || []).length === 1 ? 'person' : 'people'} · directors and office staff` },
     can('settings') && { key:'registrations', icon:'check', title:'Office notifications', sub:`Registrations: ${s.registrationApprovers || 'nobody'} · Exit interviews: ${s.exitInterviewNotify || 'nobody'}` },
     can('settings') && { key:'calendar', icon:'calendar', title:'Symbiz calendar', sub: (s.calendarFeeds || s.calendarZoho !== 'off') ? `Showing ${s.calendarKeywords || 'every'} calls from ${[s.calendarZoho !== 'off' && 'Zoho Meetings', s.calendarFeeds && 'the calendar link'].filter(Boolean).join(' and ')}` : 'Off: weekly L10, facilitator and forum calls' },
+    can('settings') && { key:'snapshot', icon:'calendar', title:'Weekly email for reps without the app', sub: snapData && snapData.chosen ? (snapData.chosen.length ? `Mondays to ${snapData.chosen.map(r => r.name).join(', ')}` : 'Nobody yet') : 'Calls due and the month ahead, by email, for reps without internet' },
     can('settings') && { key:'emaillinks', icon:'user', title:'Email buttons', sub: s.emailLinks === 'gmail' ? 'Open Gmail in the account each person signs in with' : "Open each computer's own email app" },
     can('books') && { key:'accounting', icon:'calendar', title:'Accounting', sub:`To ${s.accountingEmail || 'not set'} · ${String(s.accountingDay || '1') === 'Off' ? 'manual only' : 'automatically on day ' + (s.accountingDay || '1')}` },
     can('books') && { key:'books', icon:'folder', title:'Zoho Books', sub: booksInfo ? (booksInfo.connected ? `Connected · bills to the rep, hours weekly${booksInfo.failed && booksInfo.failed.length ? ` · ${booksInfo.failed.length} need attention` : ''}` : 'Not connected') : 'Bills, hourly rates and accounts' },
@@ -4791,6 +4792,7 @@ function ACCESS_SECTIONS(){
 function accessMenu(){
   // Status lines need a few things fetched once
   if(can('books') && !booksInfo) loadBooksStatus();
+  if(can('settings') && !snapData) loadSnap();
   if((isOwner() || isAdmin()) && !backupStatus){ API.call('/admin/backup/status').then(v => { backupStatus = v; if(ui.view === 'access') renderContent(); }).catch(() => {}); }
   return `<div class="card acc-menu">${ACCESS_SECTIONS().map(x => `<button class="acc-row" onclick="ui.accSec='${x.key}';renderContent();window.scrollTo(0,0)">
       <span class="acc-ic">${icon(x.icon, 18)}</span>
@@ -4841,6 +4843,7 @@ function accessSectionBody(sec){
       <div class="row-sub">Separate with commas. Leave empty to show every meeting.</div>
       <div id="calCheck" style="margin-top:12px"></div>
     </div>`;
+  if(sec === 'snapshot') return snapshotBox();
   if(sec === 'emaillinks') return `<div class="card">
       <div class="field"><label>When someone presses Email on a member or rep</label>
         <select onchange="setSetting('emailLinks', this.value)">
@@ -4859,6 +4862,75 @@ function accessSectionBody(sec){
 }
 
 /** After the calendar link changes: what Rep Hub now sees in the next two weeks */
+/* Weekly email for reps without the app (Mel: Michael Beiler and Larry Weaver have
+   email but no internet). Each Monday the reps ticked here get their numbers,
+   calls due with phone numbers, the next 30 days, and a report to reply with. */
+var snapData = null;
+function loadSnap(){
+  if(snapData && !snapData.error) return;
+  snapData = { loading: true };
+  API.call('/admin/snapshot').then(v => { snapData = v; if(ui.view === 'access') renderContent(); })
+    .catch(e => { snapData = { error: e.message || 'Could not load the reps' }; if(ui.view === 'access') renderContent(); });
+}
+function snapshotBox(){
+  if(!snapData || snapData.loading){ loadSnap(); return `<div class="card">${skeleton(4)}</div>`; }
+  if(snapData.error) return `<div class="callout rust">${esc(snapData.error)} <button class="btn sm" onclick="snapData=null;renderContent()">Try again</button></div>`;
+  const chosen = new Map((snapData.chosen || []).map(r => [r.id, r]));
+  const last = snapData.lastRun;
+  return `<div class="card">
+      <div class="row-sub" style="margin-bottom:12px;line-height:1.6">Every Monday morning, each rep ticked below gets one email with their numbers,
+        the calls to make (with phone numbers and what was said last time), the next 30 days of ring meetings, visits, events and Symbiz calls,
+        and a short report to fill in. When they press Reply, it goes to the address below, so the office can enter it.</div>
+      <div class="field"><label>Replies go to</label>
+        <input type="email" placeholder="${esc(realMe().email || 'name@symbiz.org')}" value="${esc(snapData.replyTo || '')}"
+          onchange="saveSnap({ replyTo: this.value.trim() })"></div>
+      <label style="display:block;margin:14px 0 6px;font-weight:600">Reps who get it</label>
+      <div class="pick-list" style="max-height:52vh;overflow:auto">${(snapData.reps || []).map(r => { const c = chosen.get(r.id);
+        return `<div class="row snap-rep" data-id="${esc(r.id)}" data-name="${esc(r.name)}" style="padding:8px 0;background:none;border-top:1px solid var(--line)">
+          <div class="row-main" style="min-width:0;display:flex;gap:10px;align-items:center">
+            <input type="checkbox" class="snap-on" style="width:auto" ${c ? 'checked' : ''} onchange="saveSnapReps()" aria-label="Send to ${esc(r.name)}">
+            <div style="min-width:0;flex:1"><div class="row-title">${esc(r.name)}</div>
+              <input type="email" class="snap-email" style="margin-top:4px" placeholder="No email in Zoho" value="${esc((c && c.email) || r.email || '')}" onchange="saveSnapReps()"></div></div>
+          <div class="row-actions"><button class="btn sm" onclick="previewSnap('${esc(r.id)}', this)">Preview</button>
+            ${c ? `<button class="btn sm" onclick="sendSnap('${esc(r.id)}', false, this)">Send now</button>` : ''}</div></div>`; }).join('')
+        || '<div class="empty">No reps found on active rings in Zoho.</div>'}</div>
+      <div class="btnrow" style="margin-top:12px"><button class="btn sm" onclick="sendSnap('', true, this)" ${chosen.size ? '' : 'disabled'}>Send me a test of each</button></div>
+      ${last ? `<div class="row-sub" style="margin-top:10px">Last Monday run: ${esc(fmt(String(last.at).slice(0,10)))} · ${(last.results || []).map(x => `${esc(x.rep)} ${x.ok ? 'sent' : '— ' + esc(x.error || x.skipped || 'not sent')}`).join(' · ') || 'nobody'}</div>` : ''}
+    </div>`;
+}
+async function saveSnap(body){
+  try{ const v = await API.call('/admin/snapshot', { method:'PUT', body: JSON.stringify(body) }); Object.assign(snapData, v); toast('Saved'); }
+  catch(e){ toast(e.message || 'Could not save'); }
+  renderContent();
+}
+function saveSnapReps(){
+  const reps = [...document.querySelectorAll('.snap-rep')].filter(el => el.querySelector('.snap-on').checked)
+    .map(el => ({ id: el.dataset.id, name: el.dataset.name, email: el.querySelector('.snap-email').value.trim() }));
+  const noEmail = reps.find(r => !r.email);
+  if(noEmail) toast(`${noEmail.name} has no email yet, so nothing will be sent until one is added`);
+  saveSnap({ reps });
+}
+async function previewSnap(id, btn){
+  const el = document.querySelector(`.snap-rep[data-id="${id}"]`);
+  btn.disabled = true; const was = btn.textContent; btn.textContent = 'Building…';
+  try{
+    const m = await API.call('/admin/snapshot/preview', { method:'POST', body: JSON.stringify({ id, name: el ? el.dataset.name : '' }) });
+    openModal(`<h3>${esc(m.subject)}</h3>
+      <iframe sandbox title="Email preview" style="width:100%;height:62vh;border:1px solid var(--line);border-radius:8px;background:#fff" srcdoc="${esc(m.html)}"></iframe>
+      <div class="m-actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
+  }catch(e){ toast(e.message || 'Could not build the email'); }
+  btn.disabled = false; btn.textContent = was;
+}
+async function sendSnap(id, toMe, btn){
+  if(!toMe && !confirm('Send this week\'s email to this rep now?')) return;
+  btn.disabled = true;
+  try{
+    const v = await API.call('/admin/snapshot/send', { method:'POST', body: JSON.stringify({ id, toMe }) });
+    const r = v.results || [];
+    toast(r.length ? r.map(x => `${x.rep}: ${x.ok ? 'sent' + (toMe ? ' to you' : '') : (x.error || x.skipped)}`).join(' · ') : 'Nobody is ticked yet');
+  }catch(e){ toast(e.message || 'Could not send'); }
+  btn.disabled = false;
+}
 async function checkSymbizCalendar(){
   const el = () => document.getElementById('calCheck');
   if(!el()) return;
@@ -5450,9 +5522,51 @@ async function submitRegistration(ev, eventId){
   }
 }
 
+/* Keturah (9 Nov): reps correct registrations already in Zoho without waiting
+   for approval. Saved straight to Zoho, noted on the registration with who
+   changed it, and the registration approvers are emailed what changed. */
+function openEditRegistration(regId){
+  const r = S.registrations.find(x => String(x.id) === String(regId));
+  if(!r) return toast('That registration is not loaded yet');
+  const guestRow = (g, i) => `<div class="reg-guest" data-id="${esc(g.id || '')}" style="display:grid;grid-template-columns:1fr 1fr 130px auto;gap:6px;margin-bottom:6px">
+      <input class="g-first" placeholder="First name" value="${esc(g.first || '')}" aria-label="Guest ${i+1} first name">
+      <input class="g-last" placeholder="Last name" value="${esc(g.last || '')}" aria-label="Guest ${i+1} last name">
+      <select class="g-type" aria-label="Guest ${i+1} type">${['Spouse','Other Guest'].map(t => `<option ${g.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <button type="button" class="btn sm" onclick="this.parentElement.remove()" title="Remove this guest">✕</button></div>`;
+  const guests = (r.guestList || []).filter(g => !g.unnamed);
+  openModal(`<h3>Edit ${esc(r.name)}'s registration</h3>
+    <p class="lead">Saved straight to Zoho. The office is emailed what you changed, and it's noted on the registration.</p>
+    <form onsubmit="saveEditRegistration(event,'${esc(regId)}')">
+      <div class="field"><label>Coming?</label><select name="status">${['Attending','Tentative','Canceled'].map(s => `<option ${((r.status === s) || (s === 'Canceled' && /cancel/i.test(r.status))) ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
+      <div class="field"><label>Phone</label><input name="phone" type="tel" value="${esc(r.phone || '')}"></div>
+      <div class="field"><label>Email</label><input name="email" type="email" value="${esc(r.email || '')}"></div>
+      <label style="display:block;font-weight:600;margin:10px 0 6px">Guests</label>
+      <div id="regGuests">${guests.map(guestRow).join('')}</div>
+      <button type="button" class="btn sm" onclick="document.getElementById('regGuests').insertAdjacentHTML('beforeend', window.__regGuestRow({}, document.querySelectorAll('.reg-guest').length))">+ Add a guest</button>
+      <div class="field" style="margin-top:12px"><label>Note for the office (optional)</label><input name="note" placeholder="Why it changed"></div>
+      <div id="editRegErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
+      <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Close</button>
+        <button type="submit" class="btn primary">Save to Zoho</button></div></form>`);
+  window.__regGuestRow = guestRow;
+}
+async function saveEditRegistration(ev, regId){
+  ev.preventDefault();
+  const f = ev.target.elements, err = document.getElementById('editRegErr'), btn = ev.target.querySelector('[type=submit]');
+  const r = S.registrations.find(x => String(x.id) === String(regId));
+  const guests = [...document.querySelectorAll('.reg-guest')].map(el => ({ id: el.dataset.id || null,
+    first: el.querySelector('.g-first').value.trim(), last: el.querySelector('.g-last').value.trim(), type: el.querySelector('.g-type').value }));
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try{
+    const out = await API.call(`/events/${r.eventId}/registrations/${regId}`, { method:'PATCH', body: JSON.stringify({
+      status: f.namedItem('status').value, phone: f.namedItem('phone').value, email: f.namedItem('email').value, guests, note: f.namedItem('note').value }) });
+    closeModal();
+    toast(out.changed && out.changed.length ? 'Saved to Zoho. The office has been told.' : 'Nothing changed');
+    regsFresh[r.eventId] = false; loadRegs(r.eventId);
+  }catch(e){ err.style.display = 'block'; err.textContent = e.message || 'Could not save that'; btn.disabled = false; btn.textContent = 'Save to Zoho'; }
+}
 function openCancelRegistration(regId, name, eventName){
   openModal(`<h3>Cancel ${esc(name)}?</h3>
-    <p class="lead">The office approves cancellations before they reach Zoho.</p>
+    <p class="lead">It's marked Canceled in Zoho straight away, and the office is emailed.</p>
     <form onsubmit="submitCancellation(event,'${regId}')">
       <div class="field"><label>Why are they cancelling?</label>
         <textarea name="reason" rows="2" placeholder="Couldn't make it, double booked…"></textarea></div>
@@ -5460,19 +5574,20 @@ function openCancelRegistration(regId, name, eventName){
       <input type="hidden" name="eventName" value="${esc(eventName||'')}">
       <div id="cancErr" style="display:none;color:var(--rust);font-size:13px;margin-bottom:8px"></div>
       <div class="m-actions"><button type="button" class="btn" onclick="closeModal()">Keep it</button>
-      <button type="submit" class="btn danger">Request cancellation</button></div></form>`);
+      <button type="submit" class="btn danger">Cancel the registration</button></div></form>`);
 }
 async function submitCancellation(ev, registrationId){
   ev.preventDefault();
   const f=ev.target.elements, err=document.getElementById('cancErr');
+  const r = S.registrations.find(x => String(x.id) === String(registrationId));
   try{
-    await API.askCancellation({ registrationId,
-      name:f.namedItem('name').value, eventName:f.namedItem('eventName').value,
-      reason:f.namedItem('reason').value });
+    if(!r) throw new Error('That registration is not loaded yet');
+    await API.call(`/events/${r.eventId}/registrations/${registrationId}`, { method:'PATCH',
+      body: JSON.stringify({ status: 'Canceled', note: f.namedItem('reason').value }) });
     closeModal();
-    toast('Cancellation sent to the office');
-    S.pending = await API.pending(); save(); render();
-  }catch(e){ err.style.display='block'; err.textContent=e.message||'Could not send that'; }
+    toast('Canceled in Zoho. The office has been told.');
+    regsFresh[r.eventId] = false; loadRegs(r.eventId);
+  }catch(e){ err.style.display='block'; err.textContent=e.message||'Could not cancel that'; }
 }
 
 function openAddLead(){
@@ -8840,6 +8955,7 @@ const adapt = {
       phone: r.phone || '',
       email: r.email || '',
       registered: r.registeredOn || '',
+      status: r.status || '',
       attending: r.status === 'Attending' ? 'Yes'
                : /cancel/i.test(r.status || '') ? 'Cancelled'
                : r.status === 'Tentative' ? 'Maybe' : 'No',
@@ -9924,7 +10040,8 @@ function vEventDetail() {
         <div class="att-actions">
           ${a.phone?`<a class="btn sm" href="tel:${esc(String(a.phone).replace(/[^0-9+]/g,''))}">Call</a>`:''}
           ${a.email?`<a class="btn sm" target="_blank" rel="noopener" href="${esc(mailHref(a.email))}">Email</a>`:''}
-          ${!a.guestOf && API.live?`<button class="btn sm" onclick="openCancelRegistration('${a.key}','${esc(a.name)}','${esc(e.title)}')">Cancel</button>`:''}
+          ${!a.guestOf && API.live?`<button class="btn sm" onclick="openEditRegistration('${a.key}')">Edit</button>
+            <button class="btn sm" onclick="openCancelRegistration('${a.key}','${esc(a.name)}','${esc(e.title)}')">Cancel</button>`:''}
         </div></div>`;
 
       return `
