@@ -37,7 +37,8 @@ const MODULES = {
     T('Phone'), T('Rep Name'), { field_label: 'Reason', data_type: 'textarea', textarea: { type: 'small' } }, T('Status'),
     { field_label: 'Call Notes', data_type: 'textarea', textarea: { type: 'large' } }, { field_label: 'Closed At', data_type: 'datetime' }] },
   candidates: { plural: 'Rep Candidates', singular: 'Rep Candidate', fields: [...BASE, T('Phone'), T('Email'), T('Region'), T('Source'), T('Stage'),
-    { field_label: 'Notes', data_type: 'textarea', textarea: { type: 'large' } }, { field_label: 'Archived', data_type: 'boolean' }] },
+    // "Notes" is reserved in Zoho (its notes section), so the field has its own name
+    { field_label: 'Candidate Notes', data_type: 'textarea', textarea: { type: 'large' } }, { field_label: 'Archived', data_type: 'boolean' }] },
   records: { plural: 'Rep Hub Records', singular: 'Rep Hub Record', fields: [...BASE, T('Record Type'), T('Member ID'), T('Ring ID'), T('Event ID'),
     T('Rep Name'), { field_label: 'Record Date', data_type: 'date' }, { field_label: 'Details', data_type: 'textarea', textarea: { type: 'large' } }] },
 };
@@ -75,7 +76,7 @@ const KINDS = [
       Created_in_Rep_Hub: at(r.created_at) }) },
   { kind: 'candidates', module: 'candidates', key: r => 'C' + r.id, rows: () => query('SELECT * FROM rep_candidates'),
     map: r => ({ Name: cut(r.name, 120), Phone: r.phone, Email: r.email, Region: r.region, Source: r.source, Stage: r.stage,
-      Notes: notesText(r.notes), Archived: !!r.archived, Created_in_Rep_Hub: at(r.created_at) }) },
+      Candidate_Notes: notesText(r.notes), Archived: !!r.archived, Created_in_Rep_Hub: at(r.created_at) }) },
   // Everything else, in one module, by type
   ...[
     ['Ring note', 'SELECT * FROM ring_notes', r => 'RN' + r.id, r => ({ title: `Ring note by ${r.author_name || '?'}`, ring: r.ring_id, date: r.created_at,
