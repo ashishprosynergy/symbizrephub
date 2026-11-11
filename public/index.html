@@ -4812,6 +4812,7 @@ function ACCESS_SECTIONS(){
     (owner || isAdmin()) && { key:'backup', icon:'check', title:'Backup', sub: backupStatus && !backupStatus.error
       ? `${backupStatus.drive && backupStatus.drive.connected ? 'Google Drive nightly' : 'Google Drive not set up'} · email ${backupStatus.frequency === 'daily' ? 'daily' : 'weekly'}${backupStatus.mirror && backupStatus.mirror.live && backupStatus.mirror.live.connected ? ' · live copy on' : ''}`
       : 'Copy of Zoho, Google Drive, email and downloads' },
+    (owner || (isAdmin() && (can('system') || can('settings')))) && { key:'zohostore', icon:'folder', title:'Copy Rep Hub data to Zoho', sub: zstoreData && zstoreData.mode === 'copy' ? 'On: every 15 minutes' : 'Off: hours, expenses, notes and the rest into Zoho CRM' },
     can('settings') && { key:'teamaccess', icon:'users', title:'Member Development and rep candidates', sub:'Who sees the Member Development dashboard and the rep candidates list' },
     !owner && { key:'mine', icon:'user', title:'What your account can do', sub:'The screens and areas open to you' },
     API.live && { key:'claude', icon:'key', title:'Connect Claude', sub: Array.isArray(claudeLinks) ? (claudeLinks.length ? `${claudeLinks.length} link${claudeLinks.length === 1 ? '' : 's'} on · read only` : 'Let your Claude read Rep Hub as you') : 'Let your Claude read Rep Hub as you' },
@@ -4879,6 +4880,7 @@ function accessSectionBody(sec){
     </div>`;
   if(sec === 'snapshot') return snapshotBox();
   if(sec === 'teamaccess') return teamAccessBox();
+  if(sec === 'zohostore') return zstoreBox();
   if(sec === 'emaillinks') return `<div class="card">
       <div class="field"><label>When someone presses Email on a member or rep</label>
         <select onchange="setSetting('emailLinks', this.value)">
@@ -10668,6 +10670,58 @@ function teamAccessBox(){
   return `<div class="card">
     ${pick('devPeople', 'Member Development', 'Get the Member Development dashboard, an email for each hand-off, and can offboard members. (Elvin.) People who manage reps can see it too.')}
     ${pick('candidatePeople', 'Rep candidates', 'Can see and edit the rep candidates list. Member Development can always see it. (Mel and Jeremy.)')}</div>`;
+}
+/* Copy to Zoho (James: one source of truth). Nothing in Rep Hub changes: it
+   only sends Zoho a copy, and the check below shows it matches before anyone
+   relies on it. */
+var zstoreData = null, zstoreReport = null, zstoreCheck = null;
+function zstoreLoad(){ API.call('/admin/zoho-store').then(v => { zstoreData = v; if(ui.view === 'access') renderContent(); }).catch(e => { zstoreData = { error: e.message }; if(ui.view === 'access') renderContent(); }); }
+function zstoreBox(){
+  if(!zstoreData){ zstoreLoad(); return `<div class="card">${skeleton(4)}</div>`; }
+  if(zstoreData.error) return `<div class="callout rust">${esc(zstoreData.error)}</div>`;
+  const d = zstoreData, ready = !!(d.modules && d.modules.hours), last = d.lastRun;
+  const c = zstoreCheck;
+  return `<div class="card">
+    <div class="row-sub" style="line-height:1.6;margin-bottom:12px">Copies everything Rep Hub keeps for itself into Zoho CRM, so Zoho holds the complete record:
+      hours, expenses (with receipts attached), hand-offs, rep candidates, and notes, goals, summit tasks, onboarding stages, coaching, approvals and exit interviews.
+      Rep Hub keeps working exactly as it does now. Nothing is ever deleted in Zoho: anything removed in Rep Hub is marked "Removed in Rep Hub".</div>
+    <ol class="books-steps" style="margin:0 0 12px 18px;line-height:1.8">
+      <li><strong>Set up Zoho</strong> creates five modules (Rep Hub Hours, Rep Hub Expenses, Member Hand-offs, Rep Candidates, Rep Hub Records), visible only to Zoho administrators.
+        ${ready ? '<span class="tag ok">Done</span>' : ''}</li>
+      <li><strong>Copy now</strong> sends everything; press again until nothing is left.</li>
+      <li><strong>Check</strong> compares Rep Hub and Zoho record by record.</li>
+      <li>When the check shows everything matching, <strong>switch copying on</strong> and it keeps Zoho up to date every 15 minutes.</li></ol>
+    <div class="btnrow">
+      <button class="btn ${ready ? '' : 'primary'}" onclick="zstoreAct('setup', this)">${ready ? 'Set up again (adds anything missing)' : 'Set up Zoho'}</button>
+      <button class="btn" onclick="zstoreAct('copy', this)" ${ready ? '' : 'disabled'}>Copy now</button>
+      <button class="btn" onclick="zstoreAct('check', this)" ${ready ? '' : 'disabled'}>Check</button>
+      <button class="btn ${d.mode === 'copy' ? 'danger' : 'primary'}" onclick="zstoreMode('${d.mode === 'copy' ? 'off' : 'copy'}', this)" ${ready ? '' : 'disabled'}>
+        ${d.mode === 'copy' ? 'Switch copying off' : 'Switch copying on'}</button></div>
+    <div class="row-sub" style="margin-top:8px">Copying is <strong>${d.mode === 'copy' ? 'on' : 'off'}</strong>.
+      ${last ? `Last copy ${fmt(String(last.at).slice(0,10))} ${new Date(last.at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}: ${last.copied} sent, ${last.attached || 0} receipts, ${last.failed} failed${last.left ? `, ${last.left} still to send` : ''}.` : 'Nothing copied yet.'}</div>
+    ${zstoreReport ? `<div class="callout ${/PROBLEM|could not|failed/i.test(zstoreReport) ? 'rust' : 'ok'}" style="margin-top:12px;white-space:pre-wrap">${esc(zstoreReport)}</div>` : ''}
+    ${c ? `<div class="tbl-wrap" style="margin-top:12px"><table class="rep"><thead><tr><th>What</th><th>In Rep Hub</th><th>Copied, up to date</th><th>Behind</th><th>Receipts missing</th></tr></thead>
+      <tbody>${c.lines.map(l => `<tr><td>${esc(l.kind.replace('records:', ''))}</td><td>${l.inRepHub}</td><td>${l.copied}</td><td style="${l.behind ? 'color:var(--rust);font-weight:600' : ''}">${l.behind}</td><td>${l.receiptsMissing || ''}</td></tr>`).join('')}</tbody></table></div>
+      <div class="callout ${c.allMatch ? 'ok' : ''}" style="margin-top:10px"><strong>${c.allMatch ? 'Everything matches' : `${c.copied} of ${c.total} copied and up to date`}</strong>
+        Zoho's own counts: ${Object.entries(c.zohoCounts).map(([k, v]) => `${k} ${esc(String(v))}`).join(' · ')}</div>` : ''}
+  </div>`;
+}
+async function zstoreAct(what, btn){
+  btn.disabled = true; const was = btn.textContent; btn.textContent = 'Working…';
+  try{
+    if(what === 'setup'){ const v = await API.call('/admin/zoho-store/setup', { method:'POST' }); zstoreReport = v.report.join('\n'); zstoreData = null; }
+    if(what === 'copy'){ const v = await API.call('/admin/zoho-store/copy', { method:'POST' });
+      zstoreReport = v.ok === false ? v.error : `Sent ${v.copied}, receipts ${v.attached}, marked removed ${v.removed}, failed ${v.failed}${v.left ? `. ${v.left} still to send: press Copy now again.` : '. All sent.'}${v.errors && v.errors.length ? '\n' + v.errors.slice(0, 8).join('\n') : ''}`; zstoreData = null; }
+    if(what === 'check'){ zstoreCheck = await API.call('/admin/zoho-store/check'); }
+  }catch(e){ zstoreReport = e.message || 'It did not work'; }
+  btn.disabled = false; btn.textContent = was; renderContent();
+}
+async function zstoreMode(mode, btn){
+  if(mode === 'copy' && !(zstoreCheck && zstoreCheck.allMatch) && !confirm('The check has not shown everything matching yet. Switch copying on anyway?')) return;
+  btn.disabled = true;
+  try{ const v = await API.call('/admin/zoho-store', { method:'PUT', body: JSON.stringify({ mode }) }); zstoreData.mode = v.mode; toast(mode === 'copy' ? 'Copying is on' : 'Copying is off'); }
+  catch(e){ toast(e.message || 'Could not change it'); }
+  btn.disabled = false; renderContent();
 }
 async function saveTeamAccess(key){
   const list = [...document.querySelectorAll('.ta-' + key + ':checked')].map(c => c.value);

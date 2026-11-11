@@ -43,6 +43,9 @@
   schedule = "*/15 * * * *"
 
 # Accounting day: put the approved batch in front of the admins
+[functions."zoho-copy"]
+  schedule = "*/15 * * * *"   # copies Rep Hub's own records into Zoho, only when switched on
+
 [functions."accounting-auto"]
   schedule = "0 13 * * *"
 

@@ -398,6 +398,18 @@ CREATE TABLE IF NOT EXISTS coaches (
   updated_by  TEXT
 );
 
+-- What has been copied into Zoho (Copy to Zoho), so only changes are sent again
+CREATE TABLE IF NOT EXISTS zoho_copy (
+  kind      TEXT NOT NULL,
+  key       TEXT NOT NULL,
+  hash      TEXT NOT NULL,
+  zoho_id   TEXT,
+  attached  BOOLEAN NOT NULL DEFAULT FALSE,
+  removed   BOOLEAN NOT NULL DEFAULT FALSE,
+  copied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (kind, key)
+);
+
 -- Private links that let a person's Claude read Rep Hub as them (only the key's hash is kept)
 CREATE TABLE IF NOT EXISTS claude_links (
   id          SERIAL PRIMARY KEY,

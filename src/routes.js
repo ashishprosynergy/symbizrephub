@@ -4628,6 +4628,36 @@ r.put('/coaches/:id', auth.authRequired, needAccess('devel'), wrap(async (req, r
   res.json({ id, willing: b.willing === true, strengths });
 }));
 
+/* ═══════════ COPY TO ZOHO (James: one source of truth) ═══════════
+ * Off until switched on. Only directors with the system or settings switch. */
+const zstore = require('./zohostore');
+const canStore = (req, res, next) => (req.user.owner || (req.user.role === 'admin' && req.user.perms && (req.user.perms.system || req.user.perms.settings)))
+  ? next() : res.status(403).json({ error: 'Only the owner or a director can manage copying to Zoho' });
+r.get('/admin/zoho-store', auth.authRequired, auth.requireOffice, canStore, wrap(async (req, res) => {
+  const [mode, modules, last] = await Promise.all([setting('zohoStore', 'off'), zstore.moduleNames(), setting('zohoStoreLast', '')]);
+  let lastRun = null; try { lastRun = last ? JSON.parse(last) : null; } catch (_) {}
+  res.json({ mode, modules, lastRun, kinds: zstore.KINDS.map(k => k.kind) });
+}));
+r.post('/admin/zoho-store/setup', auth.authRequired, auth.requireOffice, canStore, wrap(async (req, res) => {
+  const out = await zstore.setup();
+  await audit(req.user.id, 'zohostore.setup', out, req.ip);
+  res.json(out);
+}));
+r.put('/admin/zoho-store', auth.authRequired, auth.requireOffice, canStore, wrap(async (req, res) => {
+  const mode = (req.body || {}).mode;
+  if (!['off', 'copy'].includes(mode)) return res.status(400).json({ error: 'Pick off or copy' });
+  if (mode === 'copy' && !(await zstore.moduleNames()).hours) return res.status(400).json({ error: 'Set up the Zoho modules first' });
+  await q.setSetting('zohoStore', mode);
+  await audit(req.user.id, 'zohostore.mode', { mode }, req.ip);
+  res.json({ mode });
+}));
+r.post('/admin/zoho-store/copy', auth.authRequired, auth.requireOffice, canStore, wrap(async (req, res) => {
+  const out = await zstore.copy({ budgetMs: 8000 });
+  await audit(req.user.id, 'zohostore.copy', { copied: out.copied, failed: out.failed, left: out.left }, req.ip);
+  res.json(out);
+}));
+r.get('/admin/zoho-store/check', auth.authRequired, auth.requireOffice, canStore, wrap(async (req, res) => res.json(await zstore.check())));
+
 /* ═══════════ CLAUDE CONNECTOR: each person's private link ═══════════
  * The link is shown once when made; only its hash is kept, so it can't be
  * read back. Switching it off stops Claude at once. */

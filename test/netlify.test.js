@@ -109,6 +109,33 @@ const fakeZoho = http.createServer((req, res) => {
       res.writeHead(404); return res.end('{}');
     }
     if (url.pathname === '/crm/v8/org') return json({ org: [{ company_name: 'Symbiz Network (test)' }] });
+    // Zoho setup: modules, fields and profiles (Copy to Zoho)
+    if (url.pathname === '/crm/v8/settings/profiles') return json({ profiles: [{ id: 'P1', name: 'Administrator' }, { id: 'P2', name: 'Standard' }] });
+    if (url.pathname === '/crm/v8/settings/modules') {
+      store.__modules = store.__modules || [];
+      if (req.method === 'POST') {
+        const m0 = JSON.parse(body).modules[0];
+        store.__modules.push({ api_name: m0.plural_label.replace(/[^A-Za-z0-9]+/g, '_'), plural_label: m0.plural_label, profiles: m0.profiles });
+        return json({ modules: [{ code: 'SUCCESS' }] });
+      }
+      return json({ modules: store.__modules });
+    }
+    if (url.pathname === '/crm/v8/settings/fields') {
+      const mod = url.searchParams.get('module'); store.__fields = store.__fields || {};
+      const list = store.__fields[mod] = store.__fields[mod] || [{ api_name: 'Name' }];
+      if (req.method === 'POST') { JSON.parse(body).fields.forEach(f => list.push({ api_name: f.field_label.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '') })); return json({ fields: [] }); }
+      return json({ fields: list });
+    }
+    const ups = url.pathname.match(/^\/crm\/v8\/([A-Za-z_]+)\/upsert$/);
+    if (ups && req.method === 'POST') {
+      const b0 = JSON.parse(body), mod = ups[1], key = (b0.duplicate_check_fields || [])[0];
+      store[mod] = store[mod] || [];
+      return json({ data: b0.data.map(rec => {
+        const found = key && store[mod].find(x => x[key] === rec[key]);
+        if (found) { Object.assign(found, rec); return { code: 'SUCCESS', action: 'update', details: { id: found.id } }; }
+        const nid = String(nextId++); store[mod].push({ id: nid, ...rec }); return { code: 'SUCCESS', action: 'insert', details: { id: nid } };
+      }) });
+    }
     // A note on a record (Member Development call notes, offboarding)
     const znote = url.pathname.match(/^\/crm\/v8\/([A-Za-z_]+)\/([^/]+)\/Notes$/);
     if (znote && req.method === 'POST') {
@@ -596,6 +623,59 @@ describe('netlify function handler', () => {
       assert.ok(zohoCalls.some(c => c.path === '/crm/v8/coql'), 'read through COQL on the subform');
     } finally {
       delete store.Event_Registrations; delete store.Guests;
+    }
+  });
+
+  test('Copy to Zoho: off by default, sets up hidden modules, copies once, never duplicates, never deletes', async () => {
+    const zstore = require('../src/zohostore');
+    const adminToken = J(await invoke('POST', '/auth/login', { body: { email: 'admin@test.org', password: 'correct-horse' } })).token;
+    assert.ok(adminToken, 'admin signs in');
+    assert.equal(J(await invoke('GET', '/admin/zoho-store', { token: repToken })).error !== undefined, true, 'not for reps');
+    assert.equal((await invoke('GET', '/admin/zoho-store', { token: officeToken })).statusCode, 403, 'not for office staff');
+    const st = J(await invoke('GET', '/admin/zoho-store', { token: adminToken }));
+    assert.equal(st.mode, 'off');
+    assert.equal((await invoke('PUT', '/admin/zoho-store', { token: adminToken, body: { mode: 'copy' } })).statusCode, 400, 'set up first');
+    const setup = J(await invoke('POST', '/admin/zoho-store/setup', { token: adminToken }));
+    assert.equal(setup.report.filter(l => /created/.test(l)).length, 5, setup.report.join('\n'));
+    assert.ok(!setup.report.some(l => /PROBLEM|could not/.test(l)), setup.report.join('\n'));
+    assert.ok(store.__modules.every(m => m.profiles.length === 1 && m.profiles[0].id === 'P1'), 'only administrators see them');
+    assert.ok(J(await invoke('POST', '/admin/zoho-store/setup', { token: adminToken })).report.every(l => !/created/.test(l)), 'running again changes nothing');
+
+    // Something in Rep Hub to copy: an expense with a receipt, an hour, a ring note
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const ex = J(await invoke('POST', '/expenses', { token: repToken, body: { date: '2026-11-05', amount: 65.09, category: 'Driver', vendor: 'TruLink',
+      description: 'Driver to Sugarcreek', receiptName: 'r.png', receiptType: 'image/png', receiptData: png } }));
+    const hr = J(await invoke('POST', '/time', { token: repToken, body: { date: '2026-11-05', hours: 6, category: 'Local event', description: 'OH summit' } }));
+    store.attachments = [];
+    try {
+    let out = J(await invoke('POST', '/admin/zoho-store/copy', { token: adminToken }));
+    assert.equal(out.failed, 0, JSON.stringify(out));
+    assert.ok(out.copied >= 2 && out.attached >= 1);
+    const zx = store.Rep_Hub_Expenses.find(x => x.Rep_Hub_ID === `expenses:E${ex.id}`);
+    assert.equal(zx.Amount, 65.09); assert.equal(zx.Vendor, 'TruLink'); assert.equal(zx.Removed_in_Rep_Hub, false);
+    assert.ok(store.attachments.some(a => a.id === zx.id), 'receipt attached in Zoho');
+    // Nothing changed: nothing sent, nothing duplicated
+    const count = store.Rep_Hub_Expenses.length;
+    out = J(await invoke('POST', '/admin/zoho-store/copy', { token: adminToken }));
+    assert.equal(out.copied, 0, JSON.stringify(out)); assert.equal(store.Rep_Hub_Expenses.length, count);
+    // A change is sent to the same record; a removal is only marked
+    await db.query("UPDATE expenses SET status = 'Approved' WHERE id = $1", [ex.id]);
+    out = J(await invoke('POST', '/admin/zoho-store/copy', { token: adminToken }));
+    assert.equal(out.copied, 1); assert.equal(store.Rep_Hub_Expenses.find(x => x.id === zx.id).Status, 'Approved');
+    const chk = J(await invoke('GET', '/admin/zoho-store/check', { token: adminToken }));
+    assert.equal(chk.allMatch, true, JSON.stringify(chk.lines.filter(l => l.behind || l.receiptsMissing)));
+    await db.query('DELETE FROM expenses WHERE id = $1', [ex.id]);
+    out = J(await invoke('POST', '/admin/zoho-store/copy', { token: adminToken }));
+    assert.equal(out.removed, 1);
+    assert.equal(store.Rep_Hub_Expenses.find(x => x.id === zx.id).Removed_in_Rep_Hub, true, 'kept in Zoho, marked removed');
+    assert.equal(J(await invoke('PUT', '/admin/zoho-store', { token: adminToken, body: { mode: 'copy' } })).mode, 'copy');
+    await invoke('PUT', '/admin/zoho-store', { token: adminToken, body: { mode: 'off' } });
+    assert.ok(zstore.KINDS.length >= 16);
+    } finally {
+      // Leave nothing behind for the other tests
+      await db.query('DELETE FROM expenses WHERE id = $1', [ex.id]);
+      if (hr && hr.id) await db.query('DELETE FROM time_entries WHERE id = $1', [hr.id]);
+      await db.q.setSetting('zohoStore', 'off');
     }
   });
 
