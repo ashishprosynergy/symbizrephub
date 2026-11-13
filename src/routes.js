@@ -1337,7 +1337,13 @@ r.get('/events/:id/registrations', auth.authRequired, wrap(async (req, res) => {
    * ("guest name not in Zoho") even though Zoho had the name.
    */
   const [rows, guestRows] = await Promise.all([
-    zoho.getRecords(M.REGISTRATION, { criteria: `(Event:equals:${eventId})`, perPage: 200 })
+    // Fields named, so the flat guest name (older Rep Hub registrations keep the
+    // guest only there) always comes back and the guest isn't shown nameless
+    zoho.getRecords(M.REGISTRATION, { criteria: `(Event:equals:${eventId})`, perPage: 200,
+      fields: ['Name', 'Event', 'Registrant', 'Registrant_Name', 'Registrant_Lead', 'Registrant_Name1', 'Organization_Name', 'Lead_Registrant_Organization',
+        'Phone', 'Email', 'Registration_Status', 'Attended', 'Bringing_Guest', 'Number_of_Guests', 'Guest_First_Name', 'Guest_Last_Name', 'Guest_Type',
+        'Guest_Organization', 'Guest_Phone', 'Guest_Email', 'Guest_City', 'Guest_Attended', 'Registration_Date', 'Registration_Notes',
+        'Address_1_City', 'Address_1_State_Province'] })
       .catch(() => zoho.coql(queries.registrationsFor(eventId)).catch(() => [])),
     guestsForEvent(eventId).catch(e => { console.error('[registrations] guests query failed:', e.message); return []; }),
   ]);

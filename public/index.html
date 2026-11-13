@@ -5575,8 +5575,10 @@ function fillRegFromMember(sel){
   f.namedItem('business').value = m.business && m.business !== '—' ? m.business : '';
   f.namedItem('phone').value = m.phone || m.mobile || '';
   f.namedItem('email').value = m.email || '';
-  const parts = String(m.address || '').split(',').map(x => x.trim());
-  if(parts.length >= 3){ f.namedItem('city').value = parts[parts.length - 2] || ''; f.namedItem('state').value = (parts[parts.length - 1] || '').split(' ')[0]; }
+  // Town and state from the member's own fields. Splitting the address took the
+  // state as the town and the zip as the state ("IL", "61951").
+  f.namedItem('city').value = m.city || '';
+  f.namedItem('state').value = m.region || '';
   f.namedItem('registrantType').value = 'Member';
 }
 function toggleGuestFields(on){
@@ -9015,6 +9017,7 @@ const adapt = {
       tier: m.tier || '',
       onlineMember: !!m.onlineMember,
       address: m.address || '',
+      city: m.city || '',
       memberSince: m.memberSince || null,
       ringId,
       ringNames: m.ringNames || [],

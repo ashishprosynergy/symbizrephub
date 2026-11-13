@@ -176,14 +176,30 @@ const toZoho = {
     Organization_Name: r.accountId ? { id: r.accountId } : undefined,
     Lead_Registrant_Organization: r.accountId ? undefined : (r.business || ''),
     Phone: r.phone || '',
-    Guest_Email: r.email || '',
+    // The registrant's own email. It used to go into Guest_Email, so their
+    // address showed as the guest's and the registration had no email.
+    Email: r.email || undefined,
     Registration_Status: r.status || 'Attending',
     Bringing_Guest: r.bringingGuest ? 'Yes' : 'No',
+    // Symbiz count guests from the Guests list and Number of Guests (Keturah,
+    // 13 Nov: a guest registered through Rep Hub "does not get accounted for").
+    // The flat Guest_* fields are kept too, for anything that still reads them.
+    Number_of_Guests: r.bringingGuest ? 1 : undefined,
+    Guests: r.bringingGuest && (r.guestFirstName || r.guestLastName) ? [{
+      Guest_First_Name: r.guestFirstName || undefined,
+      Guest_Last_Name: r.guestLastName || undefined,
+      Guest_Type: r.guestType || 'Other Guest',
+      Guest_Organization: r.guestBusiness || undefined,
+      Guest_Phone: r.guestPhone || undefined,
+      Guest_Email: r.guestEmail || undefined,
+      Registration_Status: 'Attending',
+    }] : undefined,
     Guest_First_Name: r.guestFirstName || undefined,
     Guest_Last_Name: r.guestLastName || undefined,
     Guest_Type: r.guestType || undefined,            // Spouse | Other Guest
     Guest_Organization: r.guestBusiness || undefined,
     Guest_Phone: r.guestPhone || undefined,
+    Guest_Email: r.bringingGuest ? (r.guestEmail || undefined) : undefined,
     Guest_City: r.guestCity || undefined,
     Registration_Date: r.registeredOn || today(),
     Address_1_City: r.city || undefined,
@@ -326,7 +342,8 @@ const fromZoho = {
     leadId: z.Registrant_Lead?.id || null,
     business: z.Organization_Name?.name || z.Lead_Registrant_Organization || '',
     phone: z.Phone || '',
-    email: z.Email || '',
+    // Older Rep Hub registrations put the registrant's email in Guest_Email
+    email: z.Email || (z.Bringing_Guest !== 'Yes' ? z.Guest_Email || '' : ''),
     status: z.Registration_Status || '',
     attended: z.Attended || '',
     bringingGuest: z.Bringing_Guest === 'Yes',

@@ -2603,3 +2603,21 @@ describe('netlify config', () => {
     assert.ok(fs.existsSync(`${__dirname}/../public/index.html`));
   });
 });
+
+describe('registrations sent to Zoho', () => {
+  const { toZoho, fromZoho } = require('../src/domain');
+  test('a guest is put on the Guests list and counted, and the registrant keeps their own email (Keturah, 13 Nov)', () => {
+    const z = toZoho.registration({ eventId: '9', contactId: 'C1', name: 'Brian Schrock', email: 'brian@example.test', phone: '217-555-0100',
+      city: 'Arthur', state: 'IL', bringingGuest: true, guestFirstName: 'Lisa', guestLastName: 'Schrock', guestType: 'Spouse', guestEmail: 'lisa@example.test' });
+    assert.equal(z.Email, 'brian@example.test');
+    assert.equal(z.Number_of_Guests, 1);
+    assert.deepEqual(z.Guests.map(g => [g.Guest_First_Name, g.Guest_Last_Name, g.Guest_Type, g.Guest_Email, g.Registration_Status]),
+      [['Lisa', 'Schrock', 'Spouse', 'lisa@example.test', 'Attending']]);
+    assert.equal(z.Guest_Email, 'lisa@example.test', 'the guest email field holds the guest');
+    assert.deepEqual([z.Address_1_City, z.Address_1_State_Province], ['Arthur', 'IL']);
+    const none = toZoho.registration({ eventId: '9', name: 'Solo Person', email: 's@example.test', bringingGuest: false });
+    assert.equal(none.Guests, undefined); assert.equal(none.Number_of_Guests, undefined); assert.equal(none.Guest_Email, undefined);
+    // Older Rep Hub registrations kept the registrant's email in Guest_Email
+    assert.equal(fromZoho.registration({ id: 'R', Guest_Email: 'old@example.test', Bringing_Guest: 'No' }).email, 'old@example.test');
+  });
+});
