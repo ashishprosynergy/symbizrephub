@@ -1840,6 +1840,37 @@ function toEastern(iso) {
   return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute} ${p.dayPeriod}` };
 }
 let summitCache = null;
+/**
+ * Who came, for past events Zoho has no Attendance Count on (Keturah, 13 Nov:
+ * "came" blank for most 2026 summits). Only the 2026 Symbiz Summit has the
+ * count filled in; for the rest attendance is ticked on each registration
+ * (Attended) and each guest (Guest_Attended). Registrations are counted in one
+ * query for every event; guests can't be grouped by event, so one each.
+ */
+async function fillAttendance(events) {
+  const t0 = today();
+  const need = events.filter(e => e.attended == null && e.date && e.date < t0).slice(0, 60);
+  if (!need.length) return events;
+  const ids = need.map(e => `'${String(e.id).replace(/[^0-9]/g, '')}'`);
+  const regs = new Map();
+  for (let i = 0; i < ids.length; i += 50) {
+    const rows = await zoho.coql(`select Event, COUNT(id) from ${M.REGISTRATION} where Attended = 'Yes' and Event in (${ids.slice(i, i + 50).join(',')}) group by Event`).catch(() => []);
+    rows.forEach(r => { if (r.Event && r.Event.id) regs.set(String(r.Event.id), Number(r['COUNT(id)']) || 0); });
+  }
+  const guests = new Map();
+  for (let i = 0; i < need.length; i += 4) {
+    await Promise.all(need.slice(i, i + 4).map(async e => {
+      const rows = await zoho.coql(`select COUNT(id) from Guests where Guest_Attended = 'Yes' and Parent_Id.Event = '${String(e.id).replace(/[^0-9]/g, '')}'`).catch(() => null);
+      if (rows && rows[0]) guests.set(String(e.id), Number(Object.values(rows[0])[0]) || 0);
+    }));
+  }
+  return events.map(e => {
+    if (!need.includes(e)) return e;
+    const r = regs.get(String(e.id)) || 0, g = guests.get(String(e.id)) || 0;
+    // Nothing ticked at all: leave it blank rather than claim nobody came
+    return r + g > 0 ? { ...e, attended: r + g, attendedFrom: 'registrations' } : e;
+  });
+}
 /* The summits from Zoho. They change a few times a year, so the list is kept
    in the database for every copy of the server to share, for 15 minutes. When
    it is older, Zoho is asked, but a busy Zoho (the Overview fires a dozen
@@ -1848,7 +1879,7 @@ let summitCache = null;
 async function summitEvents(fresh) {
   if (!fresh && summitCache && Date.now() - summitCache.at < 300000) return summitCache.rows;
   let saved = null;
-  try { saved = JSON.parse(await setting('summit_events_cache', 'null')); } catch { saved = null; }
+  try { saved = JSON.parse(await setting('summit_events_cache2', 'null')); } catch { saved = null; }
   if (!fresh && saved && Array.isArray(saved.rows) && Date.now() - saved.at < 15 * 60000) { summitCache = saved; return saved.rows; }
   const live = zoho.coql(`select id, Name, Event_Type, Event_Date_and_Time, Event_City, Event_State, Event_Venue,
       Registration_Count, Total_Registered_People, Attendance_Count, Event_Status
@@ -1860,8 +1891,10 @@ async function summitEvents(fresh) {
         registered: e.Total_Registered_People ?? e.Registration_Count ?? null, attended: e.Attendance_Count ?? null,
         status: e.Event_Status || '' };
     }).sort((a, b) => b.date.localeCompare(a.date));
+    return fillAttendance(out);
+  }).then(out => {
     summitCache = { at: Date.now(), rows: out };
-    q.setSetting('summit_events_cache', JSON.stringify(summitCache)).catch(() => {});
+    q.setSetting('summit_events_cache2', JSON.stringify(summitCache)).catch(() => {});
     return out;
   });
   if (fresh || !saved || !Array.isArray(saved.rows)) return live;
