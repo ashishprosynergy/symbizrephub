@@ -2498,6 +2498,41 @@ r.post('/pending/registration', auth.authRequired, wrap(async (req, res) => {
   res.status(201).json({ id: out[0]?.id, status: 'pending' });
 }));
 
+/**
+ * Who registered, linked the way Zoho's own registrations are (Jeanetta's
+ * test, 13 Nov: the name went only into a hidden text field, so "Registrant
+ * Member" and "Registrant Lead" were both empty). A member is linked to their
+ * contact, found by email if the rep didn't pick them from the list; anyone
+ * else to a Lead: the one with the same email if there is one, otherwise a new
+ * Lead, sourced to the summit.
+ */
+async function linkRegistrant(p) {
+  const r = { ...p };
+  const email = String(p.email || '').trim().toLowerCase().replace(/'/g, '');
+  if (!r.contactId && email) {
+    const c = await zoho.coql(`select id from ${M.CONTACT} where Email = '${email}' limit 1`).catch(() => []);
+    if (c[0]) r.contactId = c[0].id;
+  }
+  if (r.contactId) return { ...r, registrantType: 'Member', leadId: undefined };
+  if (email) {
+    const l = await zoho.coql(`select id from Leads where Email = '${email}' limit 1`).catch(() => []);
+    if (l[0]) return { ...r, registrantType: 'Lead', leadId: l[0].id };
+  }
+  const ev = await zoho.getRecord(M.EVENT, p.eventId).catch(() => null);
+  const type = String((ev && ev.Event_Type) || '');
+  const source = /global|symbiz summit/i.test(type) ? 'Global Summit' : /summit/i.test(type) ? 'Regional Summit' : 'Other';
+  const [first, ...rest] = String(p.name || '').trim().split(/\s+/);
+  const made = await zoho.insertRecords('Leads', [{
+    First_Name: p.firstName || (rest.length ? first : undefined),
+    Last_Name: p.lastName || (rest.length ? rest.join(' ') : first) || 'Unknown',
+    Company: p.business || 'Not given', Email: email || undefined, Phone: p.phone || undefined,
+    City: p.city || undefined, State: p.state || undefined, Lead_Source: source,
+    Description: `Registered for ${p.eventName || (ev && ev.Name) || 'an event'} through Rep Hub.`,
+  }]);
+  const leadId = made && made[0] && made[0].details && made[0].details.id;
+  return { ...r, registrantType: 'Lead', leadId };
+}
+
 /** A rep asks for a registration to be cancelled. */
 r.post('/pending/cancellation', auth.authRequired, wrap(async (req, res) => {
   const b = req.body || {};
@@ -2574,7 +2609,7 @@ r.post('/pending/:id/approve', auth.authRequired, auth.requireOffice, access.req
       if (dupes.length && !req.body?.confirmDuplicate) {
         return res.status(409).json({ error: `${p.name || 'This person'} is ${dupText(dupes[0])}. Approve anyway, or send it back.`, duplicate: dupes });
       }
-      const out = await zoho.insertRecords(M.REGISTRATION, [toZoho.registration(p)]);
+      const out = await zoho.insertRecords(M.REGISTRATION, [toZoho.registration(await linkRegistrant(p))]);
       zohoId = out[0]?.details?.id;
 
     } else if (row.kind === 'cancellation') {

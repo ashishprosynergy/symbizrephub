@@ -170,8 +170,10 @@ const toZoho = {
    */
   registration: r => ({
     Event: r.eventId ? { id: r.eventId } : undefined,
-    Registrant: r.registrantType || (r.contactId ? 'Member' : 'Lead'),
+    Registrant: r.contactId ? 'Member' : r.leadId ? 'Lead' : (r.registrantType || 'Lead'),
     Registrant_Name: r.contactId ? { id: r.contactId } : undefined,
+    // Not a member yet: linked to their Lead, as Zoho's own registrations are
+    Registrant_Lead: !r.contactId && r.leadId ? { id: r.leadId } : undefined,
     Registrant_Name1: r.contactId ? undefined : (r.name || ''),
     Organization_Name: r.accountId ? { id: r.accountId } : undefined,
     Lead_Registrant_Organization: r.accountId ? undefined : (r.business || ''),

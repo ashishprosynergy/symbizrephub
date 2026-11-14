@@ -2534,6 +2534,27 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.match(ringRec.Group_Description, /Amos Zook, 717-555-0100/);
   });
 
+  test('a registration for someone not in Zoho is linked to a new Lead, so the registrant is named (Jeanetta, 13 Nov)', async () => {
+    const keep = { c: store.Contacts, l: store.Leads, r: store.Event_Registrations, e: store.Symbiz_Events };
+    store.Contacts = []; store.Leads = []; store.Event_Registrations = [];
+    store.Symbiz_Events = [...(store.Symbiz_Events || []), { id: '8899', Name: 'IL Regional Summit', Event_Type: 'Regional Summit' }];
+    try {
+      const made = await invoke('POST', '/pending/registration', { token: rep, body: { eventId: '8899', firstName: 'Jeanetta', lastName: 'Wanner',
+        name: 'Jeanetta Wanner', email: 'jw@example.test', registrantType: 'Member', bringingGuest: true, guestFirstName: 'Sam', guestLastName: 'Wanner', guestType: 'Spouse' } });
+      assert.equal(made.statusCode, 201, made.body);
+      const ok = await invoke('POST', `/pending/${J(made).id}/approve`, { token: office });
+      assert.equal(ok.statusCode, 200, ok.body);
+      const lead = store.Leads.find(l => l.Email === 'jw@example.test');
+      assert.ok(lead, 'a Lead was made');
+      assert.deepEqual([lead.First_Name, lead.Last_Name, lead.Lead_Source], ['Jeanetta', 'Wanner', 'Regional Summit']);
+      const reg = store.Event_Registrations.find(x => x.Registrant_Lead);
+      assert.equal(reg.Registrant_Lead.id, lead.id);
+      assert.equal(reg.Registrant, 'Lead', 'not marked a member when no member was found');
+      assert.equal(reg.Number_of_Guests, 1);
+      assert.equal(reg.Guests[0].Guest_First_Name, 'Sam');
+    } finally { Object.assign(store, { Contacts: keep.c, Leads: keep.l, Event_Registrations: keep.r, Symbiz_Events: keep.e }); }
+  });
+
   test('members over 60 days in A/R come from Books, matched to their rep; reps see only theirs', async () => {
     const day = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
     store.Growth_Ring_Groups.push({ id: 'GRR1', Name: 'Rep One Ring', Active: true, Regional_Rep: { id: 'CONTACT_REP_1', name: 'Test Rep' } });
