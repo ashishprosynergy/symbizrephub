@@ -4863,6 +4863,10 @@ function accessSectionBody(sec){
         <input type="text" placeholder="https://drive.google.com/drive/folders/…" value="${esc(s.exitInterviewFolder || '')}" onchange="setSetting('exitInterviewFolder', this.value.trim())"></div>
       <div class="row-sub">The filled-in form (PDF) is saved there and attached to the member in Zoho. Uses the Google Drive script
         from Backup: update it to the latest copy, and share this folder with the Google account it runs as (Editor).</div>
+      <div class="field" style="margin-top:14px"><label>Records Rep Hub creates in Zoho belong to</label>
+        <div id="zohoOwnerBox">${zohoOwnerBox()}</div></div>
+      <div class="row-sub">Registrations and leads made through Rep Hub are owned by this Zoho user. Zoho's event reminders are sent as the
+        registration's owner, with the time shown in that user's time zone, so pick a Symbiz user on US time.</div>
     </div>`;
   if(sec === 'calendar') return `<div class="card">
       <label class="row" style="gap:10px;cursor:pointer;flex-wrap:nowrap"><input type="checkbox" style="width:auto" ${s.calendarZoho !== 'off' ? 'checked' : ''}
@@ -4953,6 +4957,17 @@ async function claudeLinkOff(id){
   try{ await API.call('/me/claude-links/' + id, { method:'DELETE' }); claudeLinks = null; claudeNew = null; toast('Switched off'); }
   catch(e){ toast(e.message || 'Could not switch it off'); }
   renderContent();
+}
+/* Who owns the records Rep Hub creates in Zoho (Keturah, 16 Nov: reminders came from the connector's own address, in India time) */
+var zohoUsers = null;
+function zohoOwnerBox(){
+  if(!zohoUsers){ API.call('/admin/zoho-users').then(v => { zohoUsers = v; const el = document.getElementById('zohoOwnerBox'); if(el) el.innerHTML = zohoOwnerBox(); })
+    .catch(e => { zohoUsers = { error: e.message }; const el = document.getElementById('zohoOwnerBox'); if(el) el.innerHTML = zohoOwnerBox(); }); return '<div class="row-sub">Loading Zoho users…</div>'; }
+  if(zohoUsers.error) return `<div class="row-sub">${esc(zohoUsers.error)}</div>`;
+  const cur = zohoUsers.chosen || zohoUsers.current || '';
+  return `<select onchange="setSetting('zohoRecordOwner', this.value).then(() => { zohoUsers = null; })">
+    ${zohoUsers.chosen ? '' : '<option value="">Automatic (the admin@ user)</option>'}
+    ${zohoUsers.users.map(u => `<option value="${esc(u.id)}" ${!zohoUsers.chosen && u.id === zohoUsers.current ? '' : u.id === cur ? 'selected' : ''}>${esc(u.name)} · ${esc(u.email)} · ${esc(u.timeZone || '')}</option>`).join('')}</select>`;
 }
 async function saveMyEmail(btn){
   const mode = document.getElementById('myEmailMode').value, from = (document.getElementById('myEmailFrom') || {}).value || '';
@@ -5199,7 +5214,7 @@ async function retryBooks(btn){
 // Settings the server acts on. These used to be kept only in this browser,
 // so the server never saw (for one) the accounting address typed in here.
 const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount',
-  'supportName','supportPhone','registrationApprovers','exitInterviewNotify','exitInterviewFolder','emailLinks','calendarFeeds','calendarKeywords','calendarZoho','mileageRate'];
+  'supportName','supportPhone','registrationApprovers','exitInterviewNotify','exitInterviewFolder','emailLinks','calendarFeeds','calendarKeywords','calendarZoho','mileageRate','zohoRecordOwner'];
 async function setSetting(k,v){
   S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`);
   if(k === 'supportName' || k === 'supportPhone'){

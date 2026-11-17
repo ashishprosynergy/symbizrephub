@@ -109,6 +109,10 @@ const fakeZoho = http.createServer((req, res) => {
       res.writeHead(404); return res.end('{}');
     }
     if (url.pathname === '/crm/v8/org') return json({ org: [{ company_name: 'Symbiz Network (test)' }] });
+    // Zoho users: the connector's own user in India time, and the office's admin@ user
+    if (url.pathname === '/crm/v8/users') return json({ users: [
+      { id: 'U_CONNECTOR', full_name: 'Connector Person', email: 'connector@example.test', time_zone: 'Asia/Kolkata', profile: { name: 'Administrator' } },
+      { id: 'U_ADMIN', full_name: 'admin Admin', email: 'admin@office.test', time_zone: 'America/New_York', profile: { name: 'Administrator' } }] });
     // Zoho setup: modules, fields and profiles (Copy to Zoho)
     if (url.pathname === '/crm/v8/settings/profiles') return json({ profiles: [{ id: 'P1', name: 'Administrator' }, { id: 'P2', name: 'Standard' }] });
     if (url.pathname === '/crm/v8/settings/modules') {
@@ -2552,6 +2556,9 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
       assert.equal(reg.Registrant, 'Lead', 'not marked a member when no member was found');
       assert.equal(reg.Number_of_Guests, 1);
       assert.equal(reg.Guests[0].Guest_First_Name, 'Sam');
+      // Owned by the office's admin@ user, not whoever connected Rep Hub to Zoho
+      // (Zoho's reminders are sent as the owner, in the owner's time zone)
+      assert.deepEqual([reg.Owner, lead.Owner], [{ id: 'U_ADMIN' }, { id: 'U_ADMIN' }]);
     } finally { Object.assign(store, { Contacts: keep.c, Leads: keep.l, Event_Registrations: keep.r, Symbiz_Events: keep.e }); }
   });
 

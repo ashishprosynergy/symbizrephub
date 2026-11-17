@@ -1525,7 +1525,8 @@ r.post('/events/:id/leads', auth.authRequired, auth.requireOffice, writesAllowed
       notes: `Met at ${eventName} (${how}). Added from Rep Hub by ${req.user.name}.` }) });
   }
   if (toMake.length) {
-    const out = await zoho.insertRecords('Leads', toMake.map(x => x.record)).catch(e => toMake.map(() => ({ message: e.message })));
+    const owner = await recordOwner();
+    const out = await zoho.insertRecords('Leads', toMake.map(x => ({ ...x.record, ...owner }))).catch(e => toMake.map(() => ({ message: e.message })));
     toMake.forEach((x, i) => {
       const r0 = out[i];
       if (r0 && (r0.code === 'SUCCESS' || r0.status === 'success')) created.push({ name: x.name, id: r0.details && r0.details.id });
@@ -2499,6 +2500,39 @@ r.post('/pending/registration', auth.authRequired, wrap(async (req, res) => {
 }));
 
 /**
+ * The Zoho user who owns records Rep Hub creates (Keturah, 16 Nov). Rep Hub
+ * signs in to Zoho as whoever connected it, so its registrations were owned by
+ * that person. Zoho's event-reminder workflow sends as the record owner and
+ * prints the time in the owner's time zone: members got reminders from the
+ * connector's own address with the time in India time. Records now belong to
+ * a Symbiz user, chosen in Settings, or the admin@ user on Eastern time.
+ */
+let ownerMem = null;
+async function recordOwner() {
+  const chosen = String(await setting('zohoRecordOwner', '') || '').replace(/[^0-9]/g, '');
+  if (chosen) return { Owner: { id: chosen } };
+  if (ownerMem && Date.now() - ownerMem.at < 3600e3) return ownerMem.owner;
+  let owner = {};
+  try {
+    const out = await zoho.request('/users', { query: { type: 'ActiveConfirmedUsers', per_page: 200 } });
+    const users = (out && out.users) || [];
+    const pick = users.find(u => /^admin@/i.test(u.email || ''))
+      || users.find(u => u.profile && /administrator/i.test(u.profile.name) && /^America\//.test(u.time_zone || ''));
+    if (pick) owner = { Owner: { id: pick.id } };
+  } catch (e) { console.error('[zoho] could not read users for the record owner:', e.message); }
+  ownerMem = { at: Date.now(), owner };
+  return owner;
+}
+
+/** Zoho users, to choose who owns the records Rep Hub creates (Settings) */
+r.get('/admin/zoho-users', auth.authRequired, auth.requireOffice, access.requirePerm('settings'), wrap(async (req, res) => {
+  const out = await zoho.request('/users', { query: { type: 'ActiveConfirmedUsers', per_page: 200 } });
+  const current = await recordOwner();
+  res.json({ users: ((out && out.users) || []).map(u => ({ id: u.id, name: u.full_name, email: u.email, timeZone: u.time_zone })),
+    current: current.Owner ? current.Owner.id : null, chosen: await setting('zohoRecordOwner', '') });
+}));
+
+/**
  * Who registered, linked the way Zoho's own registrations are (Jeanetta's
  * test, 13 Nov: the name went only into a hidden text field, so "Registrant
  * Member" and "Registrant Lead" were both empty). A member is linked to their
@@ -2522,7 +2556,7 @@ async function linkRegistrant(p) {
   const type = String((ev && ev.Event_Type) || '');
   const source = /global|symbiz summit/i.test(type) ? 'Global Summit' : /summit/i.test(type) ? 'Regional Summit' : 'Other';
   const [first, ...rest] = String(p.name || '').trim().split(/\s+/);
-  const made = await zoho.insertRecords('Leads', [{
+  const made = await zoho.insertRecords('Leads', [{ ...(await recordOwner()),
     First_Name: p.firstName || (rest.length ? first : undefined),
     Last_Name: p.lastName || (rest.length ? rest.join(' ') : first) || 'Unknown',
     Company: p.business || 'Not given', Email: email || undefined, Phone: p.phone || undefined,
@@ -2609,7 +2643,7 @@ r.post('/pending/:id/approve', auth.authRequired, auth.requireOffice, access.req
       if (dupes.length && !req.body?.confirmDuplicate) {
         return res.status(409).json({ error: `${p.name || 'This person'} is ${dupText(dupes[0])}. Approve anyway, or send it back.`, duplicate: dupes });
       }
-      const out = await zoho.insertRecords(M.REGISTRATION, [toZoho.registration(await linkRegistrant(p))]);
+      const out = await zoho.insertRecords(M.REGISTRATION, [{ ...toZoho.registration(await linkRegistrant(p)), ...(await recordOwner()) }]);
       zohoId = out[0]?.details?.id;
 
     } else if (row.kind === 'cancellation') {
@@ -2620,7 +2654,7 @@ r.post('/pending/:id/approve', auth.authRequired, auth.requireOffice, access.req
       zohoId = p.registrationId;
 
     } else if (row.kind === 'lead') {
-      const out = await zoho.insertRecords('Leads', [toZoho.lead(p)]);
+      const out = await zoho.insertRecords('Leads', [{ ...toZoho.lead(p), ...(await recordOwner()) }]);
       zohoId = out[0]?.details?.id;
 
     } else if (row.kind === 'ring') {
@@ -3916,7 +3950,7 @@ const OFFICE_SETTINGS = {
   booksAuto: 'on', booksPayee: 'rep', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
   supportName: 'Ashish Raj', supportPhone: '540-212-9403',
   registrationApprovers: '', exitInterviewNotify: '', exitInterviewFolder: '', emailLinks: 'app',
-  calendarFeeds: '', calendarKeywords: 'L10, Facilitator, Forum', calendarZoho: 'on', mileageRate: '',
+  calendarFeeds: '', calendarKeywords: 'L10, Facilitator, Forum', calendarZoho: 'on', mileageRate: '', zohoRecordOwner: '',
 };
 
 /** Who to ring for help — shown on the sign-in screen, so no sign-in needed. */
@@ -3949,6 +3983,7 @@ r.put('/admin/settings', auth.authRequired, auth.requireOffice, wrap(async (req,
     }
     if (k === 'emailLinks' && !['app', 'gmail'].includes(val)) continue;
     if (k === 'calendarZoho' && !['on', 'off'].includes(val)) continue;
+    if (k === 'zohoRecordOwner') { val = val.replace(/[^0-9]/g, ''); ownerMem = null; }
     if (k === 'mileageRate' && val && !(Number(val) > 0 && Number(val) < 5)) return res.status(400).json({ error: 'The mileage rate is dollars a mile, like 0.70' });
     if (k === 'calendarFeeds' && val && !icalUrls(val).length) {
       return res.status(400).json({ error: 'Paste the calendar\'s iCal link: it starts https:// (Google: Settings → the calendar → Secret address in iCal format)' });
