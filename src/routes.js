@@ -12,7 +12,7 @@ const exits = require('./exits');
 const { tablePDF } = require('./lib/pdf');
 const books = require('./lib/books');
 const {
-  nextDueDate, ringHealth, toZoho, fromZoho, daysUntil, today, addDays, queries, M,
+  nextDueDate, ringHealth, toZoho, fromZoho, daysUntil, today, addDays, queries, M, latestByDueKey,
 } = require('./domain');
 
 /** Blocks every write while READ_ONLY is on, so the app can go live safely. */
@@ -1018,7 +1018,9 @@ r.post('/activities', auth.authRequired, writesAllowed, wrap(async (req, res) =>
   // Retire any open due-item of the same type for the same person, so the
   // list doesn't show the same call twice.
   try {
-    const whoClause = b.memberId ? ` and Member = '${String(b.memberId).replace(/'/g, '')}'` : '';
+    // Facilitator calls belong to the ring: retire its open one whoever it was
+    // booked against (the cycle's first call has no person on it). See dueKey.
+    const whoClause = b.memberId && !/facilitator/i.test(b.type) ? ` and Member = '${String(b.memberId).replace(/'/g, '')}'` : '';
     const open = await zoho.coql(
       `select id from ${M.ACTIVITY}
        where Growth_Ring_Group = '${String(b.ringId).replace(/'/g, '')}'
@@ -2145,6 +2147,7 @@ r.get('/stats/retention', auth.authRequired, auth.requireOffice, access.requireP
     activeMemberships: Object.values(tiers).reduce((s, n) => s + n, 0), tiers,
     months: months.filter(m => m.month <= new Date().getMonth() + 1),
     reasons, leftList: left.sort((a, b) => b.ended.localeCompare(a.ended)), leftNoDateList: leftNoDate,
+    quarters: attritionQuarters(byContact, live),
   };
   retentionCache = { at: Date.now(), body };
   res.json(body);
@@ -2157,6 +2160,41 @@ r.get('/stats', auth.authRequired, auth.requireOffice, wrap(async (req, res) => 
   const [active, inactive, joined] = await Promise.all(queries.memberCounts(year).map(qq => zoho.coql(qq)));
   res.json({ activeMembers: n(active), inactiveMembers: n(inactive), joinedThisYear: n(joined), year, at: new Date().toISOString() });
 }));
+
+/**
+ * Attrition per quarter (Mel, 17 Nov): quarters run from 6 Nov (6 Nov, 6 Feb,
+ * 6 May, 6 Aug), counted from 6 Nov 2026. Same members and rules as retention:
+ * a member is lost in the quarter their last membership ended (Membership End
+ * Date) when they hold no live membership now. Rate = lost / members whose
+ * membership was running on the quarter's first day.
+ */
+const ATTRITION_FROM = '2026-11-06';
+function quarterBounds(iso) {
+  const y = Number(iso.slice(0, 4));
+  const starts = [`${y - 1}-11-06`, `${y}-02-06`, `${y}-05-06`, `${y}-08-06`, `${y}-11-06`, `${y + 1}-02-06`];
+  let i = starts.length - 2;
+  while (i > 0 && starts[i] > iso) i--;
+  return { start: starts[i], end: addDays(starts[i + 1], -1) };
+}
+function attritionQuarters(byContact, live) {
+  const out = [];
+  for (let q = quarterBounds(ATTRITION_FROM); q.start <= today(); q = quarterBounds(addDays(q.end, 1))) {
+    const lost = [];
+    let base = 0;
+    for (const [id, c] of byContact) {
+      if (c.deals.some(d => (!d.Start_Date || d.Start_Date < q.start) && (!d.Expiry_Date || d.Expiry_Date >= q.start))) base++;
+      if (c.deals.some(d => live(d.Stage))) continue;
+      const ended = c.deals.map(d => d.Expiry_Date).filter(Boolean).sort().pop();
+      if (ended && ended >= q.start && ended <= q.end) {
+        const last = c.deals.find(d => d.Expiry_Date === ended) || {};
+        lost.push({ id, name: c.name, ended, tier: last.Membership_Tier || '', reason: last.Reason_For_Loss__s || '' });
+      }
+    }
+    out.push({ from: q.start, to: q.end, current: q.end >= today(), lost: lost.length, base,
+      rate: base ? Math.round(lost.length / base * 1000) / 10 : null, members: lost.sort((a, b) => a.ended.localeCompare(b.ended)) });
+  }
+  return out;
+}
 
 r.get('/facilitators', auth.authRequired, wrap(async (req, res) => {
   const rows = await zoho.coql(queries.facilitators());
@@ -2275,6 +2313,24 @@ r.post('/cycle/start', auth.authRequired, auth.requireOffice, writesAllowed, wra
   res.json({ created, failed: records.length - created, from: startIso, perWeek });
 }));
 
+/**
+ * Clear the "next due" date on calls a later call has replaced (dueKey), so
+ * Zoho's own views, reminders and counts agree with the app. Dry run unless
+ * { apply: true }; workflows stay off. Office only.
+ */
+r.post('/admin/due-cleanup', auth.authRequired, auth.requireOffice, writesAllowed, wrap(async (req, res) => {
+  const rows = await zoho.coqlPaged(`select id, Visit_Type, Visit_Date, Growth_Ring_Group, Member, Rep, Outcome, Next_Due_Date from ${M.ACTIVITY} where Visit_Date is not null limit 200`);
+  const acts = rows.map(fromZoho.activity);
+  const latest = latestByDueKey(acts);
+  const keep = new Set([...latest.values()].map(a => a.id));
+  const stale = acts.filter(a => a.nextDue && !keep.has(a.id));
+  const list = stale.map(a => ({ id: a.id, type: a.type, ring: a.ringName, who: a.memberName, date: a.date, nextDue: a.nextDue }));
+  if (!req.body?.apply) return res.json({ dryRun: true, count: list.length, items: list });
+  for (const batch of chunk(stale, 100)) await zoho.updateRecords(M.ACTIVITY, batch.map(a => ({ id: a.id, Next_Due_Date: null })));
+  await audit(req.user.id, 'activities.due_cleanup', { cleared: stale.length }, req.ip);
+  res.json({ cleared: stale.length, items: list });
+}));
+
 /* ═══════════ THINGS REPS ASK TO PUT INTO ZOHO ═══════════
  * Reps can register someone for an event, cancel a registration, or add a
  * lead. None of it reaches the CRM directly: it waits here until the office
@@ -2341,7 +2397,70 @@ r.get('/members/ar', auth.authRequired, wrap(async (req, res) => {
   catch (e) { return res.json({ connected: true, days, error: e.message, members: [] }); }
   if (req.user.role === 'rep') list = list.filter(m => req.user.zoho_owner_id && m.repIds.includes(req.user.zoho_owner_id));
   else if (!req.user.perms || !(req.user.perms.members || req.user.perms.manager)) return res.status(403).json({ error: 'Your account does not have access to members.' });
+  // The follow-up so far (Keturah): every note on the member since their oldest
+  // unpaid invoice, so the rep sees how many times the office called and what was said
+  const notes = await notesFor(list.map(a => a.contactId)).catch(() => []);
+  list = list.map(a => {
+    const since = a.invoices.length ? a.invoices[0].date : null;
+    const mine = notes.filter(n => n.parentId === a.contactId && (!since || String(n.at).slice(0, 10) >= since));
+    return { ...a, followUps: mine.length, followUpCalls: mine.filter(n => n.kind === 'A/R follow-up').length, notes: mine.slice(0, 5) };
+  });
   res.json({ connected: true, days, at: arCache ? new Date(arCache.at).toISOString() : null, members: list });
+}));
+
+/* ═══════════ CONTACT LOG: NOTES ON A MEMBER (Keturah & Mel, 17 Nov) ═══════════
+ * Every contact with a member that isn't a ring call: the office's A/R
+ * follow-ups (Jeanetta, 30-60 days), staff calls and emails, and a rep's
+ * A/R calls once a member passes 60 days. Kept as Notes on the member in Zoho,
+ * so they are in CRM too. The title carries the kind, how, and who:
+ *   "A/R follow-up · Call · Jeanetta Wanner"
+ * Reps see and add notes for members of their own rings, or on their A/R list. */
+const NOTE_KINDS = ['A/R follow-up', 'Staff contact', 'Rep contact'];
+const NOTE_METHODS = ['Call', 'Email', 'Text', 'Voicemail', 'In person', 'Other'];
+async function repMayNote(user, contactId) {
+  if (user.role !== 'rep') return !!(user.perms && (user.perms.members || user.perms.manager));
+  const { ringIds } = await scopeRings(user);
+  if (ringIds.length) {
+    const links = (await Promise.all(chunk(ringIds, 20).map(b => zoho.coql(queries.groupMembersFor(b)).catch(() => [])))).flat();
+    if (links.some(l => l.Members?.id === contactId)) return true;
+  }
+  const ar = arCache ? arCache.list : [];
+  return ar.some(a => a.contactId === contactId && user.zoho_owner_id && a.repIds.includes(user.zoho_owner_id));
+}
+function parseNoteTitle(title) {
+  const p = String(title || '').split(' · ');
+  return NOTE_KINDS.includes(p[0]) ? { kind: p[0], method: p[1] || '', by: p.slice(2).join(' · ') } : { kind: '', method: '', by: '' };
+}
+const zohoNoteOut = n => ({ id: n.id, title: n.Note_Title || '', text: n.Note_Content || '', at: n.Created_Time || null,
+  parentId: n.Parent_Id?.id || null, createdBy: n.Created_By?.name || '', ...parseNoteTitle(n.Note_Title) });
+/** Notes on these members, newest first */
+async function notesFor(contactIds) {
+  const ids = [...new Set(contactIds.filter(Boolean).map(i => String(i).replace(/[^0-9]/g, '')))].filter(Boolean);
+  const rows = (await Promise.all(chunk(ids, 50).map(b => zoho.coqlPaged(
+    `select id, Note_Title, Note_Content, Parent_Id, Created_Time, Created_By from Notes where Parent_Id in (${b.map(i => `'${i}'`).join(',')}) limit 200`
+  ).catch(() => [])))).flat();
+  return rows.map(zohoNoteOut).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+}
+r.get('/members/:id/notes', auth.authRequired, wrap(async (req, res) => {
+  const id = String(req.params.id).replace(/[^0-9]/g, '');
+  if (!(await repMayNote(req.user, id))) return res.status(403).json({ error: 'Not one of your members' });
+  res.json({ kinds: NOTE_KINDS, methods: NOTE_METHODS, notes: await notesFor([id]) });
+}));
+r.post('/members/:id/notes', auth.authRequired, writesAllowed, wrap(async (req, res) => {
+  const id = String(req.params.id).replace(/[^0-9]/g, '');
+  if (!(await repMayNote(req.user, id))) return res.status(403).json({ error: 'Not one of your members' });
+  const b = req.body || {};
+  const text = String(b.text || '').trim().slice(0, 4000);
+  if (!text) return res.status(400).json({ error: 'Write what was said' });
+  const kind = NOTE_KINDS.includes(b.kind) ? b.kind : (req.user.role === 'rep' ? 'Rep contact' : 'Staff contact');
+  const method = NOTE_METHODS.includes(b.method) ? b.method : 'Call';
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') && b.date <= today() ? b.date : today();
+  const title = `${kind} · ${method} · ${String(req.user.name || 'Rep Hub').slice(0, 60)}`.slice(0, 120);
+  const content = `${text}\n\n${date} · ${req.user.name || ''}, Rep Hub`;
+  const out = await zoho.request(`/${M.CONTACT}/${id}/Notes`, { method: 'POST', body: { data: [{ Note_Title: title, Note_Content: content }] } });
+  const noteId = out?.data?.[0]?.details?.id || null;
+  await audit(req.user.id, 'member.note', { contactId: id, kind, method, noteId }, req.ip);
+  res.status(201).json({ id: noteId, kind, method, title });
 }));
 
 /* ═══════════ SELF-REGISTRATION BY QR CODE ═══════════

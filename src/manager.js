@@ -10,7 +10,7 @@
  */
 const zoho = require('./lib/zoho');
 const { q } = require('./db');
-const { queries, fromZoho, today, addDays, daysUntil, M } = require('./domain');
+const { queries, fromZoho, today, addDays, daysUntil, latestByDueKey, M } = require('./domain');
 
 const quarterOf = (d = new Date()) => `${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`;
 const quarterStart = (d = new Date()) => `${d.getFullYear()}-${String(Math.floor(d.getMonth() / 3) * 3 + 1).padStart(2, '0')}-01`;
@@ -44,9 +44,7 @@ async function teamSnapshot() {
     const mine = acts.filter(a => a.repZohoId === rep.id || ids.has(a.ringId));
     const made = mine.filter(a => a.outcome && a.date && a.date <= t);
     // What is due: the newest call per person (or per ring for facilitator calls)
-    const latest = new Map();
-    mine.forEach(a => { const k = a.memberId ? 'm' + a.memberId : 'r' + a.ringId + a.type;
-      const c = latest.get(k); if (!c || String(a.date) > String(c.date)) latest.set(k, a); });
+    const latest = latestByDueKey(mine);
     const due = [...latest.values()].filter(a => a.nextDue);
     const overdue = due.filter(a => daysUntil(a.nextDue) < 0);
     const facLate = overdue.filter(a => /facilitator/i.test(a.type) && daysUntil(a.nextDue) <= -WARN.facOverdueDays);

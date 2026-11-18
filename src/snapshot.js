@@ -10,7 +10,7 @@
  * Links are kept to a minimum: these reps often read mail on filtered devices.
  */
 const zoho = require('./lib/zoho');
-const { queries, fromZoho, today, addDays, daysUntil, M } = require('./domain');
+const { queries, fromZoho, today, addDays, daysUntil, latestByDueKey, M } = require('./domain');
 const { q, setting } = require('./db');
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -59,12 +59,7 @@ async function gather(repId, { calls = null } = {}) {
   // Who is due: the latest activity for each member (or ring and call type) that set a next date,
   // the same rule as the app's call list
   const acts = actRows.map(fromZoho.activity);
-  const latest = new Map();
-  acts.forEach(a => {
-    const k = a.memberId ? 'm:' + a.memberId : 'r:' + (a.ringId || '') + ':' + (a.type || '');
-    const cur = latest.get(k);
-    if (!cur || String(a.date || '') > String(cur.date || '')) latest.set(k, a);
-  });
+  const latest = latestByDueKey(acts);
   const due = [...latest.values()].filter(a => a.nextDue && daysUntil(a.nextDue) <= 7)
     .sort((a, b) => String(a.nextDue).localeCompare(String(b.nextDue)))
     .map(a => {

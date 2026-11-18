@@ -386,7 +386,9 @@ const esc = v => String(v == null ? '' : v).replace(/'/g, '');
 const queries = {
   /** Every active ring, or just one rep's. repId is a CONTACT id. */
   ringsForRep: repId =>
-    `select ${RING_FIELDS} from ${M.RING} where Active = true` +
+    // Oak Grove and Bookshelf groups are not run through Rep Hub (Mel, 17 Nov).
+    // COQL wants brackets once there are more than two conditions.
+    `select ${RING_FIELDS} from ${M.RING} where ((Active = true and Name not like '%Oak Grove%') and Name not like '%Bookshelf%')` +
     (repId ? ` and Regional_Rep = '${esc(repId)}'` : '') +
     ` limit 200`,
 
@@ -483,8 +485,33 @@ const queries = {
     `select ${MEMBER_FIELDS} from ${M.CONTACT} where id = '${esc(id)}' limit 1`,
 };
 
+/**
+ * Which earlier call a new call replaces, when working out what is due.
+ * Facilitator calls belong to the RING: the first call of the cycle was booked
+ * with no person on it, and the rep then logs the real call against the
+ * facilitator. Keying those by person left the booked call "overdue" for ever
+ * (Mel, 17 Nov: called on his screen, still overdue on the rep's). Member calls
+ * belong to the member. Type is compared without case ("Facilitator Call" vs "call").
+ */
+function dueKey(a) {
+  const type = String(a.type || '').toLowerCase();
+  if (/facilitator/.test(type)) return 'f:' + (a.ringId || '');
+  return a.memberId ? 'm:' + a.memberId : 'r:' + (a.ringId || '') + ':' + type;
+}
+
+/** The newest activity per due key: only that one's next date counts */
+function latestByDueKey(acts) {
+  const latest = new Map();
+  acts.forEach(a => {
+    const k = dueKey(a), cur = latest.get(k);
+    const d = String(a.date || ''), cd = cur ? String(cur.date || '') : '';
+    if (!cur || d > cd || (d === cd && String(a.nextDue || '') > String(cur.nextDue || ''))) latest.set(k, a);
+  });
+  return latest;
+}
+
 module.exports = {
-  FREQ_DAYS, MEETING_FREQ_DAYS, addDays, today, daysUntil,
+  FREQ_DAYS, MEETING_FREQ_DAYS, addDays, today, daysUntil, dueKey, latestByDueKey,
   nextDueDate, ringHealth, toZoho, fromZoho, queries,
   RING_FIELDS, MEMBER_FIELDS, M,
 };

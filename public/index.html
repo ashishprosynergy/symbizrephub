@@ -2316,7 +2316,10 @@ function dueItems(repId){
   const latest = new Map();
   S.activities.forEach(a => {
     if(repId && a.repId !== repId) return;
-    const k = a.memberId ? 'm:' + a.memberId : 'r:' + (a.ringId || '') + ':' + (a.type || '');
+    // Facilitator calls belong to the ring (the booked first call has no person
+    // on it; the rep logs the real one against the facilitator). Same rule as dueKey in src/domain.js.
+    const ty = String(a.type || '').toLowerCase();
+    const k = /facilitator/.test(ty) ? 'f:' + (a.ringId || '') : a.memberId ? 'm:' + a.memberId : 'r:' + (a.ringId || '') + ':' + ty;
     const cur = latest.get(k), d = String(a.date || ''), cd = cur ? String(cur.date || '') : '';
     if(!cur || d > cd || (d === cd && String(a.nextDue || '') > String(cur.nextDue || ''))) latest.set(k, a);
   });
@@ -2818,11 +2821,67 @@ function vPeople(){
     <h3 class="sub-h">Members · ${list.length}</h3>${memRows}`;
 }
 
+/* ══════ CONTACT LOG: notes on a member (Keturah & Mel, 17 Nov) ══════
+ * The office's A/R follow-ups and any other contact with a member, kept as
+ * Notes on the member in Zoho; reps see them when a member is handed to them. */
+var memberNotes = {};       // contactId -> { notes, busy, error }
+function loadNotes(id, force){
+  if(!API.live || !id) return;
+  const cur = memberNotes[id];
+  if(cur && (cur.busy || (cur.notes && !force))) return;
+  memberNotes[id] = { ...(cur || {}), busy: true };
+  API.call('/members/' + id + '/notes').then(v => { memberNotes[id] = { notes: v.notes || [] }; })
+    .catch(e => { memberNotes[id] = { notes: (cur && cur.notes) || [], error: e.message }; })
+    .finally(() => { if(memberNotes[id]) memberNotes[id].busy = false; if(ui.memberId === id || ui.view === 'ar') renderContent(); });
+}
+// The note's own footer ("2026-11-18 · Jeanetta Wanner, Rep Hub") is shown as the date line instead
+const noteText = s => String(s || '').replace(/\n\n\d{4}-\d{2}-\d{2} · [^\n]*, Rep Hub$/, '');
+function noteRow(n){
+  return `<div class="row"><div class="row-main">
+    <div class="row-title">${n.kind ? esc(n.kind) + (n.method ? ' · ' + esc(n.method) : '') : esc(n.title || 'Note')}</div>
+    <div class="row-sub">${n.at ? fmt(String(n.at).slice(0, 10)) : ''}${n.by ? ' · ' + esc(n.by) : n.createdBy ? ' · ' + esc(n.createdBy) : ''}</div>
+    <div style="white-space:pre-wrap;font-size:13.5px;margin-top:3px">${esc(noteText(n.text))}</div></div></div>`;
+}
+function notesSection(id){
+  if(!API.live) return '';
+  loadNotes(id);
+  const s = memberNotes[id] || {};
+  return `<div class="section-head" style="margin-top:14px"><h3 class="sub-h" style="margin:0">Notes &amp; contact log${s.notes ? ' · ' + s.notes.length : ''}</h3>
+      <button class="btn sm primary" onclick="openNote('${id}')">Add a note</button></div>
+    ${s.error && !(s.notes || []).length ? `<div class="row-sub">${esc(s.error)}</div>` : !s.notes ? skeleton(2)
+      : s.notes.length ? `<div class="card" style="padding:4px 15px">${s.notes.map(noteRow).join('')}</div>`
+      : '<div class="empty">No notes yet. Calls, emails and A/R follow-ups go here, and show in Zoho too.</div>'}`;
+}
+function openNote(id, kind){
+  const m = member(id), arRow = arData && (arData.members || []).find(a => a.contactId === id);
+  const name = m ? m.name : arRow ? arRow.name : 'this member';
+  const kinds = ['A/R follow-up', 'Staff contact', 'Rep contact'];
+  const k = kind || (arRow ? 'A/R follow-up' : isRep() ? 'Rep contact' : 'Staff contact');
+  openModal(`<h3>Note for ${esc(name)}</h3>
+    <div class="row-sub" style="margin:-4px 0 10px">Saved on the member in Zoho. The rep and the office both see it.</div>
+    <div class="field"><label>What kind</label><select id="nKind">${kinds.map(x => `<option ${x === k ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+    <div class="field"><label>How</label><select id="nMethod">${['Call','Email','Text','Voicemail','In person','Other'].map(x => `<option>${x}</option>`).join('')}</select></div>
+    <div class="field"><label>Date</label><input type="date" id="nDate" value="${TODAY_S}" max="${TODAY_S}"></div>
+    <div class="field"><label>What was said</label><textarea id="nText" rows="5" placeholder="e.g. Spoke with his wife, he'll call back Friday about the invoice"></textarea></div>
+    <div class="m-actions"><button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="saveNote('${id}', this)">Save note</button></div>`);
+}
+async function saveNote(id, btn){
+  const text = (document.getElementById('nText').value || '').trim();
+  if(!text){ toast('Write what was said'); return; }
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try{
+    await API.call('/members/' + id + '/notes', { method: 'POST', body: JSON.stringify({ kind: document.getElementById('nKind').value,
+      method: document.getElementById('nMethod').value, date: document.getElementById('nDate').value, text }) });
+    closeModal(); toast('Note saved');
+    loadNotes(id, true); if(ui.view === 'ar') loadAR(true);
+  }catch(e){ btn.disabled = false; btn.textContent = 'Save note'; toast(e.message || 'Could not save the note'); }
+}
 function vMemberDetail(){
   const m=member(ui.memberId); if(!m) return `<div class="empty">Not found.</div>`;
   const g=ring(m.ringId), mine=m.repId===ui.me;
   const hist=S.activities.filter(a=>a.memberId===m.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
-  const due=S.activities.find(a=>a.memberId===m.id&&a.nextDue);
+  const due=currentDue(m.id);
   const mts=S.meetings.filter(t=>t.ringId===m.ringId);
   // Only meetings where attendance was taken can say whether this member came
   const taken=mts.filter(t=>listOf(t.attended).length+listOf(t.absent).length>0);
@@ -2858,6 +2917,7 @@ function vMemberDetail(){
       <button class="btn primary" onclick='openLog(${JSON.stringify({ringId:m.ringId,who:m.name,type:"Member Call",memberId:m.id})})'>Log a call</button>
       <button class="btn danger" onclick="openExit('${m.id}')">Exit interview</button></div>`:''}
     ${API.live && m.status==='active' ? `<div class="btnrow" style="margin-bottom:8px"><button class="btn" onclick="openHandoff('${m.id}')">Hand off to Member Development</button></div>` : ''}
+    ${notesSection(m.id)}
     <h3 class="sub-h">Conversation history</h3>
     ${hist.map(a=>`<div class="row"><div class="row-main">
       <div class="row-title">${a.type}${a.outcome&&a.outcome!=='Connected'?' — '+a.outcome:''}</div>
@@ -3101,6 +3161,7 @@ function vOfficeDash(){
         const known = (S.membersNoRing || []).length || !loadingDetail;
         return `<div class="stat click" onclick="drill('unaffiliated')" title="Active members who are not in any Growth Ring">
           <div class="n" style="color:var(--accent)">${known ? n : '…'}</div><div class="l">Not in a Growth Ring</div></div>`; })()}
+      ${(typeof canView !== 'function' || canView('insights')) ? (loadRetention(), attritionTile()) : ''}
     </div>
     ${(() => {
       const counts = weeklyCounts(S.activities.filter(a => a.outcome));   // calls made, not merely booked
@@ -3669,7 +3730,7 @@ function loadRetention(force){
     retentionData = v; retentionFresh = true;
     try{ localStorage.setItem('rephub_retention', JSON.stringify(v)); }catch(e){}
   }).catch(e => { if(!retentionData) retentionData = { error: e.message }; })
-    .finally(() => { retentionBusy = false; if(ui.view === 'insights') renderContent(); });
+    .finally(() => { retentionBusy = false; if(ui.view === 'insights' || ui.view === 'dash' || !ui.view) renderContent(); });
 }
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 /* Joined vs left, month by month: two bars a month */
@@ -3684,6 +3745,34 @@ function joinLeftChart(months){
           <rect x="${(x + w*0.52).toFixed(2)}" y="${100-hl}" width="${bw.toFixed(2)}" height="${Math.max(hl, m.left?2:0)}" rx="1" style="fill:var(--rust)"><title>${MONTH_SHORT[m.month-1]}: ${m.left} left</title></rect>`; }).join('')}
     </svg>
     <div class="trend-foot" style="justify-content:space-around">${months.map(m => `<span>${MONTH_SHORT[m.month-1]}</span>`).join('')}</div></div>`;
+}
+/* Attrition per quarter, quarters from 6 Nov (Mel, 17 Nov). Worked out with
+   the retention numbers, from Zoho Memberships. */
+function qLabel(q){ return fmtShort(q.from) + ' – ' + fmtShort(q.to); }
+function attritionCard(R){
+  const qs = (R && R.quarters) || [];
+  if(!qs.length) return '';
+  return `<div class="card" style="padding:14px 16px;margin-bottom:14px" id="attrition">
+    <div class="trend-t" style="margin-bottom:8px">Attrition by quarter <span class="row-sub">· quarters start 6 Nov, 6 Feb, 6 May, 6 Aug</span></div>
+    ${qs.slice().reverse().map(q => `<details style="border-top:1px solid var(--line);padding:8px 0">
+      <summary style="cursor:pointer;display:flex;justify-content:space-between;gap:10px;list-style:none">
+        <span><strong>${esc(qLabel(q))}</strong>${q.current ? ' <span class="tag later">so far</span>' : ''}</span>
+        <span><strong style="color:var(--rust)">${q.rate == null ? '—' : q.rate + '%'}</strong>
+          <span class="row-sub"> · ${q.lost} left of ${q.base}</span></span></summary>
+      ${q.members.length ? q.members.map(m => { const here = S.members.some(x => x.id === m.id);
+        return `<div class="row ${here?'clicky':''}" ${here?`onclick="openMember('${m.id}')"`:''} style="padding:6px 0">
+          <div class="row-main"><div class="row-title">${esc(m.name)}</div>
+          <div class="row-sub">Ended ${fmt(m.ended)}${m.tier?' · '+esc(m.tier):''}${m.reason?' · '+esc(m.reason):''}</div></div></div>`; }).join('')
+        : '<div class="row-sub" style="padding:6px 0">Nobody has left this quarter.</div>'}
+    </details>`).join('')}
+    <div class="row-sub" style="margin-top:6px">Attrition = members whose last membership ended in the quarter, out of everyone whose membership was running on its first day.</div></div>`;
+}
+/* Small tile for the Overview: this quarter's attrition, once retention has loaded */
+function attritionTile(){
+  const q = retentionData && retentionData.quarters && retentionData.quarters[retentionData.quarters.length - 1];
+  if(!q) return '';
+  return `<div class="stat click" onclick="setView('insights');setTimeout(()=>{const e=document.getElementById('attrition');if(e)e.scrollIntoView({behavior:'smooth'})},300)">
+    <div class="n" style="color:var(--rust)">${q.rate == null ? '—' : q.rate + '%'}</div><div class="l">Attrition this quarter<br><span style="font-size:10px;opacity:.7">${q.lost} left since ${esc(fmtShort(q.from))}</span></div></div>`;
 }
 function vInsights(){
   const exits=S.activities.filter(a=>a.type==='Exit Interview');
@@ -3702,6 +3791,7 @@ function vInsights(){
       <div class="stat"><div class="n">${R.retention == null ? '—' : R.retention + '%'}</div><div class="l">Retained since 1 Jan<br><span style="font-size:10px;opacity:.7">${R.retained} of ${R.base}</span></div></div>
       <div class="stat"><div class="n">${R.activeMemberships}</div><div class="l">Current memberships</div></div>
     </div>
+    ${attritionCard(R)}
     <div class="dash-pair">${joinLeftChart(R.months)}
       ${donut('Current members by level', Object.entries(R.tiers).sort((a,b)=>b[1]-a[1]).map(([t,n]) =>
         ({ label: t, value: n, color: TIER_COLOURS[t] || '#8A9284' })), R.activeMemberships, 'members')}</div>
@@ -5385,11 +5475,11 @@ function printQRPoster(title, link){
 /* ══════════════ A/R OVER 60 DAYS (Mel) ══════════════
  * Members with an invoice more than 60 days old (from its invoice date), from Zoho Books. The
  * rep calls to find out where the membership stands. Reps see their own. */
-var arData = null, arBusy = false;
+var arData = null, arBusy = false, arDays = 60;
 function loadAR(force){
   if(arBusy || (arData && !force) || !API.live || !(isRep() || can('members') || can('manager'))) return;
   arBusy = true;
-  API.call('/members/ar' + (force ? '?fresh=1' : '')).then(v => { arData = v; }).catch(e => { arData = { error: e.message, members: [] }; })
+  API.call('/members/ar?days=' + arDays + (force ? '&fresh=1' : '')).then(v => { arData = v; }).catch(e => { arData = { error: e.message, members: [] }; })
     .finally(() => { arBusy = false; if(['ar','today','dash'].includes(ui.view)) renderContent(); });
 }
 const arMember = a => a.contactId ? member(a.contactId) : null;
@@ -5403,6 +5493,7 @@ function arCard(){
   if(!API.live || !(isRep() || can('members') || can('manager'))) return '';
   loadAR();
   if(!arData || arData.error || arData.connected === false || !Array.isArray(arData.members) || !arMembers().length) return '';
+  if(arDays !== 60) return '';
   const list = arMembers(), total = list.reduce((s, a) => s + a.balance, 0);
   return `<div class="card ar-card clicky" onclick="drill('ar')">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
@@ -5412,8 +5503,9 @@ function arCard(){
     <div class="ar-chips">${list.slice(0, 4).map(a => `<span class="tag overdue">${esc(splitRepName(a.name).name)} · ${a.days}d</span>`).join('')}${list.length > 4 ? `<span class="row-sub">and ${list.length - 4} more</span>` : ''}</div></div>`;
 }
 function vAR(){
-  const head = `<div class="section-head"><div><h2>A/R over 60 days</h2>
-      <div class="sub">${isRep() ? 'Your members' : 'Members'} with an unpaid invoice more than 60 days old (from the invoice date) in Zoho Books. ${isRep() ? 'Reach out to find out where their membership stands, then log the call.' : 'Each rep reaches out to find out where the membership stands.'}</div></div>
+  const head = `<div class="section-head"><div><h2>A/R over ${arDays} days</h2>
+      ${!isRep() ? `<div class="chips" style="margin:6px 0">${[30, 60].map(d => `<button class="chip ${arDays === d ? 'on' : ''}" onclick="arDays=${d};arData=null;loadAR(true);renderContent()">${d === 30 ? '30+ days (office follow-up)' : '60+ days (rep calls)'}</button>`).join('')}</div>` : ''}
+      <div class="sub">${isRep() ? 'Your members' : 'Members'} with an unpaid invoice more than ${arDays} days old (from the invoice date) in Zoho Books. ${isRep() ? 'Reach out to find out where their membership stands, then log the call.' : 'Each rep reaches out to find out where the membership stands.'}</div></div>
     ${arData && !arData.error ? `<button class="btn sm" onclick="loadAR(true)" ${arBusy ? 'disabled' : ''}>${arBusy ? 'Refreshing…' : 'Refresh'}</button>` : ''}</div>`;
   if(!API.live) return head + `<div class="empty">This needs the live server.</div>`;
   loadAR();
@@ -5422,7 +5514,7 @@ function vAR(){
     The list comes from unpaid invoices in Zoho Books. ${can('books') ? 'Connect it in Access & security → Zoho Books.' : 'Ask the office to connect it in Settings.'}</div>`;
   if(arData.error) return head + `<div class="callout rust"><strong>Could not read Zoho Books</strong>${esc(arData.error)}</div>`;
   const list = arMembers();
-  if(!list.length) return head + `<div class="empty">Nobody is more than 60 days behind. 🎉</div>`;
+  if(!list.length) return head + `<div class="empty">Nobody is more than ${arDays} days behind. 🎉</div>`;
   const row = a => { const m = arMember(a), phone = m ? (m.phone || m.mobile) : '';
     // Has anyone spoken to them since the invoice turned 60 days old? So the rep sees
     // who is still to call, and the office sees who has been followed up.
@@ -5432,11 +5524,14 @@ function vAR(){
     const contact = !a.contactId ? `<div class="row-sub" style="color:var(--ink-muted)">Not linked to a member record — the name in Zoho Books doesn't match a member in a ring.</div>`
       : reached ? `<div class="row-sub"><span class="tag ok">Contacted ${fmtShort(lc.date)}</span> ${esc(lc.outcome || '')}${lc.repId && !isRep() ? ' · ' + esc(splitRepName(pname(lc.repId)).name) : ''}</div>`
       : `<div class="row-sub"><span class="tag overdue">Not contacted yet</span>${lc ? ' last call ' + fmtShort(lc.date) + ', before it went overdue' : ''}</div>`;
+    const fu = a.contactId ? `<div class="row-sub">${a.followUps ? `<span class="tag later">${a.followUpCalls ? a.followUpCalls + ' office follow-up' + (a.followUpCalls === 1 ? '' : 's') : a.followUps + ' note' + (a.followUps === 1 ? '' : 's')}</span> ` : '<span class="row-sub">No follow-up notes yet</span>'}
+        ${(a.notes || [])[0] ? `last: ${fmtShort(String(a.notes[0].at).slice(0, 10))}${a.notes[0].by ? ' · ' + esc(a.notes[0].by) : ''} — “${esc(noteText(a.notes[0].text).slice(0, 140))}${noteText(a.notes[0].text).length > 140 ? '…' : ''}”` : ''}</div>` : '';
     return `<div class="row ar-row"><div class="row-main">
         <div class="row-title">${esc(a.name)} ${a.days >= 120 ? `<span class="tag overdue">${a.days} days</span>` : `<span class="tag soon">${a.days} days</span>`}</div>
         <div class="row-sub">${money(a.balance)} unpaid · ${a.invoices.length} invoice${a.invoices.length === 1 ? '' : 's'} (${a.invoices.map(i => esc(i.number) + ' dated ' + fmtShort(i.date)).join(', ')})${a.rings.length ? ' · ring ' + esc(a.rings.join(', ')) : ' · not in a ring'}</div>
-        ${contact}</div>
+        ${contact}${fu}</div>
       <div class="row-actions">
+        ${a.contactId ? `<button class="btn sm" onclick="openNote('${a.contactId}')">Add note</button>` : ''}
         ${phone ? `<a class="btn sm" href="${telHref(phone)}">Call</a>` : ''}
         ${m ? `<button class="btn sm primary" onclick='openLog(${JSON.stringify({ ringId: m.ringId, who: m.name, type: "Member Call", memberId: m.id })})'>Log a call</button>
           <button class="btn sm" onclick="openMember('${m.id}')">Open</button>` : ''}</div></div>`; };

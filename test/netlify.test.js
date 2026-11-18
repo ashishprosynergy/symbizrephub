@@ -2494,6 +2494,18 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.ok(notes.some(n => /back room/.test(n.note)), 'and the earlier rep\'s note is still there for the next one');
   });
 
+  test('A/R notes: the office logs a follow-up on a member in Zoho; a rep cannot note someone outside their rings (Keturah, 17 Nov)', async () => {
+    store.notes = [];
+    const add = await invoke('POST', '/members/7246333000999001/notes', { token: office, body: { kind: 'A/R follow-up', method: 'Call', text: 'Left a message about invoice 1234' } });
+    assert.equal(add.statusCode, 201, add.body);
+    const n = store.notes[store.notes.length - 1];
+    assert.equal(n.module, 'Contacts'); assert.equal(n.id, '7246333000999001');
+    assert.ok(n.Note_Title.startsWith('A/R follow-up · Call · '), n.Note_Title);
+    assert.ok(n.Note_Content.startsWith('Left a message about invoice 1234') && n.Note_Content.endsWith('Rep Hub'), n.Note_Content);
+    assert.equal((await invoke('POST', '/members/7246333000999001/notes', { token: office, body: { text: '' } })).statusCode, 400, 'a note needs words');
+    assert.equal((await invoke('POST', '/members/7246333000999002/notes', { token: rep, body: { text: 'x' } })).statusCode, 403, 'not their member');
+  });
+
   test('a rep who signed up with a second email is merged into one account, keeping their hours', async () => {
     const auth = require('../src/auth');
     await db.q.insertUser({ id: 'gm_zoho', email: 'glenden@zoho-email.test', name: 'Glenden Martin #0627', phone: null, role: 'rep',
@@ -2647,5 +2659,24 @@ describe('registrations sent to Zoho', () => {
     assert.equal(none.Guests, undefined); assert.equal(none.Number_of_Guests, undefined); assert.equal(none.Guest_Email, undefined);
     // Older Rep Hub registrations kept the registrant's email in Guest_Email
     assert.equal(fromZoho.registration({ id: 'R', Guest_Email: 'old@example.test', Bringing_Guest: 'No' }).email, 'old@example.test');
+  });
+});
+
+describe('Mel, 17 Nov: calls, groups and attrition', () => {
+  const { latestByDueKey, queries } = require('../src/domain');
+  test('a logged facilitator call replaces the booked first call, so the rep no longer sees it overdue', () => {
+    const booked = { id: 'B', type: 'Facilitator Call', ringId: 'R29', memberId: null, date: '2026-10-19', nextDue: '2026-10-20' };
+    const logged = { id: 'L', type: 'Facilitator Call', ringId: 'R29', memberId: 'DAVID', date: '2026-10-30', outcome: 'Connected', nextDue: '2027-01-28' };
+    const due = [...latestByDueKey([booked, logged]).values()].filter(a => a.nextDue);
+    assert.deepEqual(due.map(a => a.id), ['L']);
+    // a member call stays its own item
+    const mem = { id: 'M', type: 'Member Call', ringId: 'R29', memberId: 'DAVID', date: '2026-10-01', nextDue: '2026-12-01' };
+    assert.deepEqual([...latestByDueKey([booked, logged, mem]).values()].map(a => a.id).sort(), ['L', 'M']);
+  });
+  test('Oak Grove and Bookshelf groups are left out of the rings Rep Hub loads', () => {
+    const qq = queries.ringsForRep(null);
+    assert.match(qq, /Name not like '%Oak Grove%'/);
+    assert.match(qq, /Name not like '%Bookshelf%'/);
+    assert.match(queries.ringsForRep('C1'), /\) and Regional_Rep = 'C1'/, 'brackets kept so COQL accepts more than two conditions');
   });
 });
