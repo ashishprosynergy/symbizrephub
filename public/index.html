@@ -11349,8 +11349,10 @@ function printBlankClaimSheet(){
     <table><thead><tr><th style="width:9%">Date</th><th style="width:13%">From</th><th style="width:13%">To</th><th style="width:7%">Round trip?</th>
       <th style="width:7%">Miles</th><th style="width:14%">Driver's name (if paid a driver)</th><th style="width:9%">Amount paid to driver</th><th>What was it for</th></tr></thead>
       <tbody>${rows}</tbody></table>
-    <div class="note">Attach the driver's bill if you have one. Send this sheet to the office${s.accountingEmail ? ` (${esc(s.accountingEmail)})` : ''}, mail it, or photograph it and email it in.
+    <div class="note">Attach the driver's bill if you have one. Send this sheet to the office${s.accountingEmail ? ` (${esc(s.accountingEmail)})` : ''}, mail it, fax it, or photograph it and email it in.
       Signed: ______________________ &nbsp; Date: __________</div>
+    <div class="note" style="border-top:1px solid #999;padding-top:8px;margin-top:16px">
+      <strong>Symbiz Network</strong> · 6200 Lattasburg Rd., Wooster, OH 44691 · Fax 330-969-6510</div>
     <script>window.onload=()=>window.print()<\/script></body></html>`);
   w.document.close();
 }
