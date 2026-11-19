@@ -4968,7 +4968,7 @@ function accessSectionBody(sec){
         Zoho Calendar: the calendar's ⋮ menu → Share → <strong>Private iCal URL</strong>. One link per line for more than one calendar.
         The Zoom or Zoho Meeting link is taken from each event, so no Zoom sign-in is needed.</div>
       <div class="field" style="margin-top:14px"><label>Show events whose title has any of these words</label>
-        <input value="${esc(s.calendarKeywords ?? 'L10, Facilitator, Forum')}" onchange="setSetting('calendarKeywords', this.value.trim()).then(checkSymbizCalendar)"></div>
+        <input value="${esc(s.calendarKeywords ?? 'L10, Facilitator, Forum, Rep Meeting')}" onchange="setSetting('calendarKeywords', this.value.trim()).then(checkSymbizCalendar)"></div>
       <div class="row-sub">Separate with commas. Leave empty to show every meeting.</div>
       <div id="calCheck" style="margin-top:12px"></div>
     </div>`;

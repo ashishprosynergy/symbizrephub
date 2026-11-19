@@ -1283,7 +1283,7 @@ async function symbizCalls(fromDay, toDay) {
   if (!urls.length && !fromZohoCrm) return { configured: false, items: [] };
   const from = fromDay || today(), to = toDay || addDays(from, 45);
   const fromMs = Date.parse(from + 'T00:00:00Z') - 864e5, toMs = Math.min(Date.parse(to + 'T23:59:59Z') + 864e5, fromMs + 200 * 864e5);
-  const keywords = String(await setting('calendarKeywords', 'L10, Facilitator, Forum')).split(',').map(s => s.trim()).filter(Boolean);
+  const keywords = String(await setting('calendarKeywords', 'L10, Facilitator, Forum, Rep Meeting')).split(',').map(s => s.trim()).filter(Boolean);
   const wanted = t => !keywords.length || keywords.some(k => t.toLowerCase().includes(k.toLowerCase()));
   const texts = [], errors = [];
   let crm = [];
@@ -4069,7 +4069,7 @@ const OFFICE_SETTINGS = {
   booksAuto: 'on', booksPayee: 'rep', booksAccount: books.DEFAULT_FALLBACK, booksAccountMap: '{}',
   supportName: 'Ashish Raj', supportPhone: '540-212-9403',
   registrationApprovers: '', exitInterviewNotify: '', exitInterviewFolder: '', emailLinks: 'app',
-  calendarFeeds: '', calendarKeywords: 'L10, Facilitator, Forum', calendarZoho: 'on', mileageRate: '', zohoRecordOwner: '',
+  calendarFeeds: '', calendarKeywords: 'L10, Facilitator, Forum, Rep Meeting', calendarZoho: 'on', mileageRate: '', zohoRecordOwner: '',
 };
 
 /** Who to ring for help — shown on the sign-in screen, so no sign-in needed. */

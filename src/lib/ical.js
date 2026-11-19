@@ -178,6 +178,7 @@ function kindOf(title) {
   if (/\bL\s?-?\s?10\b|level\s*10/i.test(title)) return 'L10';
   if (/facilitator/i.test(title)) return 'Facilitator call';
   if (/forum/i.test(title)) return 'Forum call';
+  if (/\brep\s*meeting/i.test(title)) return 'Rep meeting';
   return 'Other';
 }
 
