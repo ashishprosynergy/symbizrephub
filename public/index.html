@@ -2786,10 +2786,11 @@ function vPeople(){
   let list=mem.filter(m=>!q||m.name.toLowerCase().includes(q)||m.business.toLowerCase().includes(q));
   // The Members screen shares ui.filter with its own chips (active,
   // discontinued). Carried over here they matched no chip and hid people.
-  if(!['all','overdue','never','renewing'].includes(ui.filter)) ui.filter='all';
+  if(!['all','overdue','never','renewing','noconf'].includes(ui.filter)) ui.filter='all';
   if(ui.filter==='overdue') list=list.filter(m=>{const a=currentDue(m.id);return a&&days(a.nextDue)<0;});
   if(ui.filter==='never') list=list.filter(m=>!lastContact(m.id));
   if(ui.filter==='renewing') list=list.filter(m=>m.renews&&days(m.renews)<=60&&days(m.renews)>=0);
+  if(ui.filter==='noconf') list=list.filter(m=>!m.confAgreement);
   if(ui.filter!=='all'&&ui.filter!=='never') list=list.filter(m=>m.status==='active');
 
   const memRows=list.map(m=>{
@@ -2815,8 +2816,8 @@ function vPeople(){
   return `<div class="section-head"><div><h2>My people</h2><div class="sub">Members and facilitators across your rings.</div></div>
     ${API.live?`<button class="btn primary" onclick="openAddLead()">Add a lead</button>`:''}</div>
     <input class="srch" id="peopleSearch" placeholder="Search by name or business" value="${esc(ui.q)}" oninput="onSearchInput(this.value)">
-    <div class="chips">${['all','overdue','never','renewing'].map(f=>
-      `<button class="chip ${ui.filter===f?'on':''}" onclick="ui.filter='${f}';renderContent()">${f==='all'?'Everyone':f==='never'?'Never contacted':f==='renewing'?'Renewing soon':'Overdue'}</button>`).join('')}</div>
+    <div class="chips">${['all','overdue','never','renewing','noconf'].map(f=>
+      `<button class="chip ${ui.filter===f?'on':''}" onclick="ui.filter='${f}';renderContent()">${f==='all'?'Everyone':f==='never'?'Never contacted':f==='renewing'?'Renewing soon':f==='noconf'?'No conf. agreement':'Overdue'}</button>`).join('')}</div>
     <h3 class="sub-h">Facilitators</h3>${facRows}
     <h3 class="sub-h">Members · ${list.length}</h3>${memRows}`;
 }
@@ -2907,6 +2908,7 @@ function vMemberDetail(){
       ${m.lifeStage?`<div class="kv"><span class="k">Life stage</span><span>${esc(m.lifeStage)}${LIFE_STAGES[m.lifeStage]?` — ${esc(LIFE_STAGES[m.lifeStage].hint)}`:''}</span></div>`:''}
       ${m.tier||m.memberType?`<div class="kv"><span class="k">Membership level</span><span>${m.tier?`<span class="tag tier tier-${esc(m.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(m.tier)}</span>`:esc(m.memberType)}</span></div>`:''}
       <div class="kv"><span class="k">Member since</span><span>${fmt(m.memberSince||m.joined)}</span></div>
+      <div class="kv"><span class="k">Confidentiality agreement</span><span>${m.confAgreement?`<span class="tag ok">On file</span>${m.confDate?' · signed '+fmt(m.confDate):''}`:'<span class="tag overdue">Not on file</span>'}</span></div>
       <div class="kv"><span class="k">Next call due</span><span>${due?fmt(due.nextDue):'not scheduled'}</span></div>
       ${att!==null?`<div class="kv"><span class="k">Meeting attendance</span><span>${att}%</span></div>`:''}
       <div class="kv"><span class="k">Rep</span><span>${pname(m.repId)}</span></div>
@@ -3461,9 +3463,17 @@ const REPORTS={
   'member-directory':{
     name:'Member directory',
     desc:'All members with ring, rep, join and renewal dates.',
-    cols:['Member','Business','Ring','Rep','Phone','Joined','Renews','Status','Last contact'],
+    cols:['Member','Business','Ring','Rep','Phone','Joined','Renews','Status','Conf. agreement','Last contact'],
     rows:()=>S.members.map(m=>{const lc=lastContact(m.id);
-      return [m.name,m.business,ring(m.ringId)?ring(m.ringId).name:'',pname(m.repId),m.phone,m.joined,m.renews||'',m.status,lc?lc.date:'never'];})
+      return [m.name,m.business,ring(m.ringId)?ring(m.ringId).name:'',pname(m.repId),m.phone,m.joined,m.renews||'',m.status,m.confAgreement?(m.confDate||'On file'):'Not on file',lc?lc.date:'never'];})
+  },
+  'conf-missing':{
+    name:'Missing confidentiality agreements',
+    desc:'Active members with no confidentiality agreement on file in the CRM, by rep.',
+    cols:['Rep','Member','Business','Ring','Email','Phone'],
+    rows:()=>S.members.filter(m=>m.status==='active'&&!m.confAgreement)
+      .map(m=>[pname(m.repId)||'No rep',m.name,m.business,ring(m.ringId)?ring(m.ringId).name:'',m.email,m.phone||m.mobile])
+      .sort((a,b)=>String(a[0]).localeCompare(b[0])||String(a[1]).localeCompare(b[1]))
   },
   'renewals':{
     name:'Upcoming renewals',
@@ -3550,11 +3560,12 @@ function exportCoverage(){ ui.report='rep-activity'; exportReport(); }
 function vMembersAll(){
   const q=ui.q.toLowerCase();
   let list=S.members.filter(m=>!q||m.name.toLowerCase().includes(q)||(m.business||'').toLowerCase().includes(q));
-  if(!['all','active','joined','renewing','discontinued'].includes(ui.filter)) ui.filter='all';
+  if(!['all','active','joined','renewing','discontinued','noconf'].includes(ui.filter)) ui.filter='all';
   const yrStart = TODAY_S.slice(0,4) + '-01-01';
   if(ui.filter==='active') list=list.filter(m=>m.status==='active');
   if(ui.filter==='joined') list=list.filter(m=>m.joined && m.joined >= yrStart);
   if(ui.filter==='discontinued') list=list.filter(m=>m.status==='discontinued');
+  if(ui.filter==='noconf') list=list.filter(m=>m.status==='active'&&!m.confAgreement);
   if(ui.filter==='renewing') list=list.filter(m=>m.renews&&days(m.renews)<=90&&days(m.renews)>=0&&m.status==='active');
 
   const facs = S.facilitators.filter(f=>!q||f.name.toLowerCase().includes(q));
@@ -3562,11 +3573,11 @@ function vMembersAll(){
   const shown = list.slice(0, pageOf('members'));
 
   return `<div class="section-head"><div><h2>Members</h2><div class="sub">Everyone in the network, across all reps.</div></div>
-    <button class="btn" onclick="ui.report='member-directory';exportReport()">Export CSV</button></div>
+    <button class="btn" onclick="ui.report=ui.filter==='noconf'?'conf-missing':'member-directory';exportReport()">Export CSV</button></div>
     <input class="srch" id="memberSearch" placeholder="Search members" value="${esc(ui.q)}"
            oninput="onSearchInput(this.value)">
-    <div class="chips">${['all','active','joined','renewing','discontinued'].map(f=>
-      `<button class="chip ${ui.filter===f?'on':''}" onclick="ui.filter='${f}';resetPaging();renderContent()">${f==='joined' ? 'Joined in ' + TODAY_S.slice(0,4) : f==='discontinued' ? 'Inactive' : f[0].toUpperCase()+f.slice(1)}</button>`).join('')}</div>
+    <div class="chips">${['all','active','joined','renewing','discontinued','noconf'].map(f=>
+      `<button class="chip ${ui.filter===f?'on':''}" onclick="ui.filter='${f}';resetPaging();renderContent()">${f==='joined' ? 'Joined in ' + TODAY_S.slice(0,4) : f==='discontinued' ? 'Inactive' : f==='noconf' ? 'No conf. agreement' : f[0].toUpperCase()+f.slice(1)}</button>`).join('')}</div>
 
     <!-- Facilitators folded away (open while searching), so the members come first -->
     <details class="fold" ${q ? 'open' : ''}><summary class="sub-h" style="display:block;margin:18px 0 6px;font-family:var(--serif);font-size:15px">Facilitators · ${facs.length}</summary>
@@ -3581,7 +3592,7 @@ function vMembersAll(){
     ${shown.map(m=>{const lc=lastContact(m.id);return `<div class="row clicky" onclick="openMember('${m.id}')">
       <div class="av">${initials(m.name)}</div>
       <div class="row-main"><div class="row-title">${esc(m.name)}${m.tier?` <span class="tag tier tier-${esc(m.tier.toLowerCase().replace(/\s+/g,'-'))}">${esc(m.tier)}</span>`:''}${m.status!=='active'?` <span class="tag later">${m.status}</span>`:''}</div>
-      <div class="row-sub">${esc(m.business||'—')}${m.ringNames&&m.ringNames.length?' · '+esc(m.ringNames[0]):''} · last spoke ${lc?fmt(lc.date):'never'}</div></div>
+      <div class="row-sub">${esc(m.business||'—')}${m.ringNames&&m.ringNames.length?' · '+esc(m.ringNames[0]):''}${ui.filter==='noconf'?' · rep '+esc(pname(m.repId)||'none'):''} · last spoke ${lc?fmt(lc.date):'never'}</div></div>
       ${m.renews&&days(m.renews)<=90&&days(m.renews)>=0?`<span class="tag soon">renews ${fmtShort(m.renews)}</span>`:''}</div>`;}).join('')
       || (q ? `<div class="empty">Nobody matches that.</div>` : emptyState('members'))}
     ${moreButton('members', shown.length, list.length)}`;
@@ -3765,7 +3776,7 @@ function attritionCard(R){
           <div class="row-sub">Ended ${fmt(m.ended)}${m.tier?' · '+esc(m.tier):''}${m.reason?' · '+esc(m.reason):''}</div></div></div>`; }).join('')
         : '<div class="row-sub" style="padding:6px 0">Nobody has left this quarter.</div>'}
     </details>`).join('')}
-    <div class="row-sub" style="margin-top:6px">Attrition = members whose last membership ended in the quarter, out of everyone whose membership was running on its first day.</div></div>`;
+    <div class="row-sub" style="margin-top:6px">Attrition = members whose last membership was deactivated (Membership Deactivated Date) in the quarter, out of everyone whose membership was running on its first day.</div></div>`;
 }
 /* Small tile for the Overview: this quarter's attrition, once retention has loaded */
 function attritionTile(){
@@ -3797,7 +3808,7 @@ function vInsights(){
         ({ label: t, value: n, color: TIER_COLOURS[t] || '#8A9284' })), R.activeMemberships, 'members')}</div>
     <div class="callout"><strong>Where these numbers come from</strong>
       All from Zoho. <em>Joined</em> is the paid membership start date on the member.
-      <em>Left</em> is a member with no current membership whose last one ended (Membership End Date) this year.
+      <em>Left</em> is a member with no current membership whose last one ended (Membership Deactivated Date) this year.
       <em>Retained</em> is, of everyone whose membership was running on 1 January, how many still have one.
       ${R.leftNoDate ? `<br><strong style="display:inline">${R.leftNoDate} inactive membership${R.leftNoDate===1?' has':'s have'} no end date</strong> in Zoho, so ${R.leftNoDate===1?'it is':'they are'} not counted in a month — filling those in makes Left exact.` : ''}</div>
     <h3 class="sub-h" id="leftList">Who left in ${R.year} · ${R.left}</h3>
@@ -9126,6 +9137,8 @@ const adapt = {
       // The membership level (Seedling, Sapling, Mighty Oak, Bookshelf), from Memberships
       tier: m.tier || '',
       onlineMember: !!m.onlineMember,
+      confAgreement: !!m.confAgreement,
+      confDate: m.confDate || null,
       address: m.address || '',
       city: m.city || '',
       memberSince: m.memberSince || null,

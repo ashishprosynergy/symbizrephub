@@ -289,6 +289,9 @@ const fromZoho = {
     lifeStage: z.Life_Stage || '',
     memberType: z.Contact_Type || '',
     onlineMember: z.Online_Member === 'Yes',
+    // Keturah 18 Nov: which members have a signed confidentiality agreement on file
+    confAgreement: z.Confidentiality_Agreement === true || !!z.Confidentiality_Agreement_Date,
+    confDate: z.Confidentiality_Agreement_Date || null,
     street: z.Mailing_Street || '',
     city: z.Mailing_City || '',
     zip: z.Mailing_Zip || '',
@@ -379,7 +382,7 @@ const RING_FIELDS = `id, Name, Facilitator, Regional_Rep, Region_Lookup, of_Memb
 const MEMBER_FIELDS = `id, Full_Name, Member_Id, Email, Phone, Mobile, Phone_2, Account_Name,
   Mailing_State, Mailing_Street, Mailing_City, Mailing_Zip, Is_Facilitator, Status, Active,
   Paid_Membership_StartDate, Member_Since_Date, Days_without_Group, Life_Stage, Contact_Type,
-  Online_Member`;
+  Online_Member, Confidentiality_Agreement, Confidentiality_Agreement_Date`;
 
 const esc = v => String(v == null ? '' : v).replace(/'/g, '');
 
