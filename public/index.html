@@ -8738,7 +8738,9 @@ async function doTwoStep(e){
   e.preventDefault();
   const f = e.target.elements;
   const btn = document.getElementById('loginBtn'), err = document.getElementById('loginErr');
-  if(btn.disabled) return;
+  // No "already disabled? stop" check here: the document-wide submit guard
+  // disables this button before this handler runs, so that check made Verify
+  // do nothing at all. The guard itself already stops a double submit.
   btn.disabled = true; btn.textContent = 'Checking…';
   try{
     const out = await API.loginCode(ui.twoStep.challenge, f.namedItem('code').value, f.namedItem('trust').checked);
