@@ -5673,11 +5673,26 @@ function printQRPoster(title, link){
  * Members with an invoice more than 60 days old (from its invoice date), from Zoho Books. The
  * rep calls to find out where the membership stands. Reps see their own. */
 var arData = null, arBusy = false, arDays = 60;
-function loadAR(force){
+const arByDays = {};   // both lists kept, so 30+ ↔ 60+ switches at once
+/* force: fetch again (after a note, to show it); hard: also rebuild from
+   Books and Zoho (the Refresh button) */
+function loadAR(force, hard){
   if(arBusy || (arData && !force) || !API.live || !(isRep() || can('members') || can('manager'))) return;
   arBusy = true;
-  API.call('/members/ar?days=' + arDays + (force ? '&fresh=1' : '')).then(v => { arData = v; }).catch(e => { arData = { error: e.message, members: [] }; })
-    .finally(() => { arBusy = false; if(['ar','today','dash'].includes(ui.view)) renderContent(); });
+  const days = arDays;
+  API.call('/members/ar?days=' + days + (hard ? '&fresh=1' : '')).then(v => { arByDays[days] = v; if(hard) Object.keys(arByDays).forEach(d => { if(+d !== days) delete arByDays[d]; }); })
+    .catch(e => { arByDays[days] = { error: e.message, members: [] }; })
+    .finally(() => { arBusy = false; if(arDays === days) arData = arByDays[days];
+      if(['ar','today','dash'].includes(ui.view)) renderContent();
+      // The office switches between the two lists: have the other one ready
+      const other = days === 60 ? 30 : 60;
+      if(!isRep() && !arByDays[other] && ui.view === 'ar') API.call('/members/ar?days=' + other).then(v => { arByDays[other] = v; }).catch(() => {});
+    });
+}
+function arSwitch(d){
+  arDays = d; arData = arByDays[d] || null;
+  if(!arData) loadAR();
+  renderContent();
 }
 const arMember = a => a.contactId ? member(a.contactId) : null;
 /* The list for whoever is looking: in a rep's view from an office login the
@@ -5701,9 +5716,9 @@ function arCard(){
 }
 function vAR(){
   const head = `<div class="section-head"><div><h2>A/R over ${arDays} days</h2>
-      ${!isRep() ? `<div class="chips" style="margin:6px 0">${[30, 60].map(d => `<button class="chip ${arDays === d ? 'on' : ''}" onclick="arDays=${d};arData=null;loadAR(true);renderContent()">${d === 30 ? '30+ days (office follow-up)' : '60+ days (rep calls)'}</button>`).join('')}</div>` : ''}
+      ${!isRep() ? `<div class="chips" style="margin:6px 0">${[30, 60].map(d => `<button class="chip ${arDays === d ? 'on' : ''}" onclick="arSwitch(${d})">${d === 30 ? '30+ days (office follow-up)' : '60+ days (rep calls)'}</button>`).join('')}</div>` : ''}
       <div class="sub">${isRep() ? 'Your members' : 'Members'} with an unpaid invoice more than ${arDays} days old (from the invoice date) in Zoho Books. ${isRep() ? 'Reach out to find out where their membership stands, then log the call.' : 'Each rep reaches out to find out where the membership stands.'}</div></div>
-    ${arData && !arData.error ? `<button class="btn sm" onclick="loadAR(true)" ${arBusy ? 'disabled' : ''}>${arBusy ? 'Refreshing…' : 'Refresh'}</button>` : ''}</div>`;
+    ${arData && !arData.error ? `<button class="btn sm" onclick="loadAR(true, true)" ${arBusy ? 'disabled' : ''}>${arBusy ? 'Refreshing…' : 'Refresh'}</button>` : ''}</div>`;
   if(!API.live) return head + `<div class="empty">This needs the live server.</div>`;
   loadAR();
   if(!arData) return head + skeleton(5);

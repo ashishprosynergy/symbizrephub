@@ -2126,11 +2126,31 @@ r.put('/summits/:id/notes', ...summitGuard, wrap(async (req, res) => {
  *   retention  = of the members whose membership was running on 1 January,
  *                the share still a member now
  */
-let retentionCache = null;
+/* Answers for the slow screens, kept in this copy's memory and in the
+   database for the other copies. Netlify starts fresh copies of the server
+   often; each used to rebuild these from Zoho (several seconds) with an empty
+   memory. Rows named keep:… are not wiped by Rep Hub's own writes. */
+const keptMem = new Map();
+async function keptGet(key, ttl) {
+  const m = keptMem.get(key);
+  if (m && Date.now() - m.at < ttl) return m.body;
+  const row = await one('SELECT body, at FROM zoho_cache WHERE key = $1', ['keep:' + key]).catch(() => null);
+  if (row && row.body && Date.now() - new Date(row.at).getTime() < ttl) {
+    try { const body = JSON.parse(row.body); keptMem.set(key, { at: new Date(row.at).getTime(), body }); return body; } catch (_) {}
+  }
+  return null;
+}
+function keptPut(key, body) {
+  keptMem.set(key, { at: Date.now(), body });
+  query('INSERT INTO zoho_cache (key, body, at) VALUES ($1,$2,now()) ON CONFLICT (key) DO UPDATE SET body = EXCLUDED.body, at = now()',
+    ['keep:' + key, JSON.stringify(body)]).catch(() => {});
+}
+function keptDrop(key) { keptMem.delete(key); query('DELETE FROM zoho_cache WHERE key = $1', ['keep:' + key]).catch(() => {}); }
+
 r.get('/stats/retention', auth.authRequired, auth.requireOffice, access.requirePerm('reports'), wrap(async (req, res) => {
   // Membership history changes a few times a month; reading every membership
   // from Zoho on each visit was the slow part. Kept 10 minutes unless asked fresh.
-  if (retentionCache && Date.now() - retentionCache.at < 600000 && req.query.fresh !== '1') return res.json(retentionCache.body);
+  if (req.query.fresh !== '1') { const kept = await keptGet('retention', 600000); if (kept) return res.json(kept); }
   const yr = String(new Date().getFullYear()), jan1 = `${yr}-01-01`;
   const [deals, joins] = await Promise.all([
     zoho.coql(`select Contact_Name, Membership_Tier, Stage, Start_Date, Expiry_Date, Reason_For_Loss__s
@@ -2183,7 +2203,7 @@ r.get('/stats/retention', auth.authRequired, auth.requireOffice, access.requireP
     // Mel, 24 Nov: the last 26 weeks, rolling, whatever the quarter
     rolling26: attritionWindow(byContact, live, addDays(today(), -182), today()),
   };
-  retentionCache = { at: Date.now(), body };
+  keptPut('retention', body);
   res.json(body);
 }));
 
@@ -2388,14 +2408,40 @@ r.get('/pending', auth.authRequired, wrap(async (req, res) => {
  * the member (Books customers carry the member's CRM name, "Name #1234")
  * and through their ring to the rep, who calls to find out where the
  * membership stands. Reps get only their own members. */
-let arCache = null;          // { at, list }
-const memberNo = n => { const m = String(n || '').match(/#\s*(\d+)/); return m ? m[1].replace(/^0+/, '') : null; };
-async function arOver(days) {
-  if (arCache && Date.now() - arCache.at < 10 * 60 * 1000 && arCache.days === days) return arCache.list;
+/* What the lists are built from, fetched once and kept 15 minutes: every
+   unpaid invoice in Books, and each member's rings and rep from CRM. Both
+   lists (30+ and 60+ days) are cut from it, so switching between them is
+   instant. It is kept in the database too, so a fresh copy of the server
+   (Netlify starts them often) reads it in milliseconds instead of asking
+   Books and Zoho again for several seconds. Refresh rebuilds it. */
+let arBase = null;           // { at, invoices, links, rings }
+const AR_TTL = 15 * 60 * 1000, AR_KEY = 'keep:ar-base';
+async function arBaseGet(fresh) {
+  if (!fresh && arBase && Date.now() - arBase.at < AR_TTL) return arBase;
+  if (!fresh) {
+    const row = await one('SELECT body, at FROM zoho_cache WHERE key = $1', [AR_KEY]).catch(() => null);
+    if (row && row.body && Date.now() - new Date(row.at).getTime() < AR_TTL) {
+      try { arBase = { ...JSON.parse(row.body), at: new Date(row.at).getTime() }; return arBase; } catch (_) {}
+    }
+  }
   const [invoices, links, ringRows] = await Promise.all([
     books.overdueInvoices(), zoho.coql(queries.allGroupMembers()), zoho.coql(queries.ringsForRep(null)),
   ]);
-  const rings = new Map(ringRows.map(fromZoho.ring).map(r => [r.id, r]));
+  const body = {
+    invoices: invoices.filter(i => i.balance > 0),
+    links: links.filter(l => l.Members && l.Members.id).map(l => ({ Members: { id: l.Members.id, name: l.Members.name },
+      Growth_Ring_Groups: l.Growth_Ring_Groups ? { id: l.Growth_Ring_Groups.id } : null })),
+    rings: ringRows.map(fromZoho.ring).map(r => ({ id: r.id, name: r.name, repZohoId: r.repZohoId, repName: r.repName })),
+  };
+  arBase = { ...body, at: Date.now() };
+  query('INSERT INTO zoho_cache (key, body, at) VALUES ($1,$2,now()) ON CONFLICT (key) DO UPDATE SET body = EXCLUDED.body, at = now()',
+    [AR_KEY, JSON.stringify(body)]).catch(() => {});
+  return arBase;
+}
+const memberNo = n => { const m = String(n || '').match(/#\s*(\d+)/); return m ? m[1].replace(/^0+/, '') : null; };
+async function arOver(days, fresh) {
+  const { invoices, links, rings: ringList } = await arBaseGet(fresh);
+  const rings = new Map(ringList.map(r => [r.id, r]));
   // Member number -> the contact and their rings
   const byNo = new Map(), byName = new Map();
   links.forEach(l => {
@@ -2423,15 +2469,13 @@ async function arOver(days) {
       rings: m ? m.rings.map(r => r.name) : [], repId: ring ? ring.repZohoId : null, repName: ring ? ring.repName : null,
       repIds: m ? [...new Set(m.rings.map(r => r.repZohoId).filter(Boolean))] : [] };
   }).sort((a, b) => b.days - a.days || b.balance - a.balance);
-  arCache = { at: Date.now(), days, list };
   return list;
 }
 r.get('/members/ar', auth.authRequired, wrap(async (req, res) => {
   const days = Math.max(1, Math.min(365, parseInt(req.query.days || '60', 10) || 60));
   if (!(await books.configured())) return res.json({ connected: false, days, members: [] });
-  if (req.query.fresh === '1' || req.headers['x-fresh']) arCache = null;
   let list;
-  try { list = await arOver(days); }
+  try { list = await arOver(days, req.query.fresh === '1'); }
   catch (e) { return res.json({ connected: true, days, error: e.message, members: [] }); }
   if (req.user.role === 'rep') list = list.filter(m => req.user.zoho_owner_id && m.repIds.includes(req.user.zoho_owner_id));
   else if (!req.user.perms || !(req.user.perms.members || req.user.perms.manager)) return res.status(403).json({ error: 'Your account does not have access to members.' });
@@ -2443,7 +2487,7 @@ r.get('/members/ar', auth.authRequired, wrap(async (req, res) => {
     const mine = notes.filter(n => n.parentId === a.contactId && (!since || String(n.at).slice(0, 10) >= since));
     return { ...a, followUps: mine.length, followUpCalls: mine.filter(n => n.kind === 'A/R follow-up').length, notes: mine.slice(0, 5) };
   });
-  res.json({ connected: true, days, at: arCache ? new Date(arCache.at).toISOString() : null, members: list });
+  res.json({ connected: true, days, at: arBase ? new Date(arBase.at).toISOString() : null, members: list });
 }));
 
 /* ═══════════ CONTACT LOG: NOTES ON A MEMBER (Keturah & Mel, 17 Nov) ═══════════
@@ -2462,7 +2506,7 @@ async function repMayNote(user, contactId) {
     const links = (await Promise.all(chunk(ringIds, 20).map(b => zoho.coql(queries.groupMembersFor(b)).catch(() => [])))).flat();
     if (links.some(l => l.Members?.id === contactId)) return true;
   }
-  const ar = arCache ? arCache.list : [];
+  const ar = (await books.configured().catch(() => false)) ? await arOver(30).catch(() => []) : [];
   return ar.some(a => a.contactId === contactId && user.zoho_owner_id && a.repIds.includes(user.zoho_owner_id));
 }
 function parseNoteTitle(title) {
@@ -4338,15 +4382,15 @@ r.post('/admin/books-disconnect', auth.authRequired, auth.requireAdmin, access.r
  */
 const manager = require('./manager');
 const mgrGuard = [auth.authRequired, auth.requireOffice, access.requirePerm('manager')];
-let snapCache = null;                  // { at, data } — the team picture is ~10 Zoho reads
+// The team picture is ~10 Zoho reads: kept 5 minutes, shared by every copy of the server
 async function snapshot(fresh) {
-  if (!fresh && snapCache && Date.now() - snapCache.at < 5 * 60 * 1000) return snapCache.data;
+  if (!fresh) { const kept = await keptGet('team', 5 * 60 * 1000); if (kept) return kept; }
   const data = await manager.teamSnapshot();
-  snapCache = { at: Date.now(), data };
+  keptPut('team', data);
   return data;
 }
 // Moving rings changes who the reps are: forget the saved lists everywhere
-const dropSnapshot = () => { snapCache = null; repEmailCache = null; repsDirMem = null; q.setSetting(REPS_KEY, '').catch(() => {}); };
+const dropSnapshot = () => { keptDrop('team'); repEmailCache = null; repsDirMem = null; q.setSetting(REPS_KEY, '').catch(() => {}); };
 
 r.get('/manager/snapshot', ...mgrGuard, wrap(async (req, res) => {
   const snap = await snapshot(!!req.headers['x-fresh'] || req.query.fresh === '1');

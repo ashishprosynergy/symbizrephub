@@ -2130,10 +2130,11 @@ describe('zoho cache', () => {
       await zoho.coql(q);
       assert.equal(coqlCalls() - before, 1, 'answered from memory');
       await new Promise(r => setTimeout(r, 20));
-      const saved = await db.query("SELECT key FROM zoho_cache WHERE key NOT LIKE 'lock:%'");
+      // keep:… rows are the slow screens' own saved answers (A/R, retention), with their own expiry
+      const saved = await db.query("SELECT key FROM zoho_cache WHERE key NOT LIKE 'lock:%' AND key NOT LIKE 'keep:%'");
       assert.equal(saved.length, 1, 'kept for the other copies');
       await zoho.updateRecords('Growth_Ring_Groups', [{ id: 'GR9', Name: '99' }]);
-      assert.equal((await db.query('SELECT key FROM zoho_cache')).length, 0, 'a change clears the shared copy');
+      assert.equal((await db.query("SELECT key FROM zoho_cache WHERE key NOT LIKE 'keep:%'")).length, 0, 'a change clears the shared copy');
       await zoho.coql(q);
       assert.equal(coqlCalls() - before, 2, 'asked again after the change');
       // Another copy is already fetching this: wait for its answer, don't ask Zoho too
@@ -2657,6 +2658,19 @@ describe('managing the reps: warnings, goals, check-ins, moving rings, visits, m
     assert.equal(all.members.find(m => m.name === 'Slow Payer #61').repId, 'CONTACT_REP_1', 'matched by member number even without the leading zero');
     const mine = J(await invoke('GET', '/members/ar', { token: rep }));
     assert.deepEqual(mine.members.map(m => m.name), ['Slow Payer #61'], "a rep sees only their own members");
+    // 30+ and 60+ are cut from the same Books read: switching asks Books nothing
+    const arGet = qs => handler({ httpMethod: 'GET', path: '/.netlify/functions/api/members/ar',
+      rawUrl: 'https://x.netlify.app/.netlify/functions/api/members/ar', headers: { authorization: `Bearer ${office}` },
+      queryStringParameters: qs, body: null, isBase64Encoded: false }, {}).then(r => JSON.parse(r.body));
+    const invoiceReads = () => zohoCalls.filter(c => c.path.endsWith('/invoices')).length;
+    const before = invoiceReads();
+    const thirty = await arGet({ days: '30' });
+    assert.equal(invoiceReads(), before, 'the 30-day list did not read Books again');
+    assert.deepEqual(thirty.members.map(m => m.name).sort(), ['Late Payer #0060', 'Monthly Member #0063', 'Slow Payer #61']);
+    booksStore.invoices.push({ invoice_id: 'I6', invoice_number: 'INV-6', customer_name: 'New Late #0064', date: day(40), due_date: day(40), total: 20, balance: 20 });
+    assert.ok(!(await arGet({ days: '30' })).members.some(m => m.name === 'New Late #0064'), 'kept, not re-read');
+    assert.ok((await arGet({ days: '30', fresh: '1' })).members.some(m => m.name === 'New Late #0064'), 'Refresh reads Books again');
+    assert.equal(invoiceReads(), before + 1);
     cfg.books.orgId = ''; cfg.books.refreshToken = ''; books._resetForTests();
   });
 

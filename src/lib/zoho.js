@@ -231,7 +231,8 @@ function sharedPut(q, rows) {
 function clearCache() {
   cache.clear();
   if (cacheMs() <= 0) return Promise.resolve();
-  try { return require('../db').query('DELETE FROM zoho_cache').catch(() => {}); } catch (_) { return Promise.resolve(); }
+  // Rows named keep:… (the A/R list's Books data) have their own expiry and are not Zoho CRM answers
+  try { return require('../db').query("DELETE FROM zoho_cache WHERE key NOT LIKE 'keep:%'").catch(() => {}); } catch (_) { return Promise.resolve(); }
 }
 /* One copy asks Zoho; the others wait for its answer. When the whole team
    opens the app together, dozens of copies start at once with nothing saved
