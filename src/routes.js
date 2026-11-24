@@ -1067,13 +1067,36 @@ r.post('/activities', auth.authRequired, writesAllowed, wrap(async (req, res) =>
     console.warn('[activities] could not clear prior due item:', e.message);
   }
 
+  // One exit interview per member per day. A second one (an empty entry made
+  // through Log a call straight after the real form, Mel 19 Nov) used to be
+  // saved too, and filed as a blank form on the member. Now an empty second
+  // one is not saved; one with answers fills in an empty first one.
+  const isExit = /exit interview/i.test(b.type);
+  const hasAnswers = isExit && b.exit && typeof b.exit === 'object' && Object.values(b.exit).some(v => String(v || '').trim());
+  if (isExit && b.memberId) {
+    const same = (await zoho.coql(`select id, Visit_Notes, Member, Visit_Type, Visit_Date from ${M.ACTIVITY}
+      where ((Member = '${String(b.memberId).replace(/[^0-9]/g, '')}' and Visit_Type = 'Exit Interview') and Visit_Date = '${String(b.date).replace(/[^0-9-]/g, '')}') limit 10`).catch(() => []))
+      .filter(x => x.Member && String(x.Member.id || x.Member) === String(b.memberId) && /exit interview/i.test(x.Visit_Type || '') && x.Visit_Date === b.date);
+    if (same.length) {
+      const kept = same.find(x => String(x.Visit_Notes || '').trim()) || same[0];
+      const emptyBefore = !String(kept.Visit_Notes || '').trim();
+      if (emptyBefore && String(b.notes || '').trim()) {
+        await zoho.updateRecords(M.ACTIVITY, [{ id: kept.id, Visit_Notes: b.notes }]);
+        if (hasAnswers) await fileExitInterview(req, b, ringRec, kept.id).catch(e => console.error('[exit] could not queue the form:', e.message));
+      }
+      await audit(req.user.id, 'activity.duplicate', { id: kept.id, type: b.type, memberId: b.memberId }, req.ip);
+      return res.status(200).json({ id: kept.id, nextDue: null, duplicate: true });
+    }
+  }
+
   const out = await zoho.insertRecords(M.ACTIVITY, [toZoho.activity({
     ...b, repZohoId, nextDue,
   })]);
   const id = out[0]?.details?.id;
 
   await audit(req.user.id, 'activity.logged', { id, type: b.type, ringId: b.ringId, repZohoId }, req.ip);
-  if (/exit interview/i.test(b.type)) await fileExitInterview(req, b, ringRec, id).catch(e => console.error('[exit] could not queue the form:', e.message));
+  // The paper form is filed only when there are answers to put on it
+  if (hasAnswers) await fileExitInterview(req, b, ringRec, id).catch(e => console.error('[exit] could not queue the form:', e.message));
   res.status(201).json({ id, nextDue });
 }));
 

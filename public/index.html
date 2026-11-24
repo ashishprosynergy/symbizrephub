@@ -3262,7 +3262,7 @@ function vOfficeDash(){
   const act = st ? st.activeMembers : S.members.filter(m=>m.status==='active').length;
   const rings=S.rings.filter(r=>r.status==='active');
   const atRisk=rings.filter(r=>ringHealth(r)<50);
-  const exits=S.activities.filter(a=>a.type==='Exit Interview'&&a.date>=TODAY_S.slice(0,4)+'-01-01').length;
+  const exits=exitInterviews().filter(a=>a.date>=TODAY_S.slice(0,4)+'-01-01').length;
   // Joined = Paid_Membership_StartDate in Zoho, counted across the members
   // loaded. "Left" cannot be dated: Zoho records that someone is Inactive
   // but not WHEN they went inactive, so we show the current total instead
@@ -3609,8 +3609,8 @@ const REPORTS={
     name:'Exit interviews',
     desc:'Why members left and whether they would return.',
     cols:['Member','Date','Reason','Would return','Ring','Rep','Notes'],
-    rows:()=>S.activities.filter(a=>a.type==='Exit Interview')
-      .map(a=>[a.who,a.date,a.exitReason||'',a.wouldReturn||'',ring(a.ringId)?ring(a.ringId).name:'',pname(a.repId),a.notes||''])
+    rows:()=>exitInterviews()
+      .map(a=>[a.who,a.date,a.exitReason||'',a.wouldReturn||'',ring(a.ringId)?ring(a.ringId).name:'',exitBy(a),a.notes||''])
   },
   'meeting-attendance':{
     name:'Meeting attendance',
@@ -3917,7 +3917,7 @@ function attritionTile(){
     <div class="n" style="color:var(--rust)">${q.rate == null ? '—' : q.rate + '%'}</div><div class="l">Attrition this quarter<br><span style="font-size:10px;opacity:.7">${q.lost} left since ${esc(fmtShort(q.from))}</span></div></div>` : '');
 }
 function vInsights(){
-  const exits=S.activities.filter(a=>a.type==='Exit Interview');
+  const exits=exitInterviews();
   const counts={}; exits.forEach(e=>{const k=e.exitReason||'Not recorded'; counts[k]=(counts[k]||0)+1;});
   const max=Math.max(1,...Object.values(counts));
   const head = `<div class="section-head"><div><h2>Retention insights</h2><div class="sub">Who joins, who leaves, and whether the network is growing.
@@ -3961,7 +3961,7 @@ function vInsights(){
       <div class="bar"><span style="width:${(v/max)*100}%"></span></div></div>`).join('')||`<div class="empty">No exit interviews recorded yet.</div>`}
     ${exits.length ? `<h3 class="sub-h">Each exit interview</h3>` : ''}
     ${exits.map(e=>`<div class="row"><div class="row-main"><div class="row-title">${esc(e.who)}</div>
-      <div class="row-sub">${pname(e.repId)} · ${fmt(e.date)} · would return: ${esc(e.wouldReturn||'—')}${e.notes?' · '+esc(e.notes):''}</div></div>
+      <div class="row-sub">${esc(exitBy(e))} · ${fmt(e.date)} · would return: ${esc(e.wouldReturn||'—')}${e.notes?' · '+esc(e.notes):''}</div></div>
       <span class="tag later">${esc(e.exitReason||'—')}</span></div>`).join('')}`;
 }
 
@@ -7883,7 +7883,11 @@ function fv(f,n){ const el=f.elements.namedItem(n); return el?el.value:''; }
 
 let logOutcome='Connected', logType='Member Call';
 function openLog(o){
-  o=o||{}; logOutcome='Connected'; logType=o.type||'Member Call';
+  o=o||{};
+  // An exit interview has its own form (every answer, the office told, the
+  // membership ended). Logged here it was saved empty (Mel, 19 Nov).
+  if(/exit/i.test(o.type||'') && o.memberId && member(o.memberId)) return openExit(o.memberId);
+  logOutcome='Connected'; logType=o.type && o.type!=='Exit Interview' ? o.type : 'Member Call';
   const onBehalf=isOffice();
   // The office looking at a rep's screen (not their own rep view): the call
   // may be theirs, not the rep's (Mel's calls for J Michael, 24 Nov)
@@ -7906,9 +7910,10 @@ function openLog(o){
         ${rs.map(r=>`<option value="${r.id}" ${r.id===o.ringId?'selected':''}>${esc(r.name)}</option>`).join('')}</select></div>
       <div class="two">
         <div class="field"><label>Type</label><select name="type" onchange="logType=this.value;refreshPrompts()">
-          ${Object.keys(CALL_PROMPTS).map(t=>`<option ${t===logType?'selected':''}>${t}</option>`).join('')}</select></div>
+          ${Object.keys(CALL_PROMPTS).filter(t=>t!=='Exit Interview').map(t=>`<option ${t===logType?'selected':''}>${t}</option>`).join('')}</select></div>
         <div class="field"><label>Date</label><input type="date" name="date" value="${TODAY_S}" required></div>
       </div>
+      <div class="hint" style="margin:-4px 0 10px">Exit interview? ${o.memberId ? `<button type="button" class="btn sm" onclick="closeModal();openExit('${esc(o.memberId)}')">Open the exit interview form</button>` : 'Use <strong>Exit interview</strong> on the member\'s page: it records every answer and tells the office.'}</div>
       <div class="field"><label>Who with</label><input name="who" value="${esc(o.who||'')}" required placeholder="Name"></div>
       <div class="field"><label>How did it go?</label>
         <div class="choices" id="outChoices">${OUTCOMES.map(x=>`<button type="button" class="choice ${x==='Connected'?'on':''}" onclick="pickOutcome('${x}')">${x}</button>`).join('')}</div>
@@ -8045,6 +8050,22 @@ const EXIT_QUESTIONS = [
   ['wouldReturn', 'Would you consider joining a Growth Ring again in the future?'],
   ['other', 'Any other comments or suggestions?'],
 ];
+/* Exit interviews, one per member per day: an empty second entry for the
+   same member and day (saved by mistake, e.g. through Log a call) is left
+   out, keeping the one with the answers */
+function exitInterviews(){
+  const best = new Map();
+  S.activities.filter(a => a.type === 'Exit Interview').forEach(a => {
+    const k = (a.memberId || a.who) + '|' + a.date, had = best.get(k);
+    if(!had || String(a.notes || '').length > String(had.notes || '').length) best.set(k, a);
+  });
+  return [...best.values()].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+/** Who recorded it: the rep, or the office person who made the call */
+function exitBy(a){
+  const n = pname(a.repId);
+  return n && n !== '—' ? n : (a.repName ? splitRepName(a.repName).name : '—');
+}
 function openExit(memberId){
   const m=member(memberId);
   const joined = /^\d{4}-\d{2}-\d{2}/.test(m.memberSince || m.joined || '') ? String(m.memberSince || m.joined).slice(0,10) : '';
@@ -9487,6 +9508,7 @@ const adapt = {
       id: a.id,
       ringId: a.ringId || null,
       repId: a.repZohoId || null,
+      repName: a.repName || '',   // for people who are not reps (office staff who made the call)
       memberId: a.memberId || null,
       facId: g && g.facId ? g.facId : undefined,
       type: a.type || 'Visit',

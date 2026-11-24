@@ -513,6 +513,20 @@ describe('netlify function handler', () => {
       assert.equal(exit[0].attachments[0].filename, 'Exit Interview - Sheldon Martin #0714.pdf');
       const rows = await db.query("SELECT status FROM exit_forms");
       assert.ok(rows.every(r => r.status === 'done'), JSON.stringify(rows));
+      // An empty second exit interview for the same member and day (Log a call,
+      // Mel 19 Nov) is not saved, and no blank form is filed
+      const count = store.Rep_Visit_Trackings.length, forms = store.attachments.length;
+      const again = await invoke('POST', '/activities', { token: repToken,
+        body: { ringId: ring.id, memberId: 'C77', type: 'Exit Interview', date: '2026-10-28', outcome: 'Connected', notes: '' } });
+      assert.equal(again.statusCode, 200, again.body);
+      assert.equal(J(again).duplicate, true);
+      assert.equal(store.Rep_Visit_Trackings.length, count, 'no second record');
+      assert.equal(store.attachments.length, forms, 'no blank form filed');
+      // With no answers at all (a different day), it is saved but no form is filed
+      await invoke('POST', '/activities', { token: repToken,
+        body: { ringId: ring.id, memberId: 'C78', type: 'Exit Interview', date: '2026-10-29', outcome: 'Connected', notes: 'Spoke briefly' } });
+      assert.equal(store.Rep_Visit_Trackings.length, count + 1);
+      assert.equal(store.attachments.length, forms, 'a form with no answers is not filed');
     } finally {
       reminders.sendEmail = realSend; Object.assign(cfg.mail, realMail);
       await db.q.setSetting('exitInterviewNotify', '');
