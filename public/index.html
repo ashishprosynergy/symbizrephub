@@ -1068,6 +1068,9 @@
   .sheet h3{font-size:17px;}
 
   .toasts{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:60;display:flex;flex-direction:column;gap:7px;align-items:center;}
+  .secret-view{display:flex;flex-direction:column;gap:8px;}
+  .secret-view code{display:block;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);
+    font-size:12.5px;white-space:pre-wrap;word-break:break-all;}
   .save-state{display:inline-flex;align-items:center;gap:8px;margin-left:8px;font-size:12.5px;font-weight:600;color:var(--primary);}
   .save-state:empty{display:none;}
   .save-state.block{display:flex;margin:6px 0 0;}
@@ -1345,10 +1348,15 @@ const API = {
   setToken(t){ this.token = t; this.live = !!t;
     try{ t ? localStorage.setItem('rephub_token', t) : localStorage.removeItem('rephub_token'); }catch(e){} },
   inflight: 0,
-  failures: 0,   // counts failed requests, so a field can tell whether its save worked
-  async call(path, opts = {}){
-    try{ return await this._call(path, opts); }
-    catch(e){ this.failures++; throw e; }
+  // The last few requests, numbered, so a field can wait for just the save it
+  // started (not the calendar check that follows) and tell whether it worked
+  seq: 0, recent: [],
+  call(path, opts = {}){
+    const rec = { seq: ++this.seq, failed: false };
+    const p = this._call(path, opts).catch(e => { rec.failed = true; throw e; });
+    rec.done = p.then(() => {}, () => {});
+    this.recent.push(rec); if(this.recent.length > 40) this.recent.shift();
+    return p;
   },
   async _call(path, opts = {}){
     let res;
@@ -1583,16 +1591,22 @@ document.addEventListener('change', e => {
   el.dataset.dirty = '';
   const s = saveStateFor(el);
   s.classList.remove('err'); s.classList.add('busy'); s.textContent = 'Saving…';
-  const failedBefore = API.failures;
-  const done = () => {
-    if(API.inflight > 0) return setTimeout(done, 150);
+  const seqBefore = API.seq;
+  // The field's own handler runs right after this and starts its request at
+  // once; wait for that request only (a calendar check chained after it can
+  // take seconds and is not part of the save)
+  let mine = null;
+  el.addEventListener('change', () => { mine = API.recent.filter(r => r.seq > seqBefore); }, { once: true });   // runs right after the field's own handler
+  const done = async () => {
+    if(!mine) mine = API.recent.filter(r => r.seq > seqBefore);
+    await Promise.all(mine.map(r => r.done));
     if(!s.isConnected) return;
-    const failed = API.failures > failedBefore;
+    const failed = mine.some(r => r.failed);
     s.classList.remove('busy'); s.classList.toggle('err', failed);
     s.textContent = failed ? 'Not saved: try again' : 'Saved ✓';
     if(!failed) s._fade = setTimeout(() => { if(s.isConnected && !s.querySelector('button')) s.textContent = ''; }, 4000);
   };
-  setTimeout(done, 200);
+  setTimeout(done, 0);
 }, true);
 
 API.init();
@@ -5091,7 +5105,7 @@ function accessSectionBody(sec){
         onchange="setSetting('calendarZoho', this.checked ? 'on' : 'off').then(checkSymbizCalendar)">
         <span><strong>Show the calls booked as Meetings in Zoho</strong><br><span class="row-sub">Zoho CRM → Activities → Meetings. The Zoom or Zoho Meeting link is taken from the meeting's location or description.</span></span></label>
       <div class="field" style="margin-top:14px"><label>Also read this calendar's private iCal link (optional)</label>
-        <textarea rows="2" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" onchange="setSetting('calendarFeeds', this.value.trim()).then(checkSymbizCalendar)">${esc(s.calendarFeeds || '')}</textarea></div>
+        ${secretField('calendarFeeds', s.calendarFeeds || '', { placeholder: 'https://calendar.google.com/calendar/ical/…/basic.ics' })}</div>
       <div class="row-sub">Google Calendar: Settings → the Symbiz calendar → <strong>Secret address in iCal format</strong> → copy.
         Zoho Calendar: the calendar's ⋮ menu → Share → <strong>Private iCal URL</strong>. One link per line for more than one calendar.
         The Zoom or Zoho Meeting link is taken from each event, so no Zoom sign-in is needed.</div>
@@ -5433,6 +5447,61 @@ async function retryBooks(btn){
 // so the server never saw (for one) the accounting address typed in here.
 const SERVER_SETTINGS = ['retryDays','rescheduleDays','dueWindow','accountingEmail','accountingDay','booksAuto','booksPayee','booksAccount',
   'supportName','supportPhone','registrationApprovers','exitInterviewNotify','exitInterviewFolder','emailLinks','calendarFeeds','calendarKeywords','calendarZoho','mileageRate','zohoRecordOwner'];
+/* ═══ Saved secrets (private links, keys) ═══
+   Once saved, a private link is shown masked, with Show, Change and Copy,
+   so it is not on screen for anyone looking over a shoulder. Change opens it
+   for editing with Save and Cancel. Add a field by giving it a saver here. */
+const SECRET_SAVERS = {
+  calendarFeeds: async v => {
+    if(API.live && isOffice()) await API.saveSettings({ calendarFeeds: v });
+    S.settings.calendarFeeds = v; save(); logAudit('Changed the Symbiz calendar link');
+    setTimeout(checkSymbizCalendar, 0);
+  },
+};
+const secretMode = {};   // field -> 'show' | 'edit' | 'saved' (just saved) | undefined (masked)
+function maskSecret(v){
+  return String(v || '').split('\n').filter(Boolean).map(line => {
+    let head = '';
+    try{ head = new URL(line).origin + '/'; }catch(e){ head = line.slice(0, 4); }
+    return head + '•'.repeat(12) + line.slice(-4);
+  }).join('\n');
+}
+function secretField(name, value, opts = {}){
+  const mode = secretMode[name] || (value ? '' : 'edit');
+  const inner = mode === 'edit'
+    ? `<textarea rows="${opts.rows || 2}" id="sec-in-${name}" placeholder="${esc(opts.placeholder || '')}" autocomplete="off" spellcheck="false"
+         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();secretSave('${name}')}">${esc(value)}</textarea>
+       <div class="btnrow" style="margin-top:6px"><button type="button" class="btn sm primary" id="sec-btn-${name}" onclick="secretSave('${name}')">Save</button>
+         ${value ? `<button type="button" class="btn sm" onclick="secretSet('${name}')">Cancel</button>` : ''}</div>`
+    : `<div class="secret-view"><code>${esc(mode === 'show' ? value : maskSecret(value))}</code>
+         <div class="btnrow">
+           <button type="button" class="btn sm" onclick="secretSet('${name}', '${mode === 'show' ? '' : 'show'}')">${mode === 'show' ? 'Hide' : 'Show'}</button>
+           <button type="button" class="btn sm" onclick="secretSet('${name}', 'edit')">Change</button>
+           <button type="button" class="btn sm" onclick="copyText(S.settings[${esc(JSON.stringify(name))}] || '', this)">Copy</button>
+           ${mode === 'saved' ? '<span class="save-state">Saved ✓</span>' : ''}</div></div>`;
+  return `<div class="secret" id="sec-${name}">${inner}</div>`;
+}
+function secretSet(name, mode){
+  secretMode[name] = mode || undefined;
+  const el = document.getElementById('sec-' + name);
+  if(el) el.outerHTML = secretField(name, S.settings[name] || '');
+  if(mode === 'edit'){ const t = document.getElementById('sec-in-' + name); if(t){ t.focus(); t.select(); } }
+}
+async function secretSave(name){
+  const t = document.getElementById('sec-in-' + name), b = document.getElementById('sec-btn-' + name);
+  if(!t) return;
+  const v = t.value.trim();
+  if(b){ b.disabled = true; b.textContent = 'Saving…'; }
+  try{
+    await SECRET_SAVERS[name](v);
+    secretSet(name, v ? 'saved' : 'edit');
+    toast(v ? 'Saved' : 'Removed');
+    setTimeout(() => { if(secretMode[name] === 'saved') secretSet(name); }, 4000);
+  }catch(e){
+    toast(e.message || 'Could not save');
+    if(b){ b.disabled = false; b.textContent = 'Save'; }
+  }
+}
 async function setSetting(k,v){
   S.settings[k]=v; save(); logAudit(`Changed setting ${k} to ${v}`);
   if(k === 'supportName' || k === 'supportPhone'){
