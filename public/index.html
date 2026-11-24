@@ -10062,6 +10062,11 @@ function recurringBetween(meetDay, fromISO, toISO) {
 /* ── The Symbiz calendar: L10, facilitator and forum calls (Access & security →
    Symbiz calendar). Times arrive in UTC and show in this device's time. ── */
 var symbizCalls = { from: null, to: null, items: [], configured: null, errors: [] };
+/* Symbiz calls are shown in US time: a rep's own US time zone when their
+   device is set to one, otherwise Eastern (so the office abroad sees the
+   time the reps see, not its own clock). The zone is shown, e.g. "4:30 PM EST". */
+const CAL_TZ = (() => { try{ const z = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  return /^(America|US)\//.test(z) ? z : 'America/New_York'; }catch(e){ return 'America/New_York'; } })();
 async function loadSymbizCalls(from, to){
   if(!API.live) return;
   if(symbizCalls.from && symbizCalls.from <= from && symbizCalls.to >= to && symbizCalls.at > Date.now() - 10*60000) return;
@@ -10070,8 +10075,10 @@ async function loadSymbizCalls(from, to){
     const v = await API.symbizCalendar(f, t);
     symbizCalls = { from: f, to: t, at: Date.now(), configured: !!v.configured, errors: v.errors || [],
       items: (v.items || []).map(c => { const d = new Date(c.start);
-        const date = c.allDay ? c.date : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        return { ...c, date, time: c.allDay ? '' : d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }) }; }) };
+        const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: CAL_TZ, year:'numeric', month:'2-digit', day:'2-digit' })
+          .formatToParts(d).map(x => [x.type, x.value]));
+        const date = c.allDay ? c.date : `${p.year}-${p.month}-${p.day}`;
+        return { ...c, date, time: c.allDay ? '' : d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit', timeZone: CAL_TZ, timeZoneName:'short' }) }; }) };
   }catch(e){ symbizCalls.errors = [e.message]; }
 }
 function calendarItems(repId, range) {
