@@ -1068,6 +1068,12 @@
   .sheet h3{font-size:17px;}
 
   .toasts{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:60;display:flex;flex-direction:column;gap:7px;align-items:center;}
+  .save-state{display:inline-flex;align-items:center;gap:8px;margin-left:8px;font-size:12.5px;font-weight:600;color:var(--primary);}
+  .save-state:empty{display:none;}
+  .save-state.block{display:flex;margin:6px 0 0;}
+  .save-state.busy{color:var(--ink-muted);}
+  .save-state.err{color:var(--rust);}
+  .save-state .hint{font-weight:400;color:var(--ink-muted);}
   .toast{background:var(--ink);color:var(--bg);padding:10px 15px;border-radius:8px;font-size:13.5px;font-weight:500;box-shadow:0 6px 18px rgba(0,0,0,.2);animation:tin .16s ease-out;max-width:90vw;}
   @keyframes tin{from{opacity:0;transform:translateY(-5px);}to{opacity:1;transform:translateY(0);}}
 
@@ -1339,7 +1345,12 @@ const API = {
   setToken(t){ this.token = t; this.live = !!t;
     try{ t ? localStorage.setItem('rephub_token', t) : localStorage.removeItem('rephub_token'); }catch(e){} },
   inflight: 0,
+  failures: 0,   // counts failed requests, so a field can tell whether its save worked
   async call(path, opts = {}){
+    try{ return await this._call(path, opts); }
+    catch(e){ this.failures++; throw e; }
+  },
+  async _call(path, opts = {}){
     let res;
     this.inflight++;
     try{
@@ -1533,6 +1544,57 @@ document.addEventListener('submit', e => {
   };
   setTimeout(release, 150);
 }, true);
+
+/* Fields that save the moment they change (settings, links, rates, access…)
+   used to give only a passing toast, easy to miss. Now, while one is being
+   typed in, a Save button sits under it; after any change it says
+   "Saving…", then "Saved ✓" or "Not saved" right beside the field. */
+const AUTOSAVE_RE = /\b(setSetting|setLink|saveSnap|saveSnapReps|saveRate|saveKeep|saveBackupFrequency|saveBackupEmail|summitNotesSave|saveTeamAccess|setRole|setOnbStage|summitTask|setPerm|setPermGroup|setTwoStep)\(/;
+const isAutosave = el => el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && AUTOSAVE_RE.test(el.getAttribute('onchange') || '');
+const isTyped = el => el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !/^(checkbox|radio|file)$/i.test(el.type));
+function saveStateFor(el){
+  const holder = el.closest('label.switch') || el;
+  let s = holder.nextElementSibling;
+  if(!s || !s.classList.contains('save-state')){
+    s = document.createElement('span');
+    s.className = 'save-state' + (isTyped(el) ? ' block' : '');
+    holder.insertAdjacentElement('afterend', s);
+  }
+  clearTimeout(s._fade);
+  return s;
+}
+document.addEventListener('input', e => {
+  const el = e.target;
+  if(!isAutosave(el) || !isTyped(el)) return;
+  el.dataset.dirty = '1';
+  const s = saveStateFor(el);
+  if(s.querySelector('button')) return;
+  s.className = 'save-state block';
+  s.innerHTML = '<button type="button" class="btn sm primary">Save</button><span class="hint">or click away</span>';
+  s.querySelector('button').onclick = () => { if(el.dataset.dirty === '1') el.dispatchEvent(new Event('change')); };
+});
+document.addEventListener('keydown', e => {
+  const el = e.target;
+  if(e.key === 'Enter' && el.tagName === 'INPUT' && isAutosave(el) && el.dataset.dirty === '1'){ e.preventDefault(); el.dispatchEvent(new Event('change')); }
+});
+document.addEventListener('change', e => {
+  const el = e.target;
+  if(!isAutosave(el)) return;
+  el.dataset.dirty = '';
+  const s = saveStateFor(el);
+  s.classList.remove('err'); s.classList.add('busy'); s.textContent = 'Saving…';
+  const failedBefore = API.failures;
+  const done = () => {
+    if(API.inflight > 0) return setTimeout(done, 150);
+    if(!s.isConnected) return;
+    const failed = API.failures > failedBefore;
+    s.classList.remove('busy'); s.classList.toggle('err', failed);
+    s.textContent = failed ? 'Not saved: try again' : 'Saved ✓';
+    if(!failed) s._fade = setTimeout(() => { if(s.isConnected && !s.querySelector('button')) s.textContent = ''; }, 4000);
+  };
+  setTimeout(done, 200);
+}, true);
+
 API.init();
 window.API=API; window.OutBox=OutBox;
 
