@@ -975,6 +975,31 @@ r.get('/activities', auth.authRequired, wrap(async (req, res) => {
 }));
 
 /**
+ * Monthly Growth Ring health reports (Mel, 24 Nov): the facilitator's report
+ * is saved in Zoho as a GR Group Score, one per meeting. Per ring: the date of
+ * the latest one, so a rep can see which facilitators to ask.
+ */
+r.get('/rings/health-reports', auth.authRequired, wrap(async (req, res) => {
+  const { ringIds } = await scopeRings(req.user, req.query.as);
+  if (!ringIds.length) return res.json({ rings: {}, at: new Date().toISOString() });
+  const since = addDays(today(), -180);
+  const rows = (await Promise.all(chunk(ringIds, 50).map(b => zoho.coqlPaged(
+    `select Growth_Ring_Group, Date, Created_Time from Growth_Ring_Group_Scores
+     where (Growth_Ring_Group in (${b.map(i => `'${String(i).replace(/[^0-9]/g, '')}'`).join(',')}) and Date >= '${since}') limit 200`
+  ).catch(() => [])))).flat();
+  const rings = {};
+  rows.forEach(s => {
+    const id = s.Growth_Ring_Group && s.Growth_Ring_Group.id;
+    const d = String(s.Date || s.Created_Time || '').slice(0, 10);
+    if (!id || !d) return;
+    const cur = rings[id] || (rings[id] = { last: null, count: 0 });
+    cur.count++;
+    if (!cur.last || d > cur.last) cur.last = d;
+  });
+  res.json({ rings, since, at: new Date().toISOString() });
+}));
+
+/**
  * Log a call. This is the most-used write in the whole system.
  * next_due is computed SERVER side — never trusted from the client, so the
  * cadence rule can't drift between web, mobile and office entry.
@@ -995,7 +1020,14 @@ r.post('/activities', auth.authRequired, writesAllowed, wrap(async (req, res) =>
     if (!myContactId) return res.status(403).json({ error: 'Your login is not linked to a Zoho contact yet' });
     if (ringRec.repZohoId !== myContactId) return res.status(403).json({ error: 'Not your ring' });
   }
-  const repZohoId = req.user.role === 'rep' ? myContactId : (b.repZohoId || ringRec.repZohoId);
+  let repZohoId = req.user.role === 'rep' ? myContactId : (b.repZohoId || ringRec.repZohoId);
+  // Office staff making the call themselves (Mel, 24 Nov): credit them, not
+  // the ring's rep. Their login's linked Zoho contact goes in Rep; the note
+  // says who made it either way, so it is clear in Zoho too.
+  if (req.user.role !== 'rep' && b.madeBy === 'me') {
+    if (myContactId) repZohoId = myContactId;
+    b.notes = [`Call made by ${req.user.name || 'the office'} (office)`, b.notes].filter(Boolean).join('. ');
+  }
 
   /**
    * Call cadence is NOT stored per ring in their Zoho — Meeting_Frequency is the
@@ -2148,6 +2180,8 @@ r.get('/stats/retention', auth.authRequired, auth.requireOffice, access.requireP
     months: months.filter(m => m.month <= new Date().getMonth() + 1),
     reasons, leftList: left.sort((a, b) => b.ended.localeCompare(a.ended)), leftNoDateList: leftNoDate,
     quarters: attritionQuarters(byContact, live),
+    // Mel, 24 Nov: the last 26 weeks, rolling, whatever the quarter
+    rolling26: attritionWindow(byContact, live, addDays(today(), -182), today()),
   };
   retentionCache = { at: Date.now(), body };
   res.json(body);
@@ -2176,22 +2210,26 @@ function quarterBounds(iso) {
   while (i > 0 && starts[i] > iso) i--;
   return { start: starts[i], end: addDays(starts[i + 1], -1) };
 }
+/** Members lost between two dates, out of everyone whose membership was running on the first */
+function attritionWindow(byContact, live, start, end) {
+  const lost = [];
+  let base = 0;
+  for (const [id, c] of byContact) {
+    if (c.deals.some(d => (!d.Start_Date || d.Start_Date < start) && (!d.Expiry_Date || d.Expiry_Date >= start))) base++;
+    if (c.deals.some(d => live(d.Stage))) continue;
+    const ended = c.deals.map(d => d.Expiry_Date).filter(Boolean).sort().pop();
+    if (ended && ended >= start && ended <= end) {
+      const last = c.deals.find(d => d.Expiry_Date === ended) || {};
+      lost.push({ id, name: c.name, ended, tier: last.Membership_Tier || '', reason: last.Reason_For_Loss__s || '' });
+    }
+  }
+  return { from: start, to: end, lost: lost.length, base,
+    rate: base ? Math.round(lost.length / base * 1000) / 10 : null, members: lost.sort((a, b) => a.ended.localeCompare(b.ended)) };
+}
 function attritionQuarters(byContact, live) {
   const out = [];
   for (let q = quarterBounds(ATTRITION_FROM); q.start <= today(); q = quarterBounds(addDays(q.end, 1))) {
-    const lost = [];
-    let base = 0;
-    for (const [id, c] of byContact) {
-      if (c.deals.some(d => (!d.Start_Date || d.Start_Date < q.start) && (!d.Expiry_Date || d.Expiry_Date >= q.start))) base++;
-      if (c.deals.some(d => live(d.Stage))) continue;
-      const ended = c.deals.map(d => d.Expiry_Date).filter(Boolean).sort().pop();
-      if (ended && ended >= q.start && ended <= q.end) {
-        const last = c.deals.find(d => d.Expiry_Date === ended) || {};
-        lost.push({ id, name: c.name, ended, tier: last.Membership_Tier || '', reason: last.Reason_For_Loss__s || '' });
-      }
-    }
-    out.push({ from: q.start, to: q.end, current: q.end >= today(), lost: lost.length, base,
-      rate: base ? Math.round(lost.length / base * 1000) / 10 : null, members: lost.sort((a, b) => a.ended.localeCompare(b.ended)) });
+    out.push({ ...attritionWindow(byContact, live, q.start, q.end), current: q.end >= today() });
   }
   return out;
 }

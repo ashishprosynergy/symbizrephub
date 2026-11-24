@@ -2314,8 +2314,10 @@ function openQuickAdd(){
  */
 function dueItems(repId){
   const latest = new Map();
+  // The newest call per person across EVERYONE, then shown to the ring's rep.
+  // Filtering by who logged it first meant a call Mel made on J Michael's ring
+  // left J Michael's older call as the latest, still overdue.
   S.activities.forEach(a => {
-    if(repId && a.repId !== repId) return;
     // Facilitator calls belong to the ring (the booked first call has no person
     // on it; the rep logs the real one against the facilitator). Same rule as dueKey in src/domain.js.
     const ty = String(a.type || '').toLowerCase();
@@ -2323,8 +2325,49 @@ function dueItems(repId){
     const cur = latest.get(k), d = String(a.date || ''), cd = cur ? String(cur.date || '') : '';
     if(!cur || d > cd || (d === cd && String(a.nextDue || '') > String(cur.nextDue || ''))) latest.set(k, a);
   });
-  return [...latest.values()].filter(a => a.nextDue)
+  return [...latest.values()].filter(a => a.nextDue && (!repId || ((ring(a.ringId) || {}).repId || a.repId) === repId))
     .sort((a,b)=> new Date(a.nextDue)-new Date(b.nextDue));
+}
+
+/* ── Monthly health reports per ring (Mel, 24 Nov) ──
+   Facilitators submit a GR Health Report each month; Zoho saves it as a
+   GR Group Score. Reps see which of their rings have not sent one lately. */
+var healthReports = null, healthBusy = false;
+function loadHealthReports(force){
+  if(!API.live || healthBusy || (healthReports && !force && Date.now() - healthReports.loadedAt < 10*60000)) return;
+  healthBusy = true;
+  API.call('/rings/health-reports' + (previewRepId ? '?as=' + encodeURIComponent(previewRepId) : ''))
+    .then(v => { healthReports = { ...(v||{}), loadedAt: Date.now() }; })
+    .catch(() => {})
+    .finally(() => { healthBusy = false; renderContent(); });
+}
+/* 'ok' within 35 days, 'late' 36-60, 'missing' older or none in six months */
+function healthReportState(ringId){
+  if(!healthReports) return null;
+  const h = (healthReports.rings || {})[ringId];
+  if(!h || !h.last) return { state:'missing', last:null };
+  const ago = -days(h.last);
+  return { state: ago <= 35 ? 'ok' : ago <= 60 ? 'late' : 'missing', last: h.last };
+}
+function healthReportTag(ringId){
+  const s = healthReportState(ringId); if(!s) return '';
+  return s.state === 'ok' ? `<span class="tag ok">Report ${fmtShort(s.last)}</span>`
+    : `<span class="tag ${s.state==='late'?'soon':'overdue'}">${s.last ? 'Last report ' + fmtShort(s.last) : 'No health report'}</span>`;
+}
+function healthReportsCard(repId){
+  loadHealthReports();
+  const rs = myRings(repId).filter(r => r.status === 'active');
+  if(!rs.length || !healthReports) return '';
+  const due = rs.map(r => ({ r, s: healthReportState(r.id) })).filter(x => x.s && x.s.state !== 'ok');
+  if(!due.length) return `<div class="callout ok" style="margin-bottom:12px"><strong>Health reports are in</strong>Every one of your rings has sent its monthly health report.</div>`;
+  return `<details class="callout fold" style="margin-bottom:12px" ${due.length<=3?'open':''}>
+    <summary><strong>${due.length} ring${due.length===1?' has':'s have'} not sent a health report this month</strong> — ask the facilitator</summary>
+    <div style="margin-top:6px">${due.map(({r,s}) => { const f = fac(r.facId);
+      return `<div class="row tight clicky" onclick="openRing('${r.id}')"><div class="row-main">
+        <div class="row-title">${esc(r.name)}</div>
+        <div class="row-sub">${esc(r.facName || (f ? f.name : 'no facilitator'))} · ${s.last ? 'last report ' + fmt(s.last) : 'none in the last 6 months'}</div></div>
+        ${f && f.phone ? `<a class="btn sm" href="tel:${esc(f.phone)}" onclick="event.stopPropagation()">Call</a>` : ''}</div>`; }).join('')}
+      <div class="row-sub" style="margin-top:6px">Remind them it matters: the monthly report is how Symbiz sees how the ring is really doing.</div></div></details>`;
 }
 function lastContact(memberId){ return lastContactCached(memberId); }
 /**
@@ -2601,6 +2644,7 @@ function vToday(){
     <div class="hello"><h2>${greeting()}</h2><div class="sub">${todayLong()}</div></div>
     ${myGoalCard()}
     ${arCard()}
+    ${healthReportsCard(ui.me)}
     ${welcomed ? '' : `<div class="callout info"><strong>Welcome to Rep Hub</strong>
       This shows the Growth Rings you look after, who is due a call, and the forms you need.
       Tap a name to phone them, then log the call so the next one gets scheduled for you.
@@ -2659,6 +2703,7 @@ function toWhoToContact(){
 }
 function reducedMotionOn(){ return !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); }
 function vMyRings(){
+  loadHealthReports();
   const rs=ringsOfType(myRings(ui.me));
   const rows=rs.map(r=>{
     const mc=ringMembers(r.id).length, h=ringHealth(r);
@@ -2673,6 +2718,7 @@ function vMyRings(){
       <div style="text-align:right">
         <div class="status ${r.status}"><span class="dot"></span>${statusText(r.status)}</div>
         <div class="row-sub" style="margin-top:3px">${h===null?'Not rated yet':'Health '+h}</div>
+        ${r.status==='active' ? `<div style="margin-top:4px">${healthReportTag(r.id)}</div>` : ''}
       </div></div>`;
   }).join('')||emptyState('your Growth Rings', "You have no Growth Rings yet. The office assigns them in Zoho, or you can start one above.");
   return `${typeFilterChips()}
@@ -2707,21 +2753,23 @@ function vRingDetail(){
         <div class="row-title">${esc(m.name)}</div>
         <div class="row-sub">${esc(m.business)} · last spoke ${lc?fmtShort(lc.date):'never'}</div></div>
       <div class="row-actions">${m.phone?`<a class="btn sm icon" href="tel:${esc(m.phone)}" aria-label="Call ${esc(m.name)}" title="Call">${icon('phone',17)}</a>`:''}
-        ${mine?`<button class="btn sm primary" onclick='openLog(${JSON.stringify({ringId:r.id,who:m.name,type:"Member Call",memberId:m.id})})'>Log</button>`:''}</div></div>`;
+        ${mine||isOffice()?`<button class="btn sm primary" onclick='openLog(${JSON.stringify({ringId:r.id,who:m.name,type:"Member Call",memberId:m.id})})'>Log</button>`:''}</div></div>`;
   }), 8, 'members')||`<div class="row-sub" style="padding:9px 0">No members placed yet.</div>`;
 
   return `<button class="back" onclick="goBack(isRep()?'rings':'allrings')">← Back</button>
     <div class="section-head">
       <div><h2>${esc(r.name)}</h2><div class="sub">${f?esc(f.name):'no facilitator'} · ${r.facFreq.toLowerCase()} facilitator calls · ${r.memFreq.toLowerCase()} member calls · meets ${r.meetingRhythm.toLowerCase()}</div></div>
       <div style="text-align:right"><div class="status ${r.status}"><span class="dot"></span>${statusText(r.status)}</div>
-      <div class="row-sub" style="margin-top:4px">${h===null?'Not rated yet — no meeting or visit detail in Zoho':'Health '+h+' · '+healthWord(h)}</div></div>
+      <div class="row-sub" style="margin-top:4px">${h===null?'Not rated yet — no meeting or visit detail in Zoho':'Health '+h+' · '+healthWord(h)}</div>
+      ${r.status==='active' ? (loadHealthReports(), `<div style="margin-top:5px">${healthReportTag(r.id)}</div>`) : ''}</div>
     </div>
     ${alert}
     ${h!==null?`<div class="bar ${healthCls(h)}" style="margin-bottom:16px"><span style="width:${h}%"></span></div>`:''}
     ${r.status==='active'&&f?`<div class="btnrow" style="margin-bottom:8px;">
       <a class="btn" href="tel:${esc(f.phone)}">Call ${esc(f.name.split(' ')[0])}</a>
       ${mine?`<button class="btn primary" onclick='openLog(${JSON.stringify({ringId:r.id,who:f.name,type:"Facilitator Call",facId:f.id})})'>Log facilitator call</button>
-      <button class="btn" onclick="openMeeting('${r.id}')">Record group meeting</button>`:''}
+      <button class="btn" onclick="openMeeting('${r.id}')">Record group meeting</button>`
+      : isOffice()?`<button class="btn primary" onclick='openLog(${JSON.stringify({ringId:r.id,who:f.name,type:"Facilitator Call",facId:f.id})})'>Log facilitator call</button>`:''}
     </div>`:''}
     ${launch}
     ${API.live && (mine || isOffice()) ? ringNotesHTML(r) : ''}
@@ -3145,7 +3193,6 @@ function vOfficeDash(){
   // of inventing a year figure.
   const yr = String(new Date().getFullYear());
   const newM = st && st.year === yr ? st.joinedThisYear : S.members.filter(m => m.status==='active' && m.joined && m.joined >= yr+'-01-01').length;
-  const inactive = st && st.inactiveMembers != null ? st.inactiveMembers : S.members.filter(m => m.status !== 'active').length;
 
   return `${announceBanner()}
     <div class="hello"><h2>${greeting()}</h2><div class="sub">${todayLong()} · where things stand across every rep and ring</div></div>
@@ -3156,9 +3203,7 @@ function vOfficeDash(){
       <div class="stat click" onclick="drill('allrings')"><div class="n">${rings.length}</div><div class="l">Active rings</div></div>
       <div class="stat click" onclick="drill('members',()=>{ui.filter='joined'})" title="Members whose paid start date in Zoho falls this year">
         <div class="n" style="color:var(--primary)">+${newM}</div><div class="l">Joined in ${yr}</div></div>
-      <div class="stat click" onclick="drill('members',()=>{ui.filter='discontinued'})" title="Members marked Inactive in Zoho. Zoho does not record the date they left, so this is a running total, not a figure for this year.">
-        <div class="n" style="color:var(--rust)">${inactive}</div><div class="l">Inactive members</div></div>
-      ${(() => { // Mel: members paying but in no group, beside Inactive
+      ${(() => { // Mel: members paying but in no group
         const n = (S.membersNoRing || []).filter(m => m.status === 'active').length;
         const known = (S.membersNoRing || []).length || !loadingDetail;
         return `<div class="stat click" onclick="drill('unaffiliated')" title="Active members who are not in any Growth Ring">
@@ -3763,7 +3808,14 @@ function qLabel(q){ return fmtShort(q.from) + ' – ' + fmtShort(q.to); }
 function attritionCard(R){
   const qs = (R && R.quarters) || [];
   if(!qs.length) return '';
+  const w = R.rolling26;
   return `<div class="card" style="padding:14px 16px;margin-bottom:14px" id="attrition">
+    ${w ? `<details style="padding:0 0 8px"><summary style="cursor:pointer;display:flex;justify-content:space-between;gap:10px;list-style:none">
+        <span><strong>Last 26 weeks</strong> <span class="row-sub">· rolling, ${esc(fmtShort(w.from))} to today</span></span>
+        <span><strong style="color:var(--rust)">${w.rate == null ? '—' : w.rate + '%'}</strong><span class="row-sub"> · ${w.lost} left of ${w.base}</span></span></summary>
+      ${w.members.map(m => `<div class="row" style="padding:6px 0"><div class="row-main"><div class="row-title">${esc(m.name)}</div>
+        <div class="row-sub">Ended ${fmt(m.ended)}${m.tier?' · '+esc(m.tier):''}${m.reason?' · '+esc(m.reason):''}</div></div></div>`).join('') || '<div class="row-sub" style="padding:6px 0">Nobody has left in the last 26 weeks.</div>'}
+    </details>` : ''}
     <div class="trend-t" style="margin-bottom:8px">Attrition by quarter <span class="row-sub">· quarters start 6 Nov, 6 Feb, 6 May, 6 Aug</span></div>
     ${qs.slice().reverse().map(q => `<details style="border-top:1px solid var(--line);padding:8px 0">
       <summary style="cursor:pointer;display:flex;justify-content:space-between;gap:10px;list-style:none">
@@ -3781,9 +3833,12 @@ function attritionCard(R){
 /* Small tile for the Overview: this quarter's attrition, once retention has loaded */
 function attritionTile(){
   const q = retentionData && retentionData.quarters && retentionData.quarters[retentionData.quarters.length - 1];
-  if(!q) return '';
-  return `<div class="stat click" onclick="setView('insights');setTimeout(()=>{const e=document.getElementById('attrition');if(e)e.scrollIntoView({behavior:'smooth'})},300)">
-    <div class="n" style="color:var(--rust)">${q.rate == null ? '—' : q.rate + '%'}</div><div class="l">Attrition this quarter<br><span style="font-size:10px;opacity:.7">${q.lost} left since ${esc(fmtShort(q.from))}</span></div></div>`;
+  const w = retentionData && retentionData.rolling26;
+  const go = `setView('insights');setTimeout(()=>{const e=document.getElementById('attrition');if(e)e.scrollIntoView({behavior:'smooth'})},300)`;
+  return (w ? `<div class="stat click" onclick="${go}" title="Members whose last membership was deactivated in the last 26 weeks, out of everyone with a running membership 26 weeks ago">
+    <div class="n" style="color:var(--rust)">${w.rate == null ? '—' : w.rate + '%'}</div><div class="l">Attrition, last 26 weeks<br><span style="font-size:10px;opacity:.7">${w.lost} left since ${esc(fmtShort(w.from))}</span></div></div>` : '')
+    + (q ? `<div class="stat click" onclick="${go}">
+    <div class="n" style="color:var(--rust)">${q.rate == null ? '—' : q.rate + '%'}</div><div class="l">Attrition this quarter<br><span style="font-size:10px;opacity:.7">${q.lost} left since ${esc(fmtShort(q.from))}</span></div></div>` : '');
 }
 function vInsights(){
   const exits=S.activities.filter(a=>a.type==='Exit Interview');
@@ -7684,14 +7739,23 @@ let logOutcome='Connected', logType='Member Call';
 function openLog(o){
   o=o||{}; logOutcome='Connected'; logType=o.type||'Member Call';
   const onBehalf=isOffice();
+  // The office looking at a rep's screen (not their own rep view): the call
+  // may be theirs, not the rep's (Mel's calls for J Michael, 24 Nov)
+  const viewingRep = !onBehalf && previewRepId && !selfRepView && officeSelf();
   const rs=onBehalf?S.rings.filter(r=>r.status==='active'):myRings(ui.me).filter(r=>r.status==='active');
   if(!rs.length){ toast('You need an approved ring first'); return; }
+  const meName = esc(splitRepName((officeSelf()||{}).name||'me').name);
   openModal(`<h3>Log a call or meeting</h3>
-    <p class="lead">${onBehalf?'Recording something a rep phoned or mailed in. It saves under their name.':'Saves to Zoho CRM and schedules the next one automatically.'}</p>
+    <p class="lead">${onBehalf||viewingRep?'Saves to Zoho under whoever made the call, and schedules the next one for the ring\'s rep.':'Saves to Zoho CRM and schedules the next one automatically.'}</p>
     <form onsubmit="submitLog(event,'${o.memberId||''}','${o.facId||''}')">
-      ${onBehalf?`<div class="field"><label>On behalf of</label><select name="repId">
-        ${PEOPLE.filter(p=>p.role==='rep').map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
-        <div class="hint">For reps who phone in their work instead of using the app.</div></div>`:''}
+      ${onBehalf?`<div class="field"><label>Who made this call?</label><select name="repId">
+        <option value="__me" selected>I did (${meName})</option>
+        ${PEOPLE.filter(p=>p.role==='rep').map(p=>`<option value="${p.id}">${esc(p.name)} — phoned in</option>`).join('')}</select>
+        <div class="hint">Pick a rep only when you are recording a call they made and phoned in.</div></div>`:''}
+      ${viewingRep?`<div class="field"><label>Who made this call?</label><select name="repId">
+        <option value="__me" selected>I did (${meName})</option>
+        <option value="${esc(ui.me)}">${esc(pname(ui.me))} — phoned in</option></select>
+        <div class="hint">You are on ${esc(pname(ui.me))}'s screen. The call counts for whoever made it.</div></div>`:''}
       <div class="field"><label>Growth Ring</label><select name="ringId" required>
         ${rs.map(r=>`<option value="${r.id}" ${r.id===o.ringId?'selected':''}>${esc(r.name)}</option>`).join('')}</select></div>
       <div class="two">
@@ -7740,15 +7804,21 @@ async function submitLog(e,memberId,facId){
   e.preventDefault(); const f=e.target;
   const g=ring(fv(f,'ringId')), type=fv(f,'type'), date=fv(f,'date'), who=fv(f,'who');
   if(API.live){
-    const owner = fv(f,'repId') || g.repId;
+    const picked = fv(f,'repId');
+    const byMe = picked === '__me';
+    const owner = byMe ? null : (picked || g.repId);
     const contact = memberId || facId || null;
     const notes = fv(f,'notes');
     const body = { ringId: g.id, type, date, outcome: logOutcome, memberId: contact || undefined,
       // Zoho keeps the person as a link to their record; anyone else is named in the notes
       notes: contact ? notes : [`With ${who}`, notes].filter(Boolean).join('. '),
-      repZohoId: isOffice() ? owner : undefined };
+      repZohoId: !byMe && picked ? owner : undefined,
+      madeBy: byMe ? 'me' : undefined };
+    // Shown at once, before the refresh brings back Zoho's copy
+    const selfRep = byMe ? (myRepSelf() || {}).id : null;
+    const localRep = byMe ? (selfRep || g.repId) : picked ? owner : ui.me;
     try{
-      const how = await sendActivity(body, { ringId: g.id, repId: isOffice() ? owner : ui.me, memberId: contact, type, who, date, nextDue: null, outcome: logOutcome, notes }, `the ${type.toLowerCase()} with ${who}`);
+      const how = await sendActivity(body, { ringId: g.id, repId: localRep, memberId: contact, type, who, date, nextDue: null, outcome: logOutcome, notes }, `the ${type.toLowerCase()} with ${who}`);
       closeModal();
       toast(how === 'sent' ? 'Logged and saved to Zoho' : 'No signal: saved on this phone, and it will be sent when you have signal');
     }catch(ex){ toast(ex.message || 'Could not log that'); }

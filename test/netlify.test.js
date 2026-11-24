@@ -438,6 +438,39 @@ describe('netlify function handler', () => {
     await db.q.setSetting('retryDays', '4');
   });
 
+  test('a call the office made itself is credited to them, not the ring\'s rep (Mel, 24 Nov)', async () => {
+    const ring = JSON.parse((await invoke('POST', '/rings', {
+      token: repToken, body: { name: 'Made By Ring', facFreq: 'Quarterly', memFreq: 'Annual' },
+    })).body);
+    const before = (store.Rep_Visit_Trackings || []).length;
+    const mine = await invoke('POST', '/activities', { token: officeToken,
+      body: { ringId: ring.id, type: 'Member Call', date: '2026-11-20', outcome: 'Connected', notes: 'Talked renewals', madeBy: 'me' } });
+    assert.equal(mine.statusCode, 201);
+    const saved = store.Rep_Visit_Trackings[before];
+    assert.ok(String(saved.Visit_Notes).startsWith('Call made by '), saved.Visit_Notes);
+    assert.ok(String(saved.Visit_Notes).endsWith('Talked renewals'));
+    // Phoned in by the rep: saved under the rep, no "made by" line
+    await invoke('POST', '/activities', { token: officeToken,
+      body: { ringId: ring.id, type: 'Member Call', date: '2026-11-21', outcome: 'Connected', notes: 'Rep phoned it in', repZohoId: 'CONTACT_REP_1' } });
+    const phoned = store.Rep_Visit_Trackings[before + 1];
+    assert.equal(phoned.Visit_Notes, 'Rep phoned it in');
+    assert.equal((phoned.Rep && (phoned.Rep.id || phoned.Rep)), 'CONTACT_REP_1');
+  });
+
+  test('health reports: the latest GR Group Score per ring (Mel, 24 Nov)', async () => {
+    store.Growth_Ring_Group_Scores = [
+      { id: 'S1', Growth_Ring_Group: { id: 'R77', name: '77' }, Date: '2026-09-02' },
+      { id: 'S2', Growth_Ring_Group: { id: 'R77', name: '77' }, Date: '2026-11-06' },
+      { id: 'S3', Growth_Ring_Group: null, Date: '2026-11-01' },
+    ];
+    const res = await invoke('GET', '/rings/health-reports', { token: officeToken });
+    assert.equal(res.statusCode, 200, res.body);
+    const out = JSON.parse(res.body);
+    assert.ok(out.rings && typeof out.rings === 'object');
+    if (out.rings.R77) { assert.equal(out.rings.R77.last, '2026-11-06'); assert.equal(out.rings.R77.count, 2); }
+    store.Growth_Ring_Group_Scores = [];
+  });
+
   const J = r => JSON.parse(r.body);
   test('an exit interview emails the people named in Settings, so the membership is ended in Zoho (Mel, Keturah)', async () => {
     const cfg = require('../src/config'), reminders = require('../src/reminders');
@@ -1840,6 +1873,30 @@ describe("ring meetings, membership levels and the member map", () => {
     assert.equal(r.base, 2); assert.equal(r.retained, 1); assert.equal(r.retention, 50);
     assert.equal(r.tiers.Sapling, 1);
     assert.equal(r.reasons.Other, 1);
+  });
+
+  test('attrition over the last 26 weeks, rolling (Mel, 24 Nov)', async () => {
+    const ago = d => new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+    store.Deals.push({ id: 'D26', Contact_Name: { id: 'C26', name: 'Recent Leaver #26' }, Membership_Tier: 'Seedling',
+      Stage: 'Inactive', Start_Date: '2024-01-01', Expiry_Date: ago(30), Reason_For_Loss__s: 'Moved away' });
+    store.Deals.push({ id: 'D27', Contact_Name: { id: 'C27', name: 'Long Gone #27' }, Membership_Tier: 'Seedling',
+      Stage: 'Inactive', Start_Date: '2023-01-01', Expiry_Date: ago(300) });
+    try {
+      // fresh=1 skips the 10-minute cache the test above filled
+      const r = JSON.parse((await handler({
+        httpMethod: 'GET', path: '/.netlify/functions/api/stats/retention',
+        rawUrl: 'https://x.netlify.app/.netlify/functions/api/stats/retention?fresh=1',
+        headers: { authorization: `Bearer ${token}` }, queryStringParameters: { fresh: '1' }, body: null, isBase64Encoded: false,
+      }, {})).body);
+      assert.ok(r.rolling26, 'rolling26 is returned');
+      assert.equal(r.rolling26.from, ago(182));
+      const names = r.rolling26.members.map(m => m.name);
+      assert.ok(names.includes('Recent Leaver #26'), names.join(','));
+      assert.ok(!names.includes('Long Gone #27'), 'left before the 26 weeks');
+      assert.ok(r.rolling26.base >= r.rolling26.lost);
+    } finally {
+      store.Deals = store.Deals.filter(d => d.id !== 'D26' && d.id !== 'D27');
+    }
   });
 
   test('the member map places addresses once and keeps them', async () => {
