@@ -196,7 +196,8 @@ const fakeZoho = http.createServer((req, res) => {
       if (!store[mod]) store[mod] = [];
       if (req.method === 'POST') {
         const recs = JSON.parse(body).data || [];
-        return json({ data: recs.map(rec => { const nid = String(nextId++); store[mod].push({ id: nid, ...rec }); return { code: 'SUCCESS', details: { id: nid } }; }) });
+        // Like Zoho, a new record carries the time it was created
+        return json({ data: recs.map(rec => { const nid = String(nextId++); store[mod].push({ id: nid, Created_Time: new Date().toISOString(), ...rec }); return { code: 'SUCCESS', details: { id: nid } }; }) });
       }
       if (req.method === 'PUT') {
         const recs = JSON.parse(body).data || [];
@@ -455,6 +456,35 @@ describe('netlify function handler', () => {
     const phoned = store.Rep_Visit_Trackings[before + 1];
     assert.equal(phoned.Visit_Notes, 'Rep phoned it in');
     assert.equal((phoned.Rep && (phoned.Rep.id || phoned.Rep)), 'CONTACT_REP_1');
+  });
+
+  test('the same call is never saved twice: a resend, a double save, or an empty repeat', async () => {
+    const ring = JSON.parse((await invoke('POST', '/rings', {
+      token: repToken, body: { name: 'Dup Ring', facFreq: 'Quarterly', memFreq: 'Annual' },
+    })).body);
+    const n = () => store.Rep_Visit_Trackings.length;
+    const call = (extra) => invoke('POST', '/activities', { token: repToken,
+      body: { ringId: ring.id, memberId: 'D1', type: 'Member Call', date: '2026-11-25', outcome: 'Connected', ...extra } });
+    const first = await call({ notes: 'Talked renewals', clientRef: 'cRETRY0001' });
+    assert.equal(first.statusCode, 201);
+    const start = n();
+    // The outbox sending it again with the same reference
+    const resent = await call({ notes: 'Talked renewals', clientRef: 'cRETRY0001' });
+    assert.equal(JSON.parse(resent.body).id, JSON.parse(first.body).id);
+    assert.equal(n(), start, 'a resend is not a second record');
+    // Saved again straight after, with nothing new
+    const again = await call({ notes: '' , clientRef: 'cOTHER0002' });
+    assert.equal(JSON.parse(again.body).duplicate, true);
+    assert.equal(n(), start);
+    // A different outcome the same day is a real second attempt
+    await call({ outcome: 'Left voicemail', notes: '', clientRef: 'cVM00003' });
+    assert.equal(n(), start + 1);
+    // Empty first, notes a moment later: the notes go on the first one
+    await call({ memberId: 'D2', notes: '', clientRef: 'cEMPTY0004' });
+    const emptyId = store.Rep_Visit_Trackings[n() - 1].id;
+    const filled = await call({ memberId: 'D2', notes: 'Horse training program', clientRef: 'cFILL0005' });
+    assert.equal(JSON.parse(filled.body).id, emptyId);
+    assert.equal(store.Rep_Visit_Trackings.find(x => x.id === emptyId).Visit_Notes, 'Horse training program');
   });
 
   test('health reports: the latest GR Group Score per ring (Mel, 24 Nov)', async () => {

@@ -7939,6 +7939,9 @@ function pickOutcome(o){
    save only on the phone while saying "saved to Zoho", so the call vanished at
    the next refresh and the member showed as overdue again. */
 async function sendActivity(body, local, label){
+  // Made once here and kept with the call: if it is sent again (a slow save
+  // that looked like no signal, then the outbox), the server knows it is the same one
+  if(!body.clientRef) body.clientRef = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
   try{
     await logCall(body);
     return 'sent';
